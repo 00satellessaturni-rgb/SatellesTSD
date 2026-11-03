@@ -234,7 +234,7 @@ public class PeriodMatcherTests
         var result = matcher.Run(2026, 10, MatchPerson.FromTor(register, 2026, 10), [wise]);
 
         Assert.Contains(result.Problems, p => p.Code == MatchProblem.NoFilters && p.Source == "TransferWise");
-        var hit = Assert.Single(result.Hits.Where(h => h.PersonKey == "1"));
+        var hit = Assert.Single(result.Hits, h => h.PersonKey == "1");
         Assert.Equal(("", VerdictKind.None, false), (hit.Text, hit.Verdict.Kind, hit.Counted));
         Assert.Contains(result.Problems, p => p.Code == MatchProblem.NoName && p.PersonKey == "2");
         Assert.Empty(result.HitsOf("2"));

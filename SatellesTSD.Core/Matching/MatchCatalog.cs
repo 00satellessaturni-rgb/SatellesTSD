@@ -88,9 +88,9 @@ public sealed class MatchCatalog
     public string ToJson() => JsonSerializer.Serialize(
         new Document(
             Categories.ToList(),
-            FilterSets.ToDictionary(s => s.Key, s => s.Value.ToDictionary(c => c.Key, c => c.Value, StringComparer.Ordinal), StringComparer.Ordinal),
+            FilterSets.ToDictionary(s => s.Key, s => (Dictionary<string, string>?)s.Value.ToDictionary(c => c.Key, c => c.Value, StringComparer.Ordinal), StringComparer.Ordinal),
             LayoutFilterSets.ToDictionary(l => l.Key, l => l.Value, StringComparer.Ordinal),
-            Aliases.Select(g => g.ToList()).ToList()),
+            Aliases.Select(g => (List<string>?)g.ToList()).ToList()),
         LayoutCatalog.Json);
 
     /// <summary>What makes the document unusable; empty when it can be used.</summary>

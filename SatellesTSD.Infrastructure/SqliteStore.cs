@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using SatellesTSD.Core.Feedback;
+using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
@@ -127,10 +128,12 @@ public sealed partial class SqliteStore : IStore
             """
             INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                                 funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
-                                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes)
+                                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
+                                residency_source, pension_source)
             VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
                     $member, $rate, $pchecked, $onpension, $pensionyear,
-                    $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes)
+                    $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes,
+                    $rsource, $psource)
             """,
             PersonParameters(stored));
         tx.Commit();
@@ -147,7 +150,8 @@ public sealed partial class SqliteStore : IStore
                 residency = $residency, residence_country = $country, residency_checked_on = $rchecked,
                 funded_pension_member = $member, pension_rate = $rate, pension_checked_on = $pchecked, on_pension = $onpension, pension_age_year = $pensionyear,
                 exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
-                a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes
+                a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes,
+                residency_source = $rsource, pension_source = $psource
             WHERE id = $id
             """,
             PersonParameters(Normalize(person)));
@@ -183,7 +187,8 @@ public sealed partial class SqliteStore : IStore
         """
         SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
-               exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes
+               exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
+               residency_source, pension_source
         FROM person
         """;
 
@@ -195,13 +200,15 @@ public sealed partial class SqliteStore : IStore
         ("$onpension", p.OnOldAgeOrFlexiblePension ? 1 : 0), ("$pensionyear", p.PensionAgeYear),
         ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
         ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
+        ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()),
     ];
 
     private static Person ReadPerson(SqliteDataReader r) => new(
         Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2), r.GetString(3), Str(r, 4), Str(r, 5),
         Enum.Parse<Residency>(r.GetString(6)), Str(r, 7), Date(r, 8),
         r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
-        r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22));
+        r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22),
+        Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)));
 
     // ---------------------------------------------------------------- periods
 
@@ -967,6 +974,26 @@ public sealed partial class SqliteStore : IStore
             counted INTEGER NOT NULL,
             flags_json TEXT NOT NULL DEFAULT '[]');
         CREATE INDEX match_hit_by_row ON match_hit (row_id);
+        """,
+
+        // v4 — lookups: where a person's residency and pension facts came from (a lookup, or the accountant's hand),
+        // and every answer the two registers gave, per person and control date, as it came.
+        """
+        ALTER TABLE person ADD COLUMN residency_source TEXT NOT NULL DEFAULT 'Unknown';
+        ALTER TABLE person ADD COLUMN pension_source TEXT NOT NULL DEFAULT 'Unknown';
+        CREATE TABLE lookup (
+            id TEXT PRIMARY KEY,
+            person_id TEXT NOT NULL REFERENCES person(id),
+            kind TEXT NOT NULL,
+            source TEXT NOT NULL,
+            checked_at TEXT NOT NULL,
+            control_date TEXT NOT NULL,
+            personal_code TEXT,
+            finding_json TEXT,
+            failure TEXT,
+            page TEXT,
+            note TEXT);
+        CREATE INDEX lookup_by_person ON lookup (person_id, kind, control_date);
         """,
     ];
 

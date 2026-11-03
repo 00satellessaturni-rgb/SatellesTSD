@@ -393,10 +393,11 @@ public class ImportStoreTests
         // a shipped migration script is never edited: an existing firm file already ran it; a change goes in the next script
         var hashes = SqliteStore.MigrationScripts.Select(s => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s.Replace("\r\n", "\n"))))).ToList();
 
-        Assert.Equal(3, hashes.Count);
+        Assert.Equal(4, hashes.Count);
         Assert.Equal("c765c3c39d8e978730321685f8b5d5d0f69b47668a23679b819baec2b24ed59c", hashes[0]); // v1 as committed in 3c86599
         Assert.Equal("001c1f2471e82c2701c5dc910d6d6d158ac6b73fcef7e7eab78d9bde8097fcf7", hashes[1]); // v2 as committed in 5a89cc8
-        Assert.Equal("9b309118542e3ea9e46d0ed0e928a41f255b66a5837c9b3be0a69559c2b5dda3", hashes[2]); // v3 as committed with S5
+        Assert.Equal("9b309118542e3ea9e46d0ed0e928a41f255b66a5837c9b3be0a69559c2b5dda3", hashes[2]); // v3 as committed in d33c564
+        Assert.Equal("5d8615b641ae61eb68019c89580dc294fe91a841b27fdd1cd85c75d95809adcd", hashes[3]); // v4 as committed with S6
     }
 
     [Fact]
@@ -437,11 +438,18 @@ public class ImportStoreTests
             {
                 var company = v1.AddCompany("10235688", "Näidis OÜ");
                 var period = v1.GetOrCreatePeriod(company.Id, 2026, 10);
-                var person = v1.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406") with
+                // v1 has neither the v4 source columns nor source_row_id: write the person and the line the v1 way
+                var person = Person.New(company.Id, "Mari", "Maasikas", "48712219406") with
                 {
-                    FundedPensionMember = true, PensionRate = 0.02m, PensionCheckedOn = new DateOnly(2026, 11, 1), ResidencyCheckedOn = new DateOnly(2026, 11, 1), BasicExemptionApplied = true,
-                });
-                // v1 has no source_row_id column: write the line the v1 way
+                    Id = Guid.NewGuid(), FundedPensionMember = true, PensionRate = 0.02m, PensionCheckedOn = new DateOnly(2026, 11, 1), ResidencyCheckedOn = new DateOnly(2026, 11, 1), BasicExemptionApplied = true,
+                };
+                v1.ExecuteRaw(
+                    """
+                    INSERT INTO person (id, company_id, first_name, last_name, personal_code, residency, residency_checked_on, funded_pension_member, pension_rate, pension_checked_on,
+                                        on_pension, exemption_applied, minimum_applies, a1_case)
+                    VALUES ($id, $company, 'Mari', 'Maasikas', '48712219406', 'Resident', '2026-11-01', 1, '0.02', '2026-11-01', 0, 1, 1, 'None')
+                    """,
+                    ("$id", person.Id.ToString("N")), ("$company", company.Id.ToString("N")));
                 var line = Draft(v1, period, person, LineAction.R, null);
                 v1.ExecuteRaw(
                     """

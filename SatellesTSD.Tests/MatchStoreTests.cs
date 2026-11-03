@@ -223,7 +223,7 @@ public class MatchStoreTests
             }
 
             using var v3 = SqliteStore.Open(path);
-            Assert.Equal(3L, v3.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+            Assert.Equal((long)SqliteStore.SchemaVersion, v3.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
             Assert.Equal(0L, v3.ScalarRaw<long>("SELECT COUNT(*) FROM match_run"));
             var period = Assert.Single(v3.Periods(v3.FindCompany("10235688")!.Id));
             Assert.Null(v3.MatchRun(period.Id));

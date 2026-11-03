@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Reflection;
 using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Store;
 
@@ -62,7 +63,19 @@ public class RecordEqualityTests
         [
             new StoredMatchHit(Guid.NewGuid(), Guid.NewGuid(), 1, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "BAV*KIN", "DMITRI", true, VerdictKind.Matched, "Palgad", ["Palgad"], "[Palgad]", true, true, ["f"]),
         ];
+
+        // lookups
+        yield return [new ResidencyFinding(new DateOnly(2026, 11, 4), [SamplePeriod], ["tõend"])];
+        yield return [new PensionFinding(PensionStatus.Joined, new DateOnly(2019, 1, 1), new DateOnly(2026, 8, 1), [SampleRate])];
+        yield return [SampleOutcome];
+        yield return [new LookupRunReport(new DateOnly(2026, 10, 31), [SampleOutcome], ["p"])];
     }
+
+    private static readonly DatePeriod SamplePeriod = new(new DateOnly(2024, 1, 1), new DateOnly(2025, 12, 31));
+
+    private static readonly RatePeriod SampleRate = new(new DateOnly(2019, 1, 1), null, 0.02m, "Vaikimisi määr");
+
+    private static readonly PersonLookupOutcome SampleOutcome = new(Guid.NewGuid(), "48712219406", "Mari Maasikas", ["asked residency"], ["p"]);
 
     [Theory]
     [MemberData(nameof(Samples))]
@@ -183,6 +196,7 @@ public class RecordEqualityTests
                      (typeof(ImportProblem), new ImportProblem(null, "X", "x")), (typeof(TorEntry), SampleEntry with { RowNo = 99 }), (typeof(StatementRow), SampleRow with { RowNo = 99 }),
                      (typeof(MatchProblem), SampleProblem with { Code = "X" }), (typeof(MatchPerson), SampleMatchPerson with { Order = 99 }), (typeof(MatchSource), SampleSource with { Name = "x" }),
                      (typeof(MatchHit), SampleHit with { Text = "x" }),
+                     (typeof(DatePeriod), SamplePeriod with { End = null }), (typeof(RatePeriod), SampleRate with { Rate = 0.04m }), (typeof(PersonLookupOutcome), SampleOutcome with { Name = "x" }),
                  })
         {
             if (typeof(IEnumerable<>).MakeGenericType(elementType).IsAssignableFrom(underlying))

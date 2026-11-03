@@ -1,4 +1,5 @@
 using SatellesTSD.Core.Feedback;
+using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Tax;
 using SatellesTSD.Core.Xbrl;
@@ -13,6 +14,8 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <see cref="PayeeTaxFacts"/>.</summary>
 /// <param name="PensionAgeYear">The calendar year the person reaches old-age pension age (MVT_650 from 1 January of that year); null = not yet known or never.</param>
 /// <param name="TorEmploymentTypeId">The TÖR töötamise liigi ID (1, 600, 601, 507, 602, 501) when the person is in the register.</param>
+/// <param name="ResidencySource">Where the residency came from: a lookup, or the accountant's hand (which a later lookup never overwrites).</param>
+/// <param name="PensionSource">Where the funded-pension facts came from, likewise.</param>
 public sealed record Person(
     Guid Id,
     Guid CompanyId,
@@ -36,7 +39,9 @@ public sealed record Person(
     string? WorkCountry,
     decimal? TreatyIncomeTaxRate,
     string? TorEmploymentTypeId,
-    string? Notes)
+    string? Notes,
+    LookupSource ResidencySource = LookupSource.Unknown,
+    LookupSource PensionSource = LookupSource.Unknown)
 {
     public static Person New(Guid companyId, string firstName, string lastName, string? personalCode, Residency residency = Residency.Resident) =>
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,
