@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<processing result="ERROR">
+    <entryHeader>
+        <entryNumber>EE0201001</entryNumber>
+        <validations>
+            <validation>
+                <errorLevel>ERROR</errorLevel>
+                <errorCode>ERROR</errorCode>
+                <errorDescription>Leidub vigu</errorDescription>
+                <errorDescription_EN>Errors found</errorDescription_EN>
+                <errorDescription_RU>Errors found</errorDescription_RU>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0110test01</lineInternalId>
+                        <lineNumberCounter>2</lineNumberCounter>
+                    </lineReference>
+                </lineReferences>
+            </validation>
+            <validation>
+                <errorLevel>ERROR</errorLevel>
+                <errorCode>ERROR</errorCode>
+                <errorDescription>Leidub vigu</errorDescription>
+                <errorDescription_EN>Errors found</errorDescription_EN>
+                <errorDescription_RU>Errors found</errorDescription_RU>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0117test01</lineInternalId>
+                        <lineNumberCounter>3</lineNumberCounter>
+                    </lineReference>
+                </lineReferences>
+            </validation>
+        </validations>
+        <responseData>
+            <entryDetail>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0110test01</lineInternalId>
+                        <lineNumberCounter>2</lineNumberCounter>
+                    </lineReference>
+                </lineReferences>
+                <data>
+                    <code>KR_ISIK_3</code>
+                    <description>WARNING</description>
+                    <info>Isik koodiga 47011189999 on surnud.</info>
+                    <info_EN>Person with code 47011189999 is deceased.</info_EN>
+                    <info_RU>Isik koodiga 47011189999 on surnud.</info_RU>
+                </data>
+                <data>
+                    <code>KR_VM_03</code>
+                    <description>ERROR_BLUE</description>
+                    <info>Täpsustage väljamakse liiki. Väljamakse saajale EE47011189999 tehtud väljamakse liigiga 10 ei ole lubatud. Väljamakse liik ei ole mitteresidendile lubatud.</info>
+                    <info_EN>Clarify the payment type. A payment of type 10 to recipient EE47011189999 is not allowed. The payment type is not allowed for a non-resident.</info_EN>
+                    <info_RU>Täpsustage väljamakse liiki. Väljamakse saajale EE47011189999 tehtud väljamakse liigiga 10 ei ole lubatud. Väljamakse liik ei ole mitteresidendile lubatud.</info_RU>
+                </data>
+            </entryDetail>
+            <entryDetail>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0117test01</lineInternalId>
+                        <lineNumberCounter>3</lineNumberCounter>
+                    </lineReference>
+                </lineReferences>
+                <data>
+                    <code>KR_TM_4</code>
+                    <description>ERROR_RED</description>
+                    <info>Täpsustage kinnipeetud tulumaksu summat. Väljamakse saajale EE39501033336 tehtud väljamaksel liigiga 17 määratud kinnipeetud tulumaksu summa 106,04 (500 - 10 - 8 - 0 ) * 22%).</info>
+                    <info_EN>Clarify the withheld income tax amount. On a payment of type 17 to recipient EE39501033336, the specified withheld income tax amount 106.04 (500 - 10 - 8 - 0 ) * 22%).</info_EN>
+                    <info_RU>Täpsustage kinnipeetud tulumaksu summat. Väljamakse saajale EE39501033336 tehtud väljamaksel liigiga 17 määratud kinnipeetud tulumaksu summa 106,04 (500 - 10 - 8 - 0 ) * 22%).</info_RU>
+                </data>
+            </entryDetail>
+        </responseData>
+    </entryHeader>
+    <entryHeader>
+        <entryNumber>EE0201002</entryNumber>
+        <validations>
+            <validation>
+                <errorLevel>ERROR</errorLevel>
+                <errorCode>ERROR</errorCode>
+                <errorDescription>Leidub vigu</errorDescription>
+                <errorDescription_EN>Errors found</errorDescription_EN>
+                <errorDescription_RU>Errors found</errorDescription_RU>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0201test01</lineInternalId>
+                    </lineReference>
+                </lineReferences>
+            </validation>
+            <validation>
+                <errorLevel>ERROR</errorLevel>
+                <errorCode>ERROR</errorCode>
+                <errorDescription>Leidub vigu</errorDescription>
+                <errorDescription_EN>Errors found</errorDescription_EN>
+                <errorDescription_RU>Errors found</errorDescription_RU>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0254test01</lineInternalId>
+                    </lineReference>
+                </lineReferences>
+            </validation>
+        </validations>
+        <responseData>
+            <entryDetail>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0254test01</lineInternalId>
+                    </lineReference>
+                </lineReferences>
+                <data>
+                    <code>KR_XBRL_VALJAMAKSED_3</code>
+                    <description>ERROR_BLACK</description>
+                    <info>Täpsustage toimingu tüüpi. Väljamaksel unikaalse tunnusega 0254test01 peab toimingu tüüp olema määratud.</info>
+                    <info_EN>Täpsustage toimingu tüüpi. Väljamaksel unikaalse tunnusega 0254test01 peab toimingu tüüp olema määratud.</info_EN>
+                    <info_RU>Täpsustage toimingu tüüpi. Väljamaksel unikaalse tunnusega 0254test01 peab toimingu tüüp olema määratud.</info_RU>
+                </data>
+            </entryDetail>
+            <entryDetail>
+                <lineReferences>
+                    <lineReference>
+                        <lineInternalId>0201test01</lineInternalId>
+                    </lineReference>
+                </lineReferences>
+                <data>
+                    <code>KR_XBRL_VALJAMAKSED_14</code>
+                    <description>ERROR_BLACK</description>
+                    <info>Täpsustage väljamakse liiki. Väljamakse saajale EE37201019997 tehtud väljamakse liigiga 1 ei ole lubatud. Väljamakse liik peab kuuluma lubatud väärtuste hulka.</info>
+                    <info_EN>Täpsustage väljamakse liiki. Väljamakse saajale EE37201019997 tehtud väljamakse liigiga 1 ei ole lubatud. Väljamakse liik peab kuuluma lubatud väärtuste hulka.</info_EN>
+                    <info_RU>Täpsustage väljamakse liiki. Väljamakse saajale EE37201019997 tehtud väljamakse liigiga 1 ei ole lubatud. Väljamakse liik peab kuuluma lubatud väärtuste hulka.</info_RU>
+                </data>
+            </entryDetail>
+        </responseData>
+    </entryHeader>
+</processing>

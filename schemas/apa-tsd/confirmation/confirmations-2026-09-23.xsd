@@ -1,0 +1,620 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<xs:schema
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+    <xs:element name="confirmDeclaration"
+                type="ConfirmDeclarationType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Deklaratsiooni kinnitamise andmed.
+            </xs:documentation>
+        </xs:annotation>
+    </xs:element>
+
+    <xs:complexType name="ConfirmDeclarationType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Deklaratsiooni kinnitamise andmestruktuur.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:sequence>
+
+            <!-- 0..1 -->
+            <xs:element name="personCode"
+                        type="EstonianPersonCodeType"
+                        minOccurs="0"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Kinnitaja isikukood, kui XML-fail on
+                        digitembeldatud.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="declaration"
+                        type="DeclarationTextType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Kinnitaja deklaratsioon, näiteks
+                        "Kinnitan andmete õigsust".
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="taxablePersonIdentifier"
+                        type="TaxablePersonIdentifierType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksukohustuslase identifikaator.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="taxablePersonIdentifierType"
+                        type="IdentifierTypeEnum"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksukohustuslase identifikaatori tüüp.
+                        Võimalikud väärtused on ARIREGISTRIKOOD,
+                        ISIKUKOOD või MRR_KOOD.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="declarationType"
+                        type="DeclarationTypeEnum"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Deklaratsiooni liik. Võimalikud väärtused 
+                        on TSD, ESD, XF11 või XF12.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="month"
+                        type="MonthType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksustamisperioodi kuu.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- 1 -->
+            <xs:element name="year"
+                        type="YearType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksustamisperioodi aasta.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- One sections container -->
+            <xs:element name="sections"
+                        type="SectionsType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Kinnitatavad deklaratsiooni andmestikud.
+                        Element peab sisaldama vähemalt ühte
+                        sectionItem elementi.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <!-- One taxSums container -->
+            <xs:element name="taxSums"
+                        type="TaxSumsType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Deklareeritavad maksusummad.
+                        Element peab sisaldama vähemalt ühte
+                        taxSum elementi.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="SectionsType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Kinnitatavate deklaratsiooni andmestike loend.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:sequence>
+            <xs:element name="sectionItem"
+                        type="SectionItemType"
+                        minOccurs="1"
+                        maxOccurs="unbounded">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Ühe kinnitatava andmestiku andmed.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="SectionItemType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Kinnitatava andmestiku tunnus ja andmete olemasolu
+                näitav väärtus.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:sequence>
+
+            <xs:element name="section"
+                        type="SectionTypeEnum"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Kinnitatav andmestik.
+
+                        TSD deklaratsiooni puhul on võimalikud
+                        väärtused PAYMENTS, L3, L4, L5, L6, L7,
+                        L8 ja INF1.
+
+                        XF11 ja XF12 deklaratsiooni puhul on
+                        võimalik väärtus PAYMENTS.
+
+                        ESD deklaratsiooni puhul on võimalikud
+                        väärtused ESM_SM ja ESM_KP.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <xs:element name="hasData"
+                        type="xs:boolean"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Tõene, kui kinnitaja on andmestiku esitanud
+                        ja soovib seda kinnitada.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+        </xs:sequence>
+    </xs:complexType>
+
+     <xs:complexType name="TaxSumsType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Deklareeritavad maksusummad.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:sequence>
+            <xs:element name="taxSum"
+                        type="TaxSumType"
+                        minOccurs="1"
+                        maxOccurs="unbounded">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Ühe maksusumma andmed.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="TaxSumType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksusumma tüüp ja väärtus.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:sequence>
+
+            <xs:element name="taxType"
+                        type="TaxTypeEnum"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksusumma tüüp.
+
+                        TSD, XF11 ja XF12 deklaratsiooni puhul
+                        on võimalikud koodid 110, 114, 115, 116,
+                        117, 118 ja 119.
+
+                        ESD deklaratsiooni puhul on võimalikud
+                        väärtused ESM_SM_KOKKU ja ESM_KP_KOKKU.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+            <xs:element name="taxAmount"
+                        type="TaxAmountType"
+                        minOccurs="1"
+                        maxOccurs="1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksusumma väärtus.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:element>
+
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:simpleType name="EstonianPersonCodeType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Eesti isikukood, mis koosneb täpselt 11 numbrist.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+            <xs:length value="11"/>
+            <xs:pattern value="[0-9]{11}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="DeclarationTextType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Kinnitaja deklaratsiooni tekst.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="500"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="TaxablePersonIdentifierType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksukohustuslase identifikaator.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+            <xs:minLength value="1"/>
+            <xs:maxLength value="50"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="IdentifierTypeEnum">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksukohustuslase identifikaatori tüüp.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+
+            <xs:enumeration value="ARIREGISTRIKOOD">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Äriregistri kood.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ISIKUKOOD">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Füüsilise isiku isikukood.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="MRR_KOOD">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Mitteresidendi registri kood.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="DeclarationTypeEnum">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Deklaratsiooni liik.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+
+            <xs:enumeration value="TSD">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Tulu- ja sotsiaalmaksu deklaratsioon.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ESD">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        ESD deklaratsioon.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="XF11">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        XF11 deklaratsioon.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="XF12">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        XF12 deklaratsioon.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="MonthType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksustamisperioodi kuu tekstilisel kujul.
+                Lubatud väärtused on 1 kuni 12 või 01 kuni 12.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+            <xs:pattern value="0?[1-9]|1[0-2]"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="YearType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksustamisperioodi aasta neljakohalisel kujul.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9]{4}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="SectionTypeEnum">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Kinnitatava andmestiku tunnus.
+
+                TSD puhul: PAYMENTS, L3, L4, L5, L6, L7, L8,
+                INF1.
+
+                XF11 ja XF12 puhul: PAYMENTS.
+
+                ESD puhul: ESM_SM, ESM_KP.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+
+            <xs:enumeration value="PAYMENTS">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        Maksete andmestik. Kasutatav TSD, XF11
+                        ja XF12 deklaratsioonide puhul.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L3">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 3 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L4">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 4 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L5">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 5 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L6">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 6 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L7">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 7 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="L8">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD lisa 8 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="INF1">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD INF1 andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ESM_SM">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        ESD sotsiaalmaksu andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ESM_KP">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        ESD kogumispensioni andmestik.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="TaxTypeEnum">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksusumma tüübi kood.
+
+                TSD, XF11 ja XF12 puhul: 110, 114, 115, 116,
+                117, 118 ja 119.
+
+                ESD puhul: ESM_SM_KOKKU ja ESM_KP_KOKKU.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:string">
+
+            <xs:enumeration value="110">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 110.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="114">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 114.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="115">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 115.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="116">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 116.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="117">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 117.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="118">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 118.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="119">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        TSD, XF11 või XF12 maksusumma tüüp 119.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ESM_SM_KOKKU">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        ESD sotsiaalmaksu kogusumma.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+            <xs:enumeration value="ESM_KP_KOKKU">
+                <xs:annotation>
+                    <xs:documentation xml:lang="et">
+                        ESD kogumispensioni kogusumma.
+                    </xs:documentation>
+                </xs:annotation>
+            </xs:enumeration>
+
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="TaxAmountType">
+        <xs:annotation>
+            <xs:documentation xml:lang="et">
+                Maksusumma väärtus.
+            </xs:documentation>
+        </xs:annotation>
+
+        <xs:restriction base="xs:decimal">
+            <xs:fractionDigits value="2"/>
+            <xs:minInclusive value="0.00"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+</xs:schema>

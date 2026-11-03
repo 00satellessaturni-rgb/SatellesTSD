@@ -40,6 +40,9 @@ public sealed class XbrlGlValidator
             Schemas = _schemas,
             XmlResolver = null,
             DtdProcessing = DtdProcessing.Prohibit,
+            // Warnings count: an element the schema does not know (a wrong root, a stray namespace) is only a warning
+            // to .NET, and its content is then skipped unvalidated.
+            ValidationFlags = XmlSchemaValidationFlags.ReportValidationWarnings,
         };
         settings.ValidationEventHandler += (_, e) =>
             problems.Add($"{e.Severity} at line {e.Exception?.LineNumber}, position {e.Exception?.LinePosition}: {e.Message}");

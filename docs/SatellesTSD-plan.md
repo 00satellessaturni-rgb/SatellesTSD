@@ -169,7 +169,7 @@ The TÖR export and the bank statements are still the only inputs the firm has; 
 |---|---|---|---|
 | S0 | Solution layout | Core / Infrastructure / App / Tests projects, SQLite + ClosedXML + xUnit packages, settings file, git init | 2 |
 | S1 | **Core engine** — BUILT 2026-11-03, see section 7 | Tax engine (2026 rules, matrix table per VALJAMLIIK code, A1 and non-resident variants, allocation across a month) + XBRL GL writer/reader + file validator + XSD validation against the APA-restricted schema set (`schemas/apa-tsd`, assembled from the stat.ee package, the xbrl.org XBRL 2.1 schemas and MTA's restricted XSDs); 82 tests reproduce MTA's example file (read → write identical, schema-valid) and its eight worked lines | 12 |
-| S2 | Feedback + confirmation | Feedback report parser (both vocabularies, the four colours, the parser traps) → per-payment outcome; `confirmDeclaration` XML builder (unsigned); tests on the five MTA samples | 5 |
+| S2 | Feedback + confirmation — BUILT 2026-11-03, see section 7 | Feedback report parser (both vocabularies, the four colours, the parser traps) → per-payment outcome with the resend advice; `confirmDeclaration` XML builder (unsigned) + its XSD; tests on MTA's seven samples | 5 |
 | S3 | Store | SQLite schema + repositories; `lineNumber` registry; period states; migrations. Also the review's point: a `Check` that returns refusals with stable codes per payment (today the engine throws on a mis-coded row, which a grid cannot list) | 6 |
 | S4 | Imports | TÖR parser; statement layouts from JSON (all 14, incl. mojibake variants); CSV statements; the "Kassa" payroll sheet; tests on anonymised real exports you provide | 8 |
 | S5 | Matching + categories | Port of the name search (masks, aliases, uniqueness), category patterns (`Like` → regex), period filter, the second pass over unmatched lines; tests with the workbook's own CONFIG patterns | 8 |
@@ -200,6 +200,20 @@ Total before X-tee ≈ 78 h.
 4. A1 facts of a person are ignored on a type that has no such variant (rent, sick pay); no error.
 5. An unknown pension rate is a refusal, not a 2 % default.
 6. A person's exemption pool and minimum are fixed for the month; a payment's own facts may differ only in residency, A1 and treaty.
+
+### S2 — what landed (2026-11-03, 118 tests green, not yet committed)
+
+- `Feedback/FeedbackReader` reads MTA's tagasisideraport (submission or confirmation): namespace-tolerant, trims the stray spaces in MTA's codes, accepts a missing counter on black errors, a header without a section, decimal commas and dots; refuses a report without any entryHeader; a ZIP (two or more messages) is recognised by its bytes, not its name, and each entry keeps its name as `Source`.
+- `Feedback/FeedbackReport.Outcomes(submittedActions)` — one outcome per payment line: the server's verdict (errorLevel), the worst colour, the messages worst-first, the server's own tax figures, anything unrecognised kept in `Unclassified`, and the **resend advice**: blue/red → M; black → depends on what we sent (R → R again, M → M again, T or unknown → review); rule `KR_XBRL_VALJAMAKSED_4` (R on an existing key) → M, `_5` (M/T on an unknown key) → R, `KR_VM_05` (wrong type or section) → review. Section-level validations without a line surface as `GeneralValidations`; a confirmation report answers `ConfirmationResult()` (Confirmed / StillProcessing / WithErrors / WithDiscrepancies / CannotConfirm) and `Totals()`.
+- `Confirmation/ConfirmationWriter` writes `confirmDeclaration` exactly as MTA's sample and its XSD (reproduced element for element); `ConfirmDeclaration.ForTsd(...)` takes the accountant's facts — which sections hold data (PAYMENTS plus any annex filed by hand in e-MTA) and all seven totals, refusing a missing one; `DeclaredTaxTotals.OfFile` adds up ONE file's taxes as a cross-check only.
+- `Xbrl/SchemaValidation` validates against one self-contained XSD; both validators now count .NET's "unknown element" warnings as problems (an undeclared root used to pass silently).
+- `schemas/apa-tsd/feedback` and `/confirmation` hold MTA's XSDs; MTA's own 2026-09 colour sample fails its 2026-03 feedback XSD (no counter on black lines) — the reader tolerates it on purpose.
+
+**Decisions made inside S2 (for veto)**
+7. Red ranks above blue (red stops the month's confirmation; blue hides a line's taxes); the sources do not rank them.
+8. A black error on a line whose sent action the caller does not give is "review", never "resend as R".
+9. The confirmation's sections and totals are the accountant's input from e-MTA's summary form; the app never guesses an annex or a total. The ASiC-E signing is not in the app (plan 4.4).
+10. On DECLARATION_PROCESSING a new confirmation is started later; the old one is not polled again (XTEE §7.5).
 
 **Settled by the refuters' research (emta.ee, riigiteataja.ee, 2026-11-03)**
 - SM kuumäär 2026 = **886** (minimum SM 292.38); 820 was the 2025 value, MTA's example XML Tehing_21117 is simply out of date.

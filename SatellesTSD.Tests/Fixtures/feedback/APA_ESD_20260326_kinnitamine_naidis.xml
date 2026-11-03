@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<confirmDeclaration>
+    <personCode>48304052720</personCode>
+    <declaration>Kinnitan andmete õigsust</declaration> 
+    <taxablePersonIdentifier>70001975</taxablePersonIdentifier> 
+    <taxablePersonIdentifierType>ARIREGISTRIKOOD</taxablePersonIdentifierType> 
+    <declarationType>ESD</declarationType> 
+    <month>10</month> 
+    <year>2026</year>
+    <sections> 
+        <sectionItem> 
+            <section>ESM_SM</section> 
+            <hasData>true</hasData>
+        </sectionItem>
+        <sectionItem> 
+            <section>ESM_KP</section> 
+            <hasData>true</hasData>
+        </sectionItem>
+    </sections> 
+    <taxSums> 
+        <taxSum> 
+            <taxType>ESM_SM_KOKKU</taxType> 
+            <taxAmount>4014.43</taxAmount> 
+        </taxSum> 
+        <taxSum> 
+            <taxType>ESM_KP_KOKKU</taxType> 
+            <taxAmount>200.00</taxAmount> 
+        </taxSum>
+    </taxSums> 
+</confirmDeclaration>
