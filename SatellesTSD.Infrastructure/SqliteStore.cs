@@ -306,6 +306,24 @@ public sealed partial class SqliteStore : IStore
     [GeneratedRegex(@"^(?<reg>[^-]+)-(?<ym>\d{6})-(?<sec>01|02)-(?<n>\d+)$")]
     private static partial Regex CounterKey();
 
+    /// <summary>A bank row feeds one line: a second key pointing at the same row is refused (the versions of one key
+    /// share it). A dead key — one whose T was accepted — holds nothing any more: the payment's new key takes the row.</summary>
+    private void RequireRowFree(Guid rowId, Guid periodId, Section section, string lineNumber)
+    {
+        var other = Scalar<string?>(
+            """
+            SELECT p.section || ' ' || p.line_number FROM payment p
+            WHERE p.source_row_id = $row AND NOT (p.period_id = $period AND p.section = $section AND p.line_number = $line)
+              AND NOT EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.action = $t AND d.status = $cancelled)
+            LIMIT 1
+            """,
+            ("$row", G(rowId)), ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$t", LineAction.T.ToString()), ("$cancelled", PaymentStatus.Cancelled.ToString()));
+        if (other is not null)
+        {
+            throw new InvalidOperationException($"The bank row already feeds line {other}; a row is declared once.");
+        }
+    }
+
     public StoredPayment AddPayment(StoredPayment payment)
     {
         ArgumentNullException.ThrowIfNull(payment);
@@ -326,6 +344,7 @@ public sealed partial class SqliteStore : IStore
         if (sourceRowId is { } row && linkedRow is null)
         {
             RequireRowOf(row, period.CompanyId);
+            RequireRowFree(row, payment.PeriodId, payment.Section, payment.LineNumber);
         }
 
         ReserveSuppliedKey(period, payment.Section, payment.LineNumber); // after every refusal, so a refused line never moves the counter
@@ -395,6 +414,7 @@ public sealed partial class SqliteStore : IStore
             }
 
             RequireRowOf(fresh, RequirePeriod(current.PeriodId).CompanyId);
+            RequireRowFree(fresh, current.PeriodId, current.Section, current.LineNumber);
         }
 
         var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now(), SourceRowId = sourceRowId };
@@ -893,6 +913,60 @@ public sealed partial class SqliteStore : IStore
             updated_at TEXT NOT NULL);
         ALTER TABLE payment ADD COLUMN source_row_id TEXT REFERENCES statement_row(id);
         CREATE INDEX payment_by_source_row ON payment (source_row_id);
+        """,
+
+        // v3 — matching: the owner's match catalog, and each period's run (persons, sources, every hit) as the run said it.
+        """
+        CREATE TABLE match_catalog (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            json TEXT NOT NULL,
+            updated_at TEXT NOT NULL);
+        CREATE TABLE match_run (
+            id TEXT PRIMARY KEY,
+            period_id TEXT NOT NULL UNIQUE REFERENCES period(id),
+            tor_sheet_id TEXT REFERENCES import_sheet(id),
+            run_at TEXT NOT NULL,
+            catalog_json TEXT NOT NULL,
+            problems_json TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE match_person (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES match_run(id),
+            ord INTEGER NOT NULL,
+            person_key TEXT NOT NULL,
+            personal_code TEXT,
+            last_name TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            active_entry_id TEXT REFERENCES tor_entry(id),
+            entry_ids_json TEXT NOT NULL DEFAULT '[]',
+            UNIQUE (run_id, person_key));
+        CREATE TABLE match_source (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES match_run(id),
+            ord INTEGER NOT NULL,
+            sheet_id TEXT NOT NULL REFERENCES import_sheet(id),
+            name TEXT NOT NULL,
+            layout_id TEXT NOT NULL,
+            UNIQUE (run_id, sheet_id),
+            UNIQUE (run_id, name));
+        CREATE INDEX match_source_by_sheet ON match_source (sheet_id);
+        CREATE TABLE match_hit (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES match_run(id),
+            ord INTEGER NOT NULL,
+            source_id TEXT NOT NULL REFERENCES match_source(id),
+            row_id TEXT NOT NULL REFERENCES statement_row(id),
+            person_id TEXT REFERENCES match_person(id),
+            last_mask TEXT NOT NULL DEFAULT '',
+            first_mask TEXT NOT NULL DEFAULT '',
+            mask_used INTEGER NOT NULL DEFAULT 0,
+            verdict_kind TEXT NOT NULL,
+            category TEXT,
+            matched_json TEXT NOT NULL DEFAULT '[]',
+            text TEXT NOT NULL DEFAULT '',
+            in_period INTEGER NOT NULL,
+            counted INTEGER NOT NULL,
+            flags_json TEXT NOT NULL DEFAULT '[]');
+        CREATE INDEX match_hit_by_row ON match_hit (row_id);
         """,
     ];
 

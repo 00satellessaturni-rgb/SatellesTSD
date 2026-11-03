@@ -166,6 +166,11 @@ public sealed partial class SqliteStore
             throw new InvalidOperationException($"The period is {period.State}; the files of its run stay as its record.");
         }
 
+        if (RunsUsing(fileId, periodId) > 0)
+        {
+            throw new InvalidOperationException("The period's match run took this file; clear the run (or run again without the file) first.");
+        }
+
         Exec("DELETE FROM period_import WHERE period_id = $period AND file_id = $file", ("$period", G(periodId)), ("$file", G(fileId)));
         tx.Commit();
     }
@@ -195,6 +200,12 @@ public sealed partial class SqliteStore
         if (sentPeriods > 0)
         {
             throw new InvalidOperationException($"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.");
+        }
+
+        var runs = RunsUsing(fileId);
+        if (runs > 0)
+        {
+            throw new InvalidOperationException($"{runs} match run(s) took this file; clear them (or run again without the file) first.");
         }
 
         Exec("DELETE FROM period_import WHERE file_id = $file", ("$file", G(fileId)));

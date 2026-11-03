@@ -13,7 +13,7 @@ public class RealDataTests
 
     private static readonly Importer Importer = new(LayoutCatalog.Default, new ExcelTableReader());
 
-    private static string? Folder
+    internal static string? Folder
     {
         get
         {

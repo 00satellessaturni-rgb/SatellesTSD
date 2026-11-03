@@ -7,7 +7,7 @@ namespace SatellesTSD.Core.Store;
 /// key and version history, the files sent and the feedback received. One implementation per database engine; the
 /// key rules live in <see cref="LineKeyRules"/> so that they are the same everywhere. The imported files and their
 /// rows are the <see cref="IImportStore"/> half.</summary>
-public interface IStore : IImportStore
+public interface IStore : IImportStore, IMatchStore
 {
     Company AddCompany(string registryCode, string name, string? notes = null);
 

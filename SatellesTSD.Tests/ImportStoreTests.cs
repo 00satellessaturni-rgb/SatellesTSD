@@ -213,11 +213,28 @@ public class ImportStoreTests
             Assert.Throws<KeyNotFoundException>(() => store.AddPayment(Draft(store, period, person, LineAction.R, Guid.NewGuid(), "10235688-202610-01-050")));
             Assert.Equal("10235688-202610-01-005", store.NewLineNumber(period.Id, Section.EE0201001));
 
-            // a draft may be re-pointed at another row of the company, never at a foreign one
-            var draft = store.AddPayment(Draft(store, period, person, LineAction.R, rows[0].Id));
-            Assert.Equal(rows[2].Id, store.ReplaceDraft(draft.Id, draft with { SourceRowId = rows[2].Id }).SourceRowId);
+            // a bank row feeds one key: a second key on the row of the accepted R is refused, on add and on re-pointing
+            Assert.Contains("already feeds line", Assert.Throws<InvalidOperationException>(() => store.AddPayment(Draft(store, period, person, LineAction.R, rows[0].Id))).Message);
+            var draft = store.AddPayment(Draft(store, period, person, LineAction.R, rows[2].Id));
+            Assert.Contains("already feeds line", Assert.Throws<InvalidOperationException>(() => store.ReplaceDraft(draft.Id, draft with { SourceRowId = rows[0].Id })).Message);
             Assert.Throws<InvalidOperationException>(() => store.ReplaceDraft(draft.Id, draft with { SourceRowId = foreignRow.Id }));
+            Assert.Equal("10235688-202610-01-008", store.NewLineNumber(period.Id, Section.EE0201001)); // the fixture drew 006 and 007 above; the refused line itself moved nothing
+
+            // a draft may be re-pointed at a free row of the company, never at a foreign one
+            store.DeleteDraft(draft.Id);
+            var byHand2 = store.AddPayment(Draft(store, period, person, LineAction.R, null));
+            Assert.Equal(rows[2].Id, store.ReplaceDraft(byHand2.Id, byHand2 with { SourceRowId = rows[2].Id }).SourceRowId);
+            Assert.Throws<InvalidOperationException>(() => store.ReplaceDraft(byHand2.Id, byHand2 with { SourceRowId = foreignRow.Id }));
             Assert.NotNull(submission);
+
+            // a dead key (its T accepted) holds its bank row no more: the payment's new key, sent as R, takes the row
+            var cancel = store.AddPayment(StoredPayment.New(period.Id, person.Id, Section.EE0201001, PaymentLine.Cancellation(r.LineNumber, 0), null, null));
+            store.AddSubmission(period.Id, "tsd-t.xml", "uid-t", [cancel.Id], DateTime.UtcNow);
+            store.ResolveLine(cancel.Id, onServer: true);
+            var again = store.AddPayment(Draft(store, period, person, LineAction.R, rows[0].Id));
+            Assert.Equal(rows[0].Id, again.SourceRowId);
+            Assert.NotEqual(r.LineNumber, again.LineNumber);
+            Assert.Contains("already feeds line", Assert.Throws<InvalidOperationException>(() => store.AddPayment(Draft(store, period, person, LineAction.R, rows[0].Id))).Message);
         }
     }
 
@@ -376,9 +393,10 @@ public class ImportStoreTests
         // a shipped migration script is never edited: an existing firm file already ran it; a change goes in the next script
         var hashes = SqliteStore.MigrationScripts.Select(s => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s.Replace("\r\n", "\n"))))).ToList();
 
-        Assert.Equal(2, hashes.Count);
+        Assert.Equal(3, hashes.Count);
         Assert.Equal("c765c3c39d8e978730321685f8b5d5d0f69b47668a23679b819baec2b24ed59c", hashes[0]); // v1 as committed in 3c86599
-        Assert.Equal("001c1f2471e82c2701c5dc910d6d6d158ac6b73fcef7e7eab78d9bde8097fcf7", hashes[1]); // v2 as committed with S4
+        Assert.Equal("001c1f2471e82c2701c5dc910d6d6d158ac6b73fcef7e7eab78d9bde8097fcf7", hashes[1]); // v2 as committed in 5a89cc8
+        Assert.Equal("9b309118542e3ea9e46d0ed0e928a41f255b66a5837c9b3be0a69559c2b5dda3", hashes[2]); // v3 as committed with S5
     }
 
     [Fact]

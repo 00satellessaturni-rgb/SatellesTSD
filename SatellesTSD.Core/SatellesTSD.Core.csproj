@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Import\layouts.json" LogicalName="SatellesTSD.Core.Import.layouts.json" />
+    <EmbeddedResource Include="Matching\matching.json" LogicalName="SatellesTSD.Core.Matching.matching.json" />
   </ItemGroup>
 
 </Project>
