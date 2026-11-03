@@ -170,7 +170,7 @@ The TÖR export and the bank statements are still the only inputs the firm has; 
 | S0 | Solution layout | Core / Infrastructure / App / Tests projects, SQLite + ClosedXML + xUnit packages, settings file, git init | 2 |
 | S1 | **Core engine** — BUILT 2026-11-03, see section 7 | Tax engine (2026 rules, matrix table per VALJAMLIIK code, A1 and non-resident variants, allocation across a month) + XBRL GL writer/reader + file validator + XSD validation against the APA-restricted schema set (`schemas/apa-tsd`, assembled from the stat.ee package, the xbrl.org XBRL 2.1 schemas and MTA's restricted XSDs); 82 tests reproduce MTA's example file (read → write identical, schema-valid) and its eight worked lines | 12 |
 | S2 | Feedback + confirmation — BUILT 2026-11-03, see section 7 | Feedback report parser (both vocabularies, the four colours, the parser traps) → per-payment outcome with the resend advice; `confirmDeclaration` XML builder (unsigned) + its XSD; tests on MTA's seven samples | 5 |
-| S3 | Store | SQLite schema + repositories; `lineNumber` registry; period states; migrations. Also the review's point: a `Check` that returns refusals with stable codes per payment (today the engine throws on a mis-coded row, which a grid cannot list) | 6 |
+| S3 | Store — BUILT 2026-11-03, see section 7 | SQLite store (`SatellesTSD.Infrastructure`): companies, people with their facts, periods, the permanent-key counter, declared lines with version history and the R/M/T rules, submissions, append-only feedback; `PaymentChecks` with stable refusal codes. The import tables (statement layouts, categories, source rows) come with S4/S5 as schema v2 | 6 |
 | S4 | Imports | TÖR parser; statement layouts from JSON (all 14, incl. mojibake variants); CSV statements; the "Kassa" payroll sheet; tests on anonymised real exports you provide | 8 |
 | S5 | Matching + categories | Port of the name search (masks, aliases, uniqueness), category patterns (`Like` → regex), period filter, the second pass over unmatched lines; tests with the workbook's own CONFIG patterns | 8 |
 | S6 | Lookups | Residency + II-pillar adapters (HttpClient + HTML parsing), cache, manual override, "checked on" | 6 |
@@ -214,6 +214,20 @@ Total before X-tee ≈ 78 h.
 8. A black error on a line whose sent action the caller does not give is "review", never "resend as R".
 9. The confirmation's sections and totals are the accountant's input from e-MTA's summary form; the app never guesses an annex or a total. The ASiC-E signing is not in the app (plan 4.4).
 10. On DECLARATION_PROCESSING a new confirmation is started later; the old one is not polled again (XTEE §7.5).
+
+### S3 — what landed (2026-11-03, 156 tests green, not yet committed)
+
+- `SatellesTSD.Infrastructure/SqliteStore` (Microsoft.Data.Sqlite 10, raw SQL, one connection, pooling off): schema v1 created on first open, later versions by a migration list, a newer file refused. Tables: company, person, period, line_counter, submission, payment (one row per version), line_feedback (append-only).
+- `Core/Store`: `Company`, `Person` (every fact the engine needs plus the two "checked on" dates; `FactsFor(year)` turns it into the month's facts, `PayeeId` picks EE+isikukood or the MRR code), `Period` with its state, `StoredPayment` (one version of a declared line: the line as declared, the facts and figures it came from, the bank net, the source reference), `Submission` (file, uniqueID, uuid, result, the report's general findings), `LineFeedback` (everything a report said about a version: verdict, colour, counter, messages, server taxes, unclassified items).
+- The permanent-key rules (`LineKeyRules`): R only while the key was never on the server, M/T only while it is, nothing after an accepted T, nothing while a T awaits its verdict, one draft per key at a time. Keys come from a per-period-and-section counter (`<regcode>-<yyyyMM>-<01|02>-<nnn>`, never reused); a hand-supplied key in that format moves the counter past itself.
+- Feedback only resolves versions still pending (Sent/Review); nothing MTA already answered is ever downgraded; a black `KR_XBRL_VALJAMAKSED_4` proves the key is on the server, a black `_5` proves it is not and rejects the key's pending versions; a refused file rejects the pending versions and keeps the file's own message; a report naming a foreign line, or a confirmation report, is refused. `Payments()` shows the standing version per key (a refused attempt never hides what MTA holds). The manual channel is served by `ResolveLine` (the accountant's word on a pending line) and `WithdrawSubmission` (an export never uploaded). `ReplaceDraft` and `InTransaction` give the grid an edit and a unit of work.
+- `Core/Tax/PaymentChecks`: thirteen refusal codes mirroring every throw of the engine, allocator, zero-line helper and line factory.
+- Review: two Opus lenses; their findings (a later report undoing a saved state, stuck Sent lines, the refused attempt shown as current, lossy feedback, the confirmation report taken for a submission's, no edit and no unit of work, the key collision, the look-alike person fixture) are all folded.
+
+**Decisions made inside S3 (for veto)**
+11. One SQLite file per firm; JSON snapshots of the facts, figures and line per version (a golden test pins the v1 shape; a field added later must carry a default).
+12. A pending line is resolved by the accountant's word when the feedback is only on e-MTA's screen; a black verdict never downgrades what MTA already saved.
+13. The import tables (statement layouts, categories, imported rows with a proper link from a declared line to its bank row) come as schema v2 with S4/S5, when their shape is known.
 
 **Settled by the refuters' research (emta.ee, riigiteataja.ee, 2026-11-03)**
 - SM kuumäär 2026 = **886** (minimum SM 292.38); 820 was the 2025 value, MTA's example XML Tehing_21117 is simply out of date.

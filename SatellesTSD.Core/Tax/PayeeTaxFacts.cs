@@ -9,7 +9,7 @@ namespace SatellesTSD.Core.Tax;
 /// <param name="Residency">Resident or non-resident for tax purposes on the control date.</param>
 /// <param name="ResidenceCountry">ISO country code of tax residence; required for a non-resident (RR_MAKSURESIDENTSUSE_RIIK).</param>
 /// <param name="FundedPensionMember">II pillar contributions are being withheld (liitunud, maksed ei ole lõppenud); null = not checked.</param>
-/// <param name="PensionRate">The person's own II-pillar rate (0.02, 0.04 or 0.06); null = unknown, the default rate is used.</param>
+/// <param name="PensionRate">The person's own II-pillar rate (0.02, 0.04 or 0.06); null = unknown, refused wherever the pension is withheld.</param>
 /// <param name="OnOldAgeOrFlexiblePension">On vanaduspension or paindlik vanaduspension as of the month before the payment: no TSD_TK (KR_TK_2).</param>
 /// <param name="PensionAgeThisYear">Reaches old-age pension age in the calendar year (or already has): MVT_650 instead of MVT_610 (KR_MVT_04/05).</param>
 /// <param name="BasicExemptionApplied">The person has asked this payer to apply the basic exemption (maksuvaba tulu avaldus).

@@ -1,0 +1,847 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
+using SatellesTSD.Core.Feedback;
+using SatellesTSD.Core.Model;
+using SatellesTSD.Core.Store;
+using SatellesTSD.Core.Tax;
+using SatellesTSD.Core.Xbrl;
+
+namespace SatellesTSD.Infrastructure;
+
+/// <summary>The firm's store in one SQLite file (or in memory for tests). One open connection, one user at a time;
+/// every write runs in a transaction, and <see cref="InTransaction"/> joins several into one. The schema is created on
+/// first open and upgraded step by step by <see cref="Migrations"/>; a file from a newer build is refused.</summary>
+public sealed partial class SqliteStore : IStore
+{
+    public static int SchemaVersion => Migrations.Count;
+
+    /// <summary>The v1 JSON shape of the snapshots (facts, result, line) is pinned by a golden test; a positional
+    /// parameter added later must carry a default, or old rows read back wrong without a word.</summary>
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private readonly SqliteConnection _connection;
+    private SqliteTransaction? _transaction;
+
+    private SqliteStore(SqliteConnection connection)
+    {
+        _connection = connection;
+    }
+
+    /// <summary>Opens (and creates or upgrades) the store at <paramref name="path"/>. Pooling is off: one desktop user,
+    /// one connection, and the file is released the moment the store is disposed.</summary>
+    public static SqliteStore Open(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, ForeignKeys = true, Pooling = false }.ToString());
+        connection.Open();
+        var store = new SqliteStore(connection);
+        try
+        {
+            store.EnsureSchema();
+        }
+        catch
+        {
+            store.Dispose();
+            throw;
+        }
+
+        return store;
+    }
+
+    /// <summary>A store that lives only as long as this object (tests).</summary>
+    public static SqliteStore InMemory()
+    {
+        var connection = new SqliteConnection("Data Source=:memory:;Foreign Keys=True");
+        connection.Open();
+        var store = new SqliteStore(connection);
+        store.EnsureSchema();
+        return store;
+    }
+
+    public void Dispose()
+    {
+        _transaction?.Dispose();
+        _connection.Dispose();
+    }
+
+    public void InTransaction(Action work)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        using var tx = Tx();
+        work();
+        tx.Commit();
+    }
+
+    // ---------------------------------------------------------------- companies
+
+    public Company AddCompany(string registryCode, string name, string? notes = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(registryCode);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        var company = new Company(Guid.NewGuid(), registryCode.Trim(), name.Trim(), Clean(notes));
+        using var tx = Tx();
+        Exec("INSERT INTO company (id, registry_code, name, notes) VALUES ($id, $code, $name, $notes)",
+            ("$id", G(company.Id)), ("$code", company.RegistryCode), ("$name", company.Name), ("$notes", company.Notes));
+        tx.Commit();
+        return company;
+    }
+
+    public Company? FindCompany(string registryCode) =>
+        Query(CompanySelect + " WHERE registry_code = $code", ReadCompany, ("$code", registryCode.Trim())).SingleOrDefault();
+
+    public IReadOnlyList<Company> Companies() => Query(CompanySelect + " ORDER BY name", ReadCompany);
+
+    public void UpdateCompany(Company company)
+    {
+        ArgumentNullException.ThrowIfNull(company);
+        using var tx = Tx();
+        var changed = Exec("UPDATE company SET registry_code = $code, name = $name, notes = $notes WHERE id = $id",
+            ("$id", G(company.Id)), ("$code", company.RegistryCode.Trim()), ("$name", company.Name.Trim()), ("$notes", Clean(company.Notes)));
+        if (changed == 0)
+        {
+            throw new KeyNotFoundException($"Company {company.Id} is not in the store.");
+        }
+
+        tx.Commit();
+    }
+
+    private const string CompanySelect = "SELECT id, registry_code, name, notes FROM company";
+
+    private static Company ReadCompany(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), r.GetString(1), r.GetString(2), Str(r, 3));
+
+    // ---------------------------------------------------------------- persons
+
+    public Person AddPerson(Person person)
+    {
+        ArgumentNullException.ThrowIfNull(person);
+        var stored = Normalize(person) with { Id = person.Id == Guid.Empty ? Guid.NewGuid() : person.Id };
+        using var tx = Tx();
+        Exec(
+            """
+            INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
+                                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
+                                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes)
+            VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
+                    $member, $rate, $pchecked, $onpension, $pensionyear,
+                    $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes)
+            """,
+            PersonParameters(stored));
+        tx.Commit();
+        return stored;
+    }
+
+    public void UpdatePerson(Person person)
+    {
+        ArgumentNullException.ThrowIfNull(person);
+        using var tx = Tx();
+        var changed = Exec(
+            """
+            UPDATE person SET company_id = $company, first_name = $first, last_name = $last, personal_code = $code, mrr_code = $mrr,
+                residency = $residency, residence_country = $country, residency_checked_on = $rchecked,
+                funded_pension_member = $member, pension_rate = $rate, pension_checked_on = $pchecked, on_pension = $onpension, pension_age_year = $pensionyear,
+                exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
+                a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes
+            WHERE id = $id
+            """,
+            PersonParameters(Normalize(person)));
+        if (changed == 0)
+        {
+            throw new KeyNotFoundException($"Person {person.Id} is not in the store.");
+        }
+
+        tx.Commit();
+    }
+
+    public IReadOnlyList<Person> Persons(Guid companyId) =>
+        Query(PersonSelect + " WHERE company_id = $company ORDER BY last_name, first_name", ReadPerson, ("$company", G(companyId)));
+
+    public Person? FindPerson(Guid companyId, string personalCode) =>
+        Query(PersonSelect + " WHERE company_id = $company AND personal_code = $code", ReadPerson, ("$company", G(companyId)), ("$code", personalCode.Trim())).SingleOrDefault();
+
+    /// <summary>Trimmed text; an empty code is no code (NULL), so two code-less people do not collide on the unique index.</summary>
+    private static Person Normalize(Person p) => p with
+    {
+        FirstName = p.FirstName.Trim(),
+        LastName = p.LastName.Trim(),
+        PersonalCode = Clean(p.PersonalCode),
+        MrrCode = Clean(p.MrrCode),
+        ResidenceCountry = Clean(p.ResidenceCountry),
+        A1Country = Clean(p.A1Country),
+        WorkCountry = Clean(p.WorkCountry),
+        TorEmploymentTypeId = Clean(p.TorEmploymentTypeId),
+        Notes = Clean(p.Notes),
+    };
+
+    private const string PersonSelect =
+        """
+        SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
+               funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
+               exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes
+        FROM person
+        """;
+
+    private static (string, object?)[] PersonParameters(Person p) =>
+    [
+        ("$id", G(p.Id)), ("$company", G(p.CompanyId)), ("$first", p.FirstName), ("$last", p.LastName), ("$code", p.PersonalCode), ("$mrr", p.MrrCode),
+        ("$residency", p.Residency.ToString()), ("$country", p.ResidenceCountry), ("$rchecked", D(p.ResidencyCheckedOn)),
+        ("$member", p.FundedPensionMember is null ? null : p.FundedPensionMember.Value ? 1 : 0), ("$rate", N(p.PensionRate)), ("$pchecked", D(p.PensionCheckedOn)),
+        ("$onpension", p.OnOldAgeOrFlexiblePension ? 1 : 0), ("$pensionyear", p.PensionAgeYear),
+        ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
+        ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
+    ];
+
+    private static Person ReadPerson(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2), r.GetString(3), Str(r, 4), Str(r, 5),
+        Enum.Parse<Residency>(r.GetString(6)), Str(r, 7), Date(r, 8),
+        r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
+        r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22));
+
+    // ---------------------------------------------------------------- periods
+
+    public Period GetOrCreatePeriod(Guid companyId, int year, int month)
+    {
+        if (month is < 1 or > 12)
+        {
+            throw new ArgumentOutOfRangeException(nameof(month));
+        }
+
+        using var tx = Tx();
+        var existing = Query(PeriodSelect + " WHERE company_id = $company AND year = $year AND month = $month", ReadPeriod,
+            ("$company", G(companyId)), ("$year", year), ("$month", month)).SingleOrDefault();
+        if (existing is not null)
+        {
+            tx.Commit();
+            return existing;
+        }
+
+        var period = new Period(Guid.NewGuid(), companyId, year, month, PeriodState.Draft, null, null, null);
+        Exec("INSERT INTO period (id, company_id, year, month, state) VALUES ($id, $company, $year, $month, $state)",
+            ("$id", G(period.Id)), ("$company", G(companyId)), ("$year", year), ("$month", month), ("$state", period.State.ToString()));
+        tx.Commit();
+        return period;
+    }
+
+    public void SetPeriodState(Guid periodId, PeriodState state, DateTime at)
+    {
+        var column = state switch
+        {
+            PeriodState.Exported => "exported_at",
+            PeriodState.Uploaded => "uploaded_at",
+            PeriodState.Confirmed => "confirmed_at",
+            _ => null,
+        };
+        using var tx = Tx();
+        var changed = column is null
+            ? Exec("UPDATE period SET state = $state WHERE id = $id", ("$id", G(periodId)), ("$state", state.ToString()))
+            : Exec($"UPDATE period SET state = $state, {column} = $at WHERE id = $id", ("$id", G(periodId)), ("$state", state.ToString()), ("$at", T(at)));
+        if (changed == 0)
+        {
+            throw new KeyNotFoundException($"Period {periodId} is not in the store.");
+        }
+
+        tx.Commit();
+    }
+
+    public IReadOnlyList<Period> Periods(Guid companyId) =>
+        Query(PeriodSelect + " WHERE company_id = $company ORDER BY year, month", ReadPeriod, ("$company", G(companyId)));
+
+    private const string PeriodSelect = "SELECT id, company_id, year, month, state, exported_at, uploaded_at, confirmed_at FROM period";
+
+    private static Period ReadPeriod(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), (int)r.GetInt64(2), (int)r.GetInt64(3), Enum.Parse<PeriodState>(r.GetString(4)),
+        Time(r, 5), Time(r, 6), Time(r, 7));
+
+    private Period RequirePeriod(Guid periodId) =>
+        Query(PeriodSelect + " WHERE id = $id", ReadPeriod, ("$id", G(periodId))).SingleOrDefault()
+        ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
+
+    // ---------------------------------------------------------------- keys and payments
+
+    public string NewLineNumber(Guid periodId, Section section)
+    {
+        using var tx = Tx();
+        var period = RequirePeriod(periodId);
+        var company = Query(CompanySelect + " WHERE id = $id", ReadCompany, ("$id", G(period.CompanyId))).Single();
+        var next = Scalar<long?>("SELECT next FROM line_counter WHERE period_id = $period AND section = $section", ("$period", G(periodId)), ("$section", section.ToString())) ?? 1;
+        SetCounter(periodId, section, next + 1);
+        tx.Commit();
+        return KeyFor(company.RegistryCode, period, section, next);
+    }
+
+    private static string KeyFor(string registryCode, Period period, Section section, long number) =>
+        $"{registryCode}-{period.Year:0000}{period.Month:00}-{SectionCode(section)}-{number:000}";
+
+    private static string SectionCode(Section section) => section == Section.EE0201001 ? "01" : "02";
+
+    private void SetCounter(Guid periodId, Section section, long next) =>
+        Exec("INSERT INTO line_counter (period_id, section, next) VALUES ($period, $section, $next) ON CONFLICT(period_id, section) DO UPDATE SET next = $next",
+            ("$period", G(periodId)), ("$section", section.ToString()), ("$next", next));
+
+    /// <summary>A caller-supplied key in the counter's own format moves the counter past it.</summary>
+    private void ReserveSuppliedKey(Period period, Section section, string lineNumber)
+    {
+        var company = Query(CompanySelect + " WHERE id = $id", ReadCompany, ("$id", G(period.CompanyId))).Single();
+        var match = CounterKey().Match(lineNumber);
+        if (!match.Success || match.Groups["reg"].Value != company.RegistryCode
+            || match.Groups["ym"].Value != $"{period.Year:0000}{period.Month:00}" || match.Groups["sec"].Value != SectionCode(section))
+        {
+            return;
+        }
+
+        var number = long.Parse(match.Groups["n"].Value, CultureInfo.InvariantCulture);
+        var next = Scalar<long?>("SELECT next FROM line_counter WHERE period_id = $period AND section = $section", ("$period", G(period.Id)), ("$section", section.ToString())) ?? 1;
+        if (number >= next)
+        {
+            SetCounter(period.Id, section, number + 1);
+        }
+    }
+
+    [GeneratedRegex(@"^(?<reg>[^-]+)-(?<ym>\d{6})-(?<sec>01|02)-(?<n>\d+)$")]
+    private static partial Regex CounterKey();
+
+    public StoredPayment AddPayment(StoredPayment payment)
+    {
+        ArgumentNullException.ThrowIfNull(payment);
+        ValidateShape(payment);
+        using var tx = Tx();
+        var period = RequirePeriod(payment.PeriodId);
+        var history = History(payment.PeriodId, payment.Section, payment.LineNumber);
+        LineKeyRules.Check(payment.Action, history);
+        ReserveSuppliedKey(period, payment.Section, payment.LineNumber);
+        var stored = payment with
+        {
+            Id = Guid.NewGuid(),
+            Version = history.Count == 0 ? 1 : history[^1].Version + 1,
+            Status = PaymentStatus.Draft,
+            SubmissionId = null,
+            CreatedAt = Now(),
+        };
+        InsertPayment(stored);
+        tx.Commit();
+        return stored;
+    }
+
+    public StoredPayment ReplaceDraft(Guid paymentId, StoredPayment replacement)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        ValidateShape(replacement);
+        using var tx = Tx();
+        var current = Query(PaymentSelect + " WHERE id = $id", ReadPayment, ("$id", G(paymentId))).SingleOrDefault()
+            ?? throw new KeyNotFoundException($"Payment {paymentId} is not in the store.");
+        if (current.Status != PaymentStatus.Draft)
+        {
+            throw new InvalidOperationException($"Only a Draft version can be replaced; this one is {current.Status}.");
+        }
+
+        if (replacement.PeriodId != current.PeriodId || replacement.Section != current.Section || replacement.LineNumber != current.LineNumber || replacement.Action != current.Action)
+        {
+            throw new InvalidOperationException("A replacement keeps the draft's period, section, key and action; for anything else delete the draft and add a new line.");
+        }
+
+        var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now() };
+        Exec("DELETE FROM payment WHERE id = $id", ("$id", G(paymentId)));
+        InsertPayment(stored);
+        tx.Commit();
+        return stored;
+    }
+
+    private static void ValidateShape(StoredPayment payment)
+    {
+        if (string.IsNullOrWhiteSpace(payment.LineNumber) || payment.LineNumber != payment.Line.LineNumber)
+        {
+            throw new ArgumentException("The payment's LineNumber must equal its Line.LineNumber.", nameof(payment));
+        }
+
+        if (payment.Action != payment.Line.Action)
+        {
+            throw new ArgumentException("The payment's Action must equal its Line.Action.", nameof(payment));
+        }
+
+        if (payment.Action != LineAction.T && (payment.Facts is null || payment.Result is null))
+        {
+            throw new ArgumentException("An R or M needs the facts and the result it was computed from.", nameof(payment));
+        }
+    }
+
+    private void InsertPayment(StoredPayment stored) =>
+        Exec(
+            """
+            INSERT INTO payment (id, period_id, person_id, section, line_number, version, action, status, type_code, payment_date, gross, net_paid, source_ref,
+                                 payee_code, payee_description, facts_json, result_json, line_json, submission_id, created_at)
+            VALUES ($id, $period, $person, $section, $line, $version, $action, $status, $type, $date, $gross, $net, $source,
+                    $payee, $payeeType, $facts, $result, $lineJson, NULL, $created)
+            """,
+            ("$id", G(stored.Id)), ("$period", G(stored.PeriodId)), ("$person", stored.PersonId is { } p ? G(p) : null), ("$section", stored.Section.ToString()),
+            ("$line", stored.LineNumber), ("$version", stored.Version), ("$action", stored.Action.ToString()), ("$status", stored.Status.ToString()),
+            ("$type", stored.Line.TypeCode), ("$date", D(stored.Line.DocumentDate)), ("$gross", N(stored.Line.Amount)), ("$net", N(stored.NetPaid)), ("$source", Clean(stored.SourceRef)),
+            ("$payee", stored.Line.Payee?.Code), ("$payeeType", stored.Line.Payee?.Description),
+            ("$facts", stored.Facts is null ? null : JsonSerializer.Serialize(stored.Facts, Json)),
+            ("$result", stored.Result is null ? null : JsonSerializer.Serialize(stored.Result, Json)),
+            ("$lineJson", JsonSerializer.Serialize(stored.Line, Json)), ("$created", T(stored.CreatedAt)));
+
+    public IReadOnlyList<StoredPayment> Payments(Guid periodId)
+    {
+        var all = Query(PaymentSelect + " WHERE period_id = $period ORDER BY section, line_number, version", ReadPayment, ("$period", G(periodId)));
+        return all
+            .GroupBy(p => (p.Section, p.LineNumber))
+            .Select(versions => versions.LastOrDefault(v => v.Status != PaymentStatus.Rejected) ?? versions.Last())
+            .ToList();
+    }
+
+    public IReadOnlyList<StoredPayment> History(Guid periodId, Section section, string lineNumber) =>
+        Query(PaymentSelect + " WHERE period_id = $period AND section = $section AND line_number = $line ORDER BY version", ReadPayment,
+            ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber));
+
+    public void DeleteDraft(Guid paymentId)
+    {
+        using var tx = Tx();
+        var changed = Exec("DELETE FROM payment WHERE id = $id AND status = $draft", ("$id", G(paymentId)), ("$draft", PaymentStatus.Draft.ToString()));
+        if (changed == 0)
+        {
+            throw new InvalidOperationException("Only a Draft version can be deleted; anything sent is history.");
+        }
+
+        tx.Commit();
+    }
+
+    private const string PaymentSelect =
+        """
+        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at
+        FROM payment
+        """;
+
+    private static StoredPayment ReadPayment(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.IsDBNull(2) ? null : Guid.Parse(r.GetString(2)),
+        Enum.Parse<Section>(r.GetString(3)), r.GetString(4), (int)r.GetInt64(5), Enum.Parse<LineAction>(r.GetString(6)), Enum.Parse<PaymentStatus>(r.GetString(7)),
+        JsonSerializer.Deserialize<PaymentLine>(r.GetString(10), Json)!,
+        r.IsDBNull(8) ? null : JsonSerializer.Deserialize<PayeeTaxFacts>(r.GetString(8), Json),
+        r.IsDBNull(9) ? null : JsonSerializer.Deserialize<TaxResult>(r.GetString(9), Json),
+        Dec(r, 11), Str(r, 12), r.IsDBNull(13) ? null : Guid.Parse(r.GetString(13)), Time(r, 14) ?? default);
+
+    // ---------------------------------------------------------------- submissions and feedback
+
+    public Submission AddSubmission(Guid periodId, string fileName, string uniqueId, IReadOnlyCollection<Guid> paymentIds, DateTime at)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(uniqueId);
+        ArgumentNullException.ThrowIfNull(paymentIds);
+        if (paymentIds.Count == 0)
+        {
+            throw new ArgumentException("A file carries at least one line.", nameof(paymentIds));
+        }
+
+        using var tx = Tx();
+        var submission = new Submission(Guid.NewGuid(), periodId, Truncate(at), fileName, uniqueId, null, null, null, []);
+        Exec("INSERT INTO submission (id, period_id, created_at, file_name, unique_id, general_json) VALUES ($id, $period, $at, $file, $unique, '[]')",
+            ("$id", G(submission.Id)), ("$period", G(periodId)), ("$at", T(submission.CreatedAt)), ("$file", fileName), ("$unique", uniqueId));
+        foreach (var paymentId in paymentIds)
+        {
+            var changed = Exec("UPDATE payment SET status = $sent, submission_id = $submission WHERE id = $id AND period_id = $period AND status = $draft",
+                ("$id", G(paymentId)), ("$period", G(periodId)), ("$sent", PaymentStatus.Sent.ToString()), ("$submission", G(submission.Id)), ("$draft", PaymentStatus.Draft.ToString()));
+            if (changed == 0)
+            {
+                throw new InvalidOperationException($"Payment {paymentId} is not a Draft of period {periodId}; only drafts go into a new file.");
+            }
+        }
+
+        tx.Commit();
+        return submission;
+    }
+
+    public void WithdrawSubmission(Guid submissionId)
+    {
+        using var tx = Tx();
+        var submission = Query(SubmissionSelect + " WHERE id = $id", ReadSubmission, ("$id", G(submissionId))).SingleOrDefault()
+            ?? throw new KeyNotFoundException($"Submission {submissionId} is not in the store.");
+        bool answered = submission.Result is not null
+            || Scalar<long>("SELECT COUNT(*) FROM line_feedback WHERE submission_id = $id", ("$id", G(submissionId))) > 0
+            || Scalar<long>("SELECT COUNT(*) FROM payment WHERE submission_id = $id AND status <> $sent", ("$id", G(submissionId)), ("$sent", PaymentStatus.Sent.ToString())) > 0;
+        if (answered)
+        {
+            throw new InvalidOperationException("The submission already has a verdict on it (feedback or a line resolved by hand); it was uploaded and cannot be withdrawn.");
+        }
+
+        Exec("UPDATE payment SET status = $draft, submission_id = NULL WHERE submission_id = $id AND status = $sent",
+            ("$id", G(submissionId)), ("$draft", PaymentStatus.Draft.ToString()), ("$sent", PaymentStatus.Sent.ToString()));
+        Exec("DELETE FROM submission WHERE id = $id", ("$id", G(submissionId)));
+        tx.Commit();
+    }
+
+    public void SetSubmissionUuid(Guid submissionId, string uuid)
+    {
+        using var tx = Tx();
+        if (Exec("UPDATE submission SET uuid = $uuid WHERE id = $id", ("$id", G(submissionId)), ("$uuid", uuid)) == 0)
+        {
+            throw new KeyNotFoundException($"Submission {submissionId} is not in the store.");
+        }
+
+        tx.Commit();
+    }
+
+    public IReadOnlyList<LineFeedback> RecordFeedback(Guid submissionId, FeedbackReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        if (report.Kind != ReportKind.Submission)
+        {
+            throw new InvalidOperationException("This is a confirmation report, not a submission's feedback; it says nothing about individual lines.");
+        }
+
+        using var tx = Tx();
+        var sent = Query(PaymentSelect + " WHERE submission_id = $submission", ReadPayment, ("$submission", G(submissionId)));
+        if (sent.Count == 0)
+        {
+            throw new KeyNotFoundException($"Submission {submissionId} has no lines (or is not in the store).");
+        }
+
+        var byKey = sent.ToDictionary(p => new LineKey(p.Section.ToString(), p.LineNumber));
+        var outcomes = report.Outcomes(sent.ToDictionary(p => new LineKey(p.Section.ToString(), p.LineNumber), p => p.Action));
+        var foreign = outcomes.Where(o => !byKey.ContainsKey(new LineKey(o.EntryNumber, o.LineNumber))).Select(o => $"{o.EntryNumber}/{o.LineNumber}").ToList();
+        if (foreign.Count > 0)
+        {
+            throw new InvalidOperationException($"The report names lines this file did not carry ({string.Join(", ", foreign)}); it belongs to another submission.");
+        }
+
+        var recordedAt = Now();
+        Exec("UPDATE submission SET result = $result, feedback_source = $source, general_json = $general WHERE id = $id",
+            ("$id", G(submissionId)), ("$result", report.Result.ToString()), ("$source", report.Source), ("$general", JsonSerializer.Serialize(report.GeneralValidations, Json)));
+
+        var feedback = new List<LineFeedback>();
+        if (report.FileRefused)
+        {
+            // Nothing in the file was saved; only the versions still awaiting a verdict learn anything from that.
+            var fileMessages = report.FileValidations
+                .Select(v => new ResponseItem(v.Code, "ERROR_BLACK", v.Description, v.DescriptionEn, v.DescriptionRu))
+                .ToList();
+            foreach (var payment in sent.Where(p => p.Pending))
+            {
+                SetStatus(payment.Id, PaymentStatus.Rejected);
+                feedback.Add(AppendFeedback(new LineFeedback(payment.Id, submissionId, recordedAt, ValidationLevel.Error, null, Severity.Black,
+                    FeedbackReport.ActionFor(Severity.Black, payment.Action, []), fileMessages, new Dictionary<string, decimal>(), [])));
+            }
+
+            tx.Commit();
+            return feedback;
+        }
+
+        foreach (var outcome in outcomes)
+        {
+            var payment = byKey[new LineKey(outcome.EntryNumber, outcome.LineNumber)];
+            var codes = outcome.Messages.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
+            if (payment.Pending)
+            {
+                var status = outcome.Severity switch
+                {
+                    Severity.None or Severity.Warning => payment.Action == LineAction.T ? PaymentStatus.Cancelled : PaymentStatus.Accepted,
+                    Severity.Blue or Severity.Red => payment.Action == LineAction.T ? PaymentStatus.Review : PaymentStatus.NeedsChange,
+                    // "R on a known key": the key IS on the server; this very version may have got there with an earlier upload.
+                    Severity.Black when codes.Contains(FeedbackReport.RuleNewOnExistingKey) => PaymentStatus.Review,
+                    Severity.Black => PaymentStatus.Rejected,
+                    _ => PaymentStatus.Review,
+                };
+                SetStatus(payment.Id, status);
+            }
+
+            if (outcome.Severity == Severity.Black && codes.Contains(FeedbackReport.RuleChangeOnUnknownKey))
+            {
+                // "M or T on an unknown key": the key is not on the server, whatever an earlier pending version presumed.
+                foreach (var earlier in History(payment.PeriodId, payment.Section, payment.LineNumber).Where(v => v.Id != payment.Id && v.Pending))
+                {
+                    SetStatus(earlier.Id, PaymentStatus.Rejected);
+                }
+            }
+
+            feedback.Add(AppendFeedback(new LineFeedback(payment.Id, submissionId, recordedAt, outcome.Level, outcome.Counter, outcome.Severity, outcome.NextAction,
+                outcome.Messages, outcome.ServerTaxes, outcome.Unclassified)));
+        }
+
+        tx.Commit();
+        return feedback;
+    }
+
+    public void ResolveLine(Guid paymentId, bool onServer)
+    {
+        using var tx = Tx();
+        var payment = Query(PaymentSelect + " WHERE id = $id", ReadPayment, ("$id", G(paymentId))).SingleOrDefault()
+            ?? throw new KeyNotFoundException($"Payment {paymentId} is not in the store.");
+        if (!payment.Pending)
+        {
+            throw new InvalidOperationException($"Only a Sent or Review version can be resolved by hand; this one is {payment.Status}.");
+        }
+
+        var status = !onServer ? PaymentStatus.Rejected : payment.Action == LineAction.T ? PaymentStatus.Cancelled : PaymentStatus.Accepted;
+        SetStatus(payment.Id, status);
+        tx.Commit();
+    }
+
+    private LineFeedback AppendFeedback(LineFeedback row)
+    {
+        Exec(
+            """
+            INSERT INTO line_feedback (payment_id, submission_id, recorded_at, level, counter, severity, next_action, messages_json, server_taxes_json, unclassified_json)
+            VALUES ($payment, $submission, $at, $level, $counter, $severity, $action, $messages, $taxes, $unclassified)
+            """,
+            ("$payment", G(row.PaymentId)), ("$submission", G(row.SubmissionId)), ("$at", T(row.RecordedAt)), ("$level", row.Level.ToString()), ("$counter", row.Counter),
+            ("$severity", row.Severity.ToString()), ("$action", row.NextAction.ToString()),
+            ("$messages", JsonSerializer.Serialize(row.Messages, Json)), ("$taxes", JsonSerializer.Serialize(row.ServerTaxes, Json)), ("$unclassified", JsonSerializer.Serialize(row.Unclassified, Json)));
+        return row;
+    }
+
+    public IReadOnlyList<Submission> Submissions(Guid periodId) =>
+        Query(SubmissionSelect + " WHERE period_id = $period ORDER BY created_at", ReadSubmission, ("$period", G(periodId)));
+
+    private const string SubmissionSelect = "SELECT id, period_id, created_at, file_name, unique_id, uuid, result, feedback_source, general_json FROM submission";
+
+    private static Submission ReadSubmission(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, r.GetString(3), r.GetString(4), Str(r, 5),
+        r.IsDBNull(6) ? null : Enum.Parse<ProcessingResult>(r.GetString(6)), Str(r, 7),
+        JsonSerializer.Deserialize<List<GeneralValidation>>(r.GetString(8), Json)!);
+
+    public IReadOnlyList<LineFeedback> Feedback(Guid paymentId) =>
+        Query("SELECT payment_id, submission_id, recorded_at, level, counter, severity, next_action, messages_json, server_taxes_json, unclassified_json FROM line_feedback WHERE payment_id = $payment ORDER BY recorded_at", r => new LineFeedback(
+            Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, Enum.Parse<ValidationLevel>(r.GetString(3)), r.IsDBNull(4) ? null : (int)r.GetInt64(4),
+            Enum.Parse<Severity>(r.GetString(5)), Enum.Parse<NextAction>(r.GetString(6)),
+            JsonSerializer.Deserialize<List<ResponseItem>>(r.GetString(7), Json)!, JsonSerializer.Deserialize<Dictionary<string, decimal>>(r.GetString(8), Json)!,
+            JsonSerializer.Deserialize<List<ResponseItem>>(r.GetString(9), Json)!),
+            ("$payment", G(paymentId)));
+
+    private void SetStatus(Guid paymentId, PaymentStatus status) =>
+        Exec("UPDATE payment SET status = $status WHERE id = $id", ("$id", G(paymentId)), ("$status", status.ToString()));
+
+    // ---------------------------------------------------------------- schema
+
+    private void EnsureSchema()
+    {
+        Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+        var version = (int)(Scalar<long?>("SELECT MAX(version) FROM schema_version") ?? 0);
+        if (version > SchemaVersion)
+        {
+            throw new InvalidOperationException($"The store is at schema version {version}, newer than this build ({SchemaVersion}).");
+        }
+
+        for (var step = version; step < SchemaVersion; step++)
+        {
+            using var tx = Tx();
+            Exec(Migrations[step]);
+            Exec("INSERT INTO schema_version (version) VALUES ($v)", ("$v", step + 1));
+            tx.Commit();
+        }
+    }
+
+    /// <summary>One SQL script per schema version, applied in order; a store at version n gets scripts n+1 … N.</summary>
+    private static readonly IReadOnlyList<string> Migrations =
+    [
+        // v1 — companies, people, periods, the key counter, declared lines with versions, submissions, feedback.
+        """
+        CREATE TABLE company (
+            id TEXT PRIMARY KEY,
+            registry_code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            notes TEXT);
+        CREATE TABLE person (
+            id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL REFERENCES company(id),
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            personal_code TEXT,
+            mrr_code TEXT,
+            residency TEXT NOT NULL,
+            residence_country TEXT,
+            residency_checked_on TEXT,
+            funded_pension_member INTEGER,
+            pension_rate TEXT,
+            pension_checked_on TEXT,
+            on_pension INTEGER NOT NULL DEFAULT 0,
+            pension_age_year INTEGER,
+            exemption_applied INTEGER NOT NULL DEFAULT 0,
+            exemption_monthly TEXT,
+            minimum_applies INTEGER NOT NULL DEFAULT 1,
+            a1_case TEXT NOT NULL DEFAULT 'None',
+            a1_country TEXT,
+            work_country TEXT,
+            treaty_rate TEXT,
+            tor_type_id TEXT,
+            notes TEXT,
+            UNIQUE (company_id, personal_code));
+        CREATE TABLE period (
+            id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL REFERENCES company(id),
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            exported_at TEXT,
+            uploaded_at TEXT,
+            confirmed_at TEXT,
+            UNIQUE (company_id, year, month));
+        CREATE TABLE line_counter (
+            period_id TEXT NOT NULL REFERENCES period(id),
+            section TEXT NOT NULL,
+            next INTEGER NOT NULL,
+            PRIMARY KEY (period_id, section));
+        CREATE TABLE submission (
+            id TEXT PRIMARY KEY,
+            period_id TEXT NOT NULL REFERENCES period(id),
+            created_at TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            unique_id TEXT NOT NULL,
+            uuid TEXT,
+            result TEXT,
+            feedback_source TEXT,
+            general_json TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE payment (
+            id TEXT PRIMARY KEY,
+            period_id TEXT NOT NULL REFERENCES period(id),
+            person_id TEXT REFERENCES person(id),
+            section TEXT NOT NULL,
+            line_number TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            status TEXT NOT NULL,
+            type_code TEXT,
+            payment_date TEXT,
+            gross TEXT,
+            net_paid TEXT,
+            source_ref TEXT,
+            payee_code TEXT,
+            payee_description TEXT,
+            facts_json TEXT,
+            result_json TEXT,
+            line_json TEXT NOT NULL,
+            submission_id TEXT REFERENCES submission(id),
+            created_at TEXT NOT NULL,
+            UNIQUE (period_id, section, line_number, version));
+        CREATE INDEX payment_by_submission ON payment (submission_id);
+        CREATE TABLE line_feedback (
+            payment_id TEXT NOT NULL REFERENCES payment(id),
+            submission_id TEXT NOT NULL REFERENCES submission(id),
+            recorded_at TEXT NOT NULL,
+            level TEXT NOT NULL,
+            counter INTEGER,
+            severity TEXT NOT NULL,
+            next_action TEXT NOT NULL,
+            messages_json TEXT NOT NULL,
+            server_taxes_json TEXT NOT NULL,
+            unclassified_json TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (payment_id, submission_id, recorded_at));
+        """,
+    ];
+
+    // ---------------------------------------------------------------- helpers
+
+    /// <summary>Joins the active transaction or starts one; the outermost scope commits or rolls back.</summary>
+    private Scope Tx()
+    {
+        if (_transaction is not null)
+        {
+            return new Scope(this, owner: false);
+        }
+
+        _transaction = _connection.BeginTransaction();
+        return new Scope(this, owner: true);
+    }
+
+    private sealed class Scope(SqliteStore store, bool owner) : IDisposable
+    {
+        private bool _committed;
+
+        public void Commit()
+        {
+            if (owner)
+            {
+                store._transaction!.Commit();
+                store._transaction.Dispose();
+                store._transaction = null;
+            }
+
+            _committed = true;
+        }
+
+        public void Dispose()
+        {
+            if (owner && !_committed && store._transaction is not null)
+            {
+                store._transaction.Rollback();
+                store._transaction.Dispose();
+                store._transaction = null;
+            }
+        }
+    }
+
+    private int Exec(string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        return command.ExecuteNonQuery();
+    }
+
+    private T Scalar<T>(string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        var result = command.ExecuteScalar();
+        return result is null or DBNull ? default! : (T)result;
+    }
+
+    private IReadOnlyList<T> Query<T>(string sql, Func<SqliteDataReader, T> map, params (string Name, object? Value)[] parameters)
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        using var reader = command.ExecuteReader();
+        var rows = new List<T>();
+        while (reader.Read())
+        {
+            rows.Add(map(reader));
+        }
+
+        return rows;
+    }
+
+    /// <summary>Times are stored to the millisecond, so what a call returns is exactly what a later read gives back.</summary>
+    private static DateTime Now() => Truncate(DateTime.UtcNow);
+
+    private static DateTime Truncate(DateTime time)
+    {
+        var utc = time.ToUniversalTime();
+        return new DateTime(utc.Ticks - utc.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+    }
+
+    private static string? Clean(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private static string G(Guid id) => id.ToString("N");
+
+    private static string? D(DateOnly? date) => date?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static string T(DateTime time) => time.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+
+    private static string? N(decimal? value) => value?.ToString(CultureInfo.InvariantCulture);
+
+    private static string? Str(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+
+    private static decimal? Dec(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : decimal.Parse(r.GetString(i), CultureInfo.InvariantCulture);
+
+    private static DateOnly? Date(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : DateOnly.ParseExact(r.GetString(i), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static DateTime? Time(SqliteDataReader r, int i) =>
+        r.IsDBNull(i) ? null : DateTime.ParseExact(r.GetString(i), "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
+}

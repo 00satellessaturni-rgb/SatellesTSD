@@ -314,6 +314,7 @@ public class FeedbackReaderTests
         var general = Assert.Single(report.GeneralValidations);
         Assert.Equal("EE0201001", general.EntryNumber);
         Assert.Equal("KR_SECTION_X", general.Validation.Code);
+        Assert.Equal(ValidationLevel.Error, general.Validation.Level);
         Assert.True(report.HasGeneralError);
         Assert.False(report.FileRefused);
         Assert.Equal(ReportKind.Submission, report.Kind);

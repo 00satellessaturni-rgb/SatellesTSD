@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SatellesTSD.Core", "Satelle
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SatellesTSD.Tests", "SatellesTSD.Tests\SatellesTSD.Tests.csproj", "{7E85068D-AB12-40E9-94A4-81E9BFB4D66F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SatellesTSD.Infrastructure", "SatellesTSD.Infrastructure\SatellesTSD.Infrastructure.csproj", "{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{7E85068D-AB12-40E9-94A4-81E9BFB4D66F}.Release|x64.Build.0 = Release|Any CPU
 		{7E85068D-AB12-40E9-94A4-81E9BFB4D66F}.Release|x86.ActiveCfg = Release|Any CPU
 		{7E85068D-AB12-40E9-94A4-81E9BFB4D66F}.Release|x86.Build.0 = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|x64.Build.0 = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Debug|x86.Build.0 = Debug|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|x64.ActiveCfg = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|x64.Build.0 = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|x86.ActiveCfg = Release|Any CPU
+		{5B58B8B1-E4FC-4A74-8A37-A416239DBD1E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

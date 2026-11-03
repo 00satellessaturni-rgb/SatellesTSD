@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SatellesTSD.Core\SatellesTSD.Core.csproj" />
+    <ProjectReference Include="..\SatellesTSD.Infrastructure\SatellesTSD.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>

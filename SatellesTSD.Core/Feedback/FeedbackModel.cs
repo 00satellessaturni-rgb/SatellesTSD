@@ -96,6 +96,9 @@ public sealed record Validation(
     string? DescriptionRu,
     IReadOnlyList<LineRef> Lines);
 
+/// <summary>A validation that points at no line: about the file (EntryNumber null) or about a whole section.</summary>
+public sealed record GeneralValidation(string? EntryNumber, Validation Validation);
+
 /// <summary>One data block under responseData/entryDetail: either a tax the server computed (code = TAXCODE_enum,
 /// description = the tax's name, info = the amount) or a message (code = rule id, description = the colour, info = text),
 /// or, in a confirmation report, a declaration total (code 110…119).</summary>
@@ -181,8 +184,8 @@ public sealed record FeedbackReport(ProcessingResult Result, string ResultRaw, I
 
     /// <summary>Every validation that points at no line, with the section it sits in (null = file level). Nothing a
     /// section says about itself is lost here even though <see cref="Outcomes"/> cannot place it on a line.</summary>
-    public IReadOnlyList<(string? EntryNumber, Validation Validation)> GeneralValidations =>
-        Sections.SelectMany(s => s.GeneralValidations.Select(v => (s.EntryNumber, v))).ToList();
+    public IReadOnlyList<GeneralValidation> GeneralValidations =>
+        Sections.SelectMany(s => s.GeneralValidations.Select(v => new GeneralValidation(s.EntryNumber, v))).ToList();
 
     /// <summary>True when the report holds only a file-level block that carries an error: a submission refused as a
     /// whole before its payments were looked at, or a confirmation that was not accepted.</summary>
