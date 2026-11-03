@@ -1,0 +1,297 @@
+using System.Globalization;
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Store;
+
+namespace SatellesTSD.Infrastructure;
+
+/// <summary>The import half of the store: files, sheets, rows, the files a period used, the owner's layouts.</summary>
+public sealed partial class SqliteStore
+{
+    public ImportFile? FindImport(Guid companyId, string sha256) =>
+        Query(ImportFileSelect + " WHERE company_id = $company AND sha256 = $sha", ReadImportFile, ("$company", G(companyId)), ("$sha", sha256.Trim().ToLowerInvariant())).SingleOrDefault();
+
+    public ImportFile AddImport(Guid companyId, ParsedImport import, byte[] content, string? notes = null)
+    {
+        ArgumentNullException.ThrowIfNull(import);
+        ArgumentNullException.ThrowIfNull(content);
+        if (import.Kind is not { } kind)
+        {
+            throw new ImportException($"{import.FileName} has no recognised sheet; nothing to store.");
+        }
+
+        // the hash is the stored bytes' own: a parse that came from other bytes would make the blob a false witness
+        var sha256 = Importer.Sha256Of(content);
+        if (content.LongLength != import.Size || !string.Equals(sha256, import.Sha256?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"{import.FileName}: the parsed import does not belong to these bytes (size or hash differ).", nameof(content));
+        }
+
+        using var tx = Tx();
+        var earlier = FindImport(companyId, sha256);
+        if (earlier is not null)
+        {
+            throw new ImportException($"{import.FileName} was already imported on {earlier.ImportedAt:yyyy-MM-dd HH:mm} as {earlier.FileName}.");
+        }
+
+        var file = new ImportFile(Guid.NewGuid(), companyId, kind, import.FileName, import.Format, sha256, content.LongLength, Now(), Clean(notes), import.Encoding);
+        Exec(
+            """
+            INSERT INTO import_file (id, company_id, kind, file_name, format, sha256, size, imported_at, encoding, notes, content)
+            VALUES ($id, $company, $kind, $name, $format, $sha, $size, $at, $encoding, $notes, $content)
+            """,
+            ("$id", G(file.Id)), ("$company", G(companyId)), ("$kind", kind.ToString()), ("$name", file.FileName), ("$format", file.Format.ToString()),
+            ("$sha", file.Sha256), ("$size", file.Size), ("$at", T(file.ImportedAt)), ("$encoding", file.Encoding), ("$notes", file.Notes), ("$content", content));
+
+        // what the reader had to make do with (a quote never closed) travels with the sheet: a CSV has exactly one
+        var readerProblems = import.Warnings.Select(w => new ImportProblem(null, ImportProblem.ReaderWarning, w)).ToList();
+        foreach (var sheet in import.Recognised)
+        {
+            var sheetId = Guid.NewGuid();
+            if (sheet.Statement is { } statement)
+            {
+                InsertSheet(sheetId, file.Id, sheet, SheetKind.Statement, statement.Layout.Id, LayoutCatalog.ToJson(statement.Layout), statement.HeaderRowNo, statement.Headers,
+                    statement.Account, statement.DisplayName, statement.Rows.Count, statement.FirstDate, statement.LastDate, [.. statement.Problems, .. readerProblems]);
+                foreach (var row in statement.Rows)
+                {
+                    InsertStatementRow(Guid.NewGuid(), sheetId, row);
+                }
+            }
+            else if (sheet.Tor is { } tor)
+            {
+                InsertSheet(sheetId, file.Id, sheet, SheetKind.Tor, null, null, tor.HeaderRowNo, tor.Headers, null, "TÖR", tor.Entries.Count, null, null, [.. tor.Problems, .. readerProblems]);
+                foreach (var entry in tor.Entries)
+                {
+                    InsertTorEntry(Guid.NewGuid(), sheetId, companyId, entry);
+                }
+            }
+        }
+
+        tx.Commit();
+        return file;
+    }
+
+    private void InsertSheet(Guid id, Guid fileId, ImportedSheet sheet, SheetKind kind, string? layoutId, string? layoutJson, int headerRowNo, IReadOnlyList<string> headers,
+        string? account, string displayName, int rowCount, DateOnly? firstDate, DateOnly? lastDate, IReadOnlyList<ImportProblem> problems) =>
+        Exec(
+            """
+            INSERT INTO import_sheet (id, file_id, sheet_index, sheet_name, kind, layout_id, layout_json, header_row_no, headers_json, account, display_name, row_count, first_date, last_date, problems_json)
+            VALUES ($id, $file, $index, $name, $kind, $layout, $layoutJson, $headerRow, $headers, $account, $display, $count, $first, $last, $problems)
+            """,
+            ("$id", G(id)), ("$file", G(fileId)), ("$index", sheet.Index), ("$name", Clean(sheet.Name)), ("$kind", kind.ToString()), ("$layout", layoutId), ("$layoutJson", layoutJson),
+            ("$headerRow", headerRowNo), ("$headers", JsonSerializer.Serialize(headers, LayoutCatalog.CompactJson)), ("$account", Clean(account)), ("$display", displayName),
+            ("$count", rowCount), ("$first", D(firstDate)), ("$last", D(lastDate)), ("$problems", JsonSerializer.Serialize(problems, LayoutCatalog.CompactJson)));
+
+    private void InsertStatementRow(Guid id, Guid sheetId, StatementRow row) =>
+        Exec(
+            """
+            INSERT INTO statement_row (id, sheet_id, row_no, date, date_text, account, counterparty, counterparty_code, amount, amount_text, currency, description, reference,
+                                       transaction_id, direction, dc_text, skip_reason, problem, row_hash, cells_json)
+            VALUES ($id, $sheet, $row, $date, $dateText, $account, $name, $code, $amount, $amountText, $currency, $description, $reference,
+                    $tx, $direction, $dc, $skip, $problem, $hash, $cells)
+            """,
+            ("$id", G(id)), ("$sheet", G(sheetId)), ("$row", row.RowNo), ("$date", D(row.Date)), ("$dateText", row.DateText), ("$account", row.Account), ("$name", row.Counterparty),
+            ("$code", row.CounterpartyCode), ("$amount", N(row.Amount)), ("$amountText", row.AmountText), ("$currency", row.Currency), ("$description", row.Description),
+            ("$reference", row.Reference), ("$tx", row.TransactionId), ("$direction", row.Direction.ToString()), ("$dc", row.DcText), ("$skip", row.SkipReason), ("$problem", row.Problem),
+            ("$hash", row.RowHash), ("$cells", StatementParser.CellsJson(row.Cells)));
+
+    private void InsertTorEntry(Guid id, Guid sheetId, Guid companyId, TorEntry entry) =>
+        Exec(
+            """
+            INSERT INTO tor_entry (id, sheet_id, row_no, company_id, tor_id, personal_code, first_name, last_name, country, start_date, end_date, type_id, type, state_id, state,
+                                   termination_id, termination, employer_code, employer_name, problem, cells_json)
+            VALUES ($id, $sheet, $row, $company, $tor, $code, $first, $last, $country, $start, $end, $typeId, $type, $stateId, $state,
+                    $terminationId, $termination, $employerCode, $employerName, $problem, $cells)
+            """,
+            ("$id", G(id)), ("$sheet", G(sheetId)), ("$row", entry.RowNo), ("$company", G(companyId)), ("$tor", entry.TorId), ("$code", entry.PersonalCode),
+            ("$first", entry.FirstName), ("$last", entry.LastName), ("$country", entry.Country), ("$start", D(entry.StartDate)), ("$end", D(entry.EndDate)),
+            ("$typeId", entry.TypeId), ("$type", entry.Type), ("$stateId", entry.StateId), ("$state", entry.State), ("$terminationId", entry.TerminationId), ("$termination", entry.Termination),
+            ("$employerCode", entry.EmployerCode), ("$employerName", entry.EmployerName), ("$problem", entry.Problem), ("$cells", StatementParser.CellsJson(entry.Cells)));
+
+    public IReadOnlyList<ImportFile> Imports(Guid companyId) =>
+        Query(ImportFileSelect + " WHERE company_id = $company ORDER BY imported_at, import_file.rowid", ReadImportFile, ("$company", G(companyId)));
+
+    public byte[]? ImportContent(Guid fileId) => Scalar<byte[]?>("SELECT content FROM import_file WHERE id = $id", ("$id", G(fileId)));
+
+    public IReadOnlyList<ImportSheet> Sheets(Guid fileId) =>
+        Query(ImportSheetSelect + " WHERE file_id = $file ORDER BY sheet_index", ReadImportSheet, ("$file", G(fileId)));
+
+    public ImportSheet? Sheet(Guid sheetId) => Query(ImportSheetSelect + " WHERE id = $id", ReadImportSheet, ("$id", G(sheetId))).SingleOrDefault();
+
+    public IReadOnlyList<StoredStatementRow> StatementRows(Guid sheetId) =>
+        Query(StatementRowSelect + " WHERE sheet_id = $sheet ORDER BY row_no", ReadStatementRow, ("$sheet", G(sheetId)));
+
+    public IReadOnlyList<StoredStatementRow> StatementRows(Guid companyId, DateOnly from, DateOnly to) =>
+        Query(
+            StatementRowSelect + """
+             JOIN import_sheet s ON s.id = statement_row.sheet_id
+             JOIN import_file f ON f.id = s.file_id
+            WHERE f.company_id = $company AND statement_row.skip_reason IS NULL AND statement_row.date >= $from AND statement_row.date <= $to
+            ORDER BY statement_row.date, f.imported_at, f.rowid, s.sheet_index, statement_row.row_no
+            """,
+            ReadStatementRow, ("$company", G(companyId)), ("$from", D(from)), ("$to", D(to)));
+
+    public StoredStatementRow? StatementRow(Guid rowId) =>
+        Query(StatementRowSelect + " WHERE statement_row.id = $id", ReadStatementRow, ("$id", G(rowId))).SingleOrDefault();
+
+    public IReadOnlyList<StoredTorEntry> TorEntries(Guid companyId, Guid? fileId = null) =>
+        fileId is { } file
+            ? Query(TorEntrySelect + " JOIN import_sheet s ON s.id = tor_entry.sheet_id WHERE tor_entry.company_id = $company AND s.file_id = $file ORDER BY s.sheet_index, tor_entry.row_no",
+                ReadTorEntry, ("$company", G(companyId)), ("$file", G(file)))
+            : Query(TorEntrySelect + " JOIN import_sheet s ON s.id = tor_entry.sheet_id JOIN import_file f ON f.id = s.file_id WHERE tor_entry.company_id = $company ORDER BY f.imported_at, f.rowid, s.sheet_index, tor_entry.row_no",
+                ReadTorEntry, ("$company", G(companyId)));
+
+    public void LinkImport(Guid periodId, Guid fileId)
+    {
+        using var tx = Tx();
+        var period = RequirePeriod(periodId);
+        var file = Query(ImportFileSelect + " WHERE id = $id", ReadImportFile, ("$id", G(fileId))).SingleOrDefault()
+            ?? throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+        if (file.CompanyId != period.CompanyId)
+        {
+            throw new InvalidOperationException("The file belongs to another company than the period.");
+        }
+
+        Exec("INSERT OR IGNORE INTO period_import (period_id, file_id) VALUES ($period, $file)", ("$period", G(periodId)), ("$file", G(fileId)));
+        tx.Commit();
+    }
+
+    public void UnlinkImport(Guid periodId, Guid fileId)
+    {
+        using var tx = Tx();
+        var period = RequirePeriod(periodId);
+        if (period.State != PeriodState.Draft)
+        {
+            throw new InvalidOperationException($"The period is {period.State}; the files of its run stay as its record.");
+        }
+
+        Exec("DELETE FROM period_import WHERE period_id = $period AND file_id = $file", ("$period", G(periodId)), ("$file", G(fileId)));
+        tx.Commit();
+    }
+
+    public IReadOnlyList<ImportFile> PeriodImports(Guid periodId) =>
+        Query(ImportFileSelect + " JOIN period_import p ON p.file_id = import_file.id WHERE p.period_id = $period ORDER BY imported_at, import_file.rowid", ReadImportFile, ("$period", G(periodId)));
+
+    public void RemoveImport(Guid fileId)
+    {
+        using var tx = Tx();
+        var linked = Scalar<long>(
+            """
+            SELECT COUNT(*) FROM payment p
+              JOIN statement_row r ON r.id = p.source_row_id
+              JOIN import_sheet s ON s.id = r.sheet_id
+            WHERE s.file_id = $file
+            """,
+            ("$file", G(fileId)));
+        if (linked > 0)
+        {
+            throw new InvalidOperationException($"{linked} declared line(s) came from this file; it stays as their source.");
+        }
+
+        var sentPeriods = Scalar<long>(
+            "SELECT COUNT(*) FROM period_import pi JOIN period p ON p.id = pi.period_id WHERE pi.file_id = $file AND p.state <> $draft",
+            ("$file", G(fileId)), ("$draft", PeriodState.Draft.ToString()));
+        if (sentPeriods > 0)
+        {
+            throw new InvalidOperationException($"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.");
+        }
+
+        Exec("DELETE FROM period_import WHERE file_id = $file", ("$file", G(fileId)));
+        Exec("DELETE FROM statement_row WHERE sheet_id IN (SELECT id FROM import_sheet WHERE file_id = $file)", ("$file", G(fileId)));
+        Exec("DELETE FROM tor_entry WHERE sheet_id IN (SELECT id FROM import_sheet WHERE file_id = $file)", ("$file", G(fileId)));
+        Exec("DELETE FROM import_sheet WHERE file_id = $file", ("$file", G(fileId)));
+        if (Exec("DELETE FROM import_file WHERE id = $file", ("$file", G(fileId))) == 0)
+        {
+            throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+        }
+
+        tx.Commit();
+    }
+
+    public IReadOnlyList<StatementLayout> Layouts() =>
+        Query("SELECT json FROM statement_layout ORDER BY id", r => LayoutCatalog.FromJson(r.GetString(0)));
+
+    public void SaveLayout(StatementLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        var problems = layout.Problems();
+        if (problems.Count > 0)
+        {
+            throw new ImportException("The layout cannot be saved:\n" + string.Join("\n", problems));
+        }
+
+        using var tx = Tx();
+        try
+        {
+            // the catalog it will be merged into must stay usable: a header row another layout already has would break every later import
+            LayoutCatalog.Default.WithOverrides(Layouts().Where(l => l.Id != layout.Id).Append(layout));
+        }
+        catch (ImportException e)
+        {
+            throw new ImportException("The layout cannot be saved:\n" + e.Message, e);
+        }
+
+        Exec("INSERT INTO statement_layout (id, json, updated_at) VALUES ($id, $json, $at) ON CONFLICT(id) DO UPDATE SET json = $json, updated_at = $at",
+            ("$id", layout.Id), ("$json", LayoutCatalog.ToJson(layout)), ("$at", T(Now())));
+        tx.Commit();
+    }
+
+    public void DeleteLayout(string layoutId)
+    {
+        using var tx = Tx();
+        try
+        {
+            // removing an override of a default brings the default's header row back; it must not collide with another saved layout
+            LayoutCatalog.Default.WithOverrides(Layouts().Where(l => l.Id != layoutId));
+        }
+        catch (ImportException e)
+        {
+            throw new ImportException("The layout cannot be deleted:\n" + e.Message, e);
+        }
+
+        Exec("DELETE FROM statement_layout WHERE id = $id", ("$id", layoutId));
+        tx.Commit();
+    }
+
+    private const string ImportFileSelect =
+        "SELECT import_file.id, import_file.company_id, import_file.kind, import_file.file_name, import_file.format, import_file.sha256, import_file.size, import_file.imported_at, import_file.notes, import_file.encoding FROM import_file";
+
+    private static ImportFile ReadImportFile(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Enum.Parse<ImportKind>(r.GetString(2)), r.GetString(3), Enum.Parse<SourceFormat>(r.GetString(4)),
+        r.GetString(5), r.GetInt64(6), Time(r, 7) ?? default, Str(r, 8), Str(r, 9));
+
+    private const string ImportSheetSelect =
+        "SELECT id, file_id, sheet_index, sheet_name, kind, layout_id, layout_json, header_row_no, headers_json, account, display_name, row_count, first_date, last_date, problems_json FROM import_sheet";
+
+    private static ImportSheet ReadImportSheet(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), (int)r.GetInt64(2), Str(r, 3), Enum.Parse<SheetKind>(r.GetString(4)), Str(r, 5), Str(r, 6),
+        (int)r.GetInt64(7), StatementParser.CellsFromJson(r.GetString(8)), Str(r, 9), r.GetString(10), (int)r.GetInt64(11), Date(r, 12), Date(r, 13),
+        JsonSerializer.Deserialize<List<ImportProblem>>(r.GetString(14), LayoutCatalog.CompactJson) ?? []);
+
+    private const string StatementRowSelect =
+        """
+        SELECT statement_row.id, statement_row.sheet_id, statement_row.row_no, statement_row.date, statement_row.date_text, statement_row.account, statement_row.counterparty,
+               statement_row.counterparty_code, statement_row.amount, statement_row.amount_text, statement_row.currency, statement_row.description, statement_row.reference,
+               statement_row.transaction_id, statement_row.direction, statement_row.dc_text, statement_row.skip_reason, statement_row.problem, statement_row.row_hash, statement_row.cells_json
+        FROM statement_row
+        """;
+
+    private static StoredStatementRow ReadStatementRow(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)),
+        new StatementRow((int)r.GetInt64(2), Date(r, 3), Str(r, 4), Str(r, 5), Str(r, 6), Str(r, 7), Dec(r, 8), Str(r, 9), Str(r, 10), Str(r, 11), Str(r, 12), Str(r, 13),
+            Enum.Parse<Direction>(r.GetString(14)), Str(r, 15), Str(r, 16), Str(r, 17), r.GetString(18), StatementParser.CellsFromJson(r.GetString(19))));
+
+    private const string TorEntrySelect =
+        """
+        SELECT tor_entry.id, tor_entry.sheet_id, tor_entry.company_id, tor_entry.row_no, tor_entry.tor_id, tor_entry.personal_code, tor_entry.first_name, tor_entry.last_name,
+               tor_entry.country, tor_entry.start_date, tor_entry.end_date, tor_entry.type_id, tor_entry.type, tor_entry.state_id, tor_entry.state, tor_entry.termination_id,
+               tor_entry.termination, tor_entry.employer_code, tor_entry.employer_name, tor_entry.problem, tor_entry.cells_json
+        FROM tor_entry
+        """;
+
+    private static StoredTorEntry ReadTorEntry(SqliteDataReader r) => new(
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Guid.Parse(r.GetString(2)),
+        new TorEntry((int)r.GetInt64(3), Str(r, 4), Str(r, 5), r.GetString(6), r.GetString(7), Str(r, 8), Date(r, 9), Date(r, 10), Str(r, 11), Str(r, 12), Str(r, 13), Str(r, 14),
+            Str(r, 15), Str(r, 16), Str(r, 17), Str(r, 18), StatementParser.CellsFromJson(r.GetString(20)), Str(r, 19)));
+}

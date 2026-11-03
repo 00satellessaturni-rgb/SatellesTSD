@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Import\layouts.json" LogicalName="SatellesTSD.Core.Import.layouts.json" />
+  </ItemGroup>
+
 </Project>

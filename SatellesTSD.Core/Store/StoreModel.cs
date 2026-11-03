@@ -93,7 +93,8 @@ public enum PaymentStatus
 /// <param name="Facts">The payee facts the figures were computed from; null for a T.</param>
 /// <param name="Result">The engine's figures; null for a T.</param>
 /// <param name="NetPaid">What the bank paid out when the line came from a statement.</param>
-/// <param name="SourceRef">The bank line or report row the payment came from, for the accountant's eye.</param>
+/// <param name="SourceRef">The bank line or report row the payment came from, for the accountant's eye ("LHV pank *1234 [12]").</param>
+/// <param name="SourceRowId">The imported statement row the payment came from (<see cref="StoredStatementRow"/>); null for a line added by hand. Every version of a key keeps it.</param>
 public sealed record StoredPayment(
     Guid Id,
     Guid PeriodId,
@@ -109,10 +110,11 @@ public sealed record StoredPayment(
     decimal? NetPaid,
     string? SourceRef,
     Guid? SubmissionId,
-    DateTime CreatedAt)
+    DateTime CreatedAt,
+    Guid? SourceRowId = null)
 {
-    public static StoredPayment New(Guid periodId, Guid? personId, Section section, PaymentLine line, PayeeTaxFacts? facts, TaxResult? result, decimal? netPaid = null, string? sourceRef = null) =>
-        new(Guid.Empty, periodId, personId, section, line.LineNumber, 0, line.Action, PaymentStatus.Draft, line, facts, result, netPaid, sourceRef, null, default);
+    public static StoredPayment New(Guid periodId, Guid? personId, Section section, PaymentLine line, PayeeTaxFacts? facts, TaxResult? result, decimal? netPaid = null, string? sourceRef = null, Guid? sourceRowId = null) =>
+        new(Guid.Empty, periodId, personId, section, line.LineNumber, 0, line.Action, PaymentStatus.Draft, line, facts, result, netPaid, sourceRef, null, default, sourceRowId);
 
     /// <summary>Whether this version is presumed to exist on MTA's side.</summary>
     public bool OnServer => Status is PaymentStatus.Sent or PaymentStatus.Accepted or PaymentStatus.NeedsChange or PaymentStatus.Review;

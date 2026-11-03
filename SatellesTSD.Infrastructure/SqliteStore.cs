@@ -314,7 +314,21 @@ public sealed partial class SqliteStore : IStore
         var period = RequirePeriod(payment.PeriodId);
         var history = History(payment.PeriodId, payment.Section, payment.LineNumber);
         LineKeyRules.Check(payment.Action, history);
-        ReserveSuppliedKey(period, payment.Section, payment.LineNumber);
+
+        // every version of a key keeps its bank row: a new version without one inherits it, one with another is refused
+        var linkedRow = history.Select(v => v.SourceRowId).LastOrDefault(id => id is not null);
+        if (payment.SourceRowId is { } given && linkedRow is { } had && given != had)
+        {
+            throw new InvalidOperationException("The key already points at another bank row; every version of a key keeps its row.");
+        }
+
+        var sourceRowId = payment.SourceRowId ?? linkedRow;
+        if (sourceRowId is { } row && linkedRow is null)
+        {
+            RequireRowOf(row, period.CompanyId);
+        }
+
+        ReserveSuppliedKey(period, payment.Section, payment.LineNumber); // after every refusal, so a refused line never moves the counter
         var stored = payment with
         {
             Id = Guid.NewGuid(),
@@ -322,10 +336,34 @@ public sealed partial class SqliteStore : IStore
             Status = PaymentStatus.Draft,
             SubmissionId = null,
             CreatedAt = Now(),
+            SourceRowId = sourceRowId,
         };
         InsertPayment(stored);
         tx.Commit();
         return stored;
+    }
+
+    /// <summary>The statement row exists, is a payment row (not a balance line or a pasted header) and belongs to
+    /// the company — domain errors, not a foreign-key failure.</summary>
+    private void RequireRowOf(Guid rowId, Guid companyId)
+    {
+        var row = Query(
+            "SELECT f.company_id, r.skip_reason FROM statement_row r JOIN import_sheet s ON s.id = r.sheet_id JOIN import_file f ON f.id = s.file_id WHERE r.id = $id",
+            r => (Owner: r.GetString(0), Skip: Str(r, 1)), ("$id", G(rowId))).SingleOrDefault();
+        if (row.Owner is null)
+        {
+            throw new KeyNotFoundException($"Statement row {rowId} is not in the store.");
+        }
+
+        if (row.Owner != G(companyId))
+        {
+            throw new InvalidOperationException("The bank row belongs to another company's file.");
+        }
+
+        if (row.Skip is not null)
+        {
+            throw new InvalidOperationException($"The bank row is not a payment row ({row.Skip}); a declared line cannot come from it.");
+        }
     }
 
     public StoredPayment ReplaceDraft(Guid paymentId, StoredPayment replacement)
@@ -345,7 +383,21 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException("A replacement keeps the draft's period, section, key and action; for anything else delete the draft and add a new line.");
         }
 
-        var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now() };
+        // a draft may be re-pointed at another bank row of the company while no other version of its key holds one (a key keeps its row);
+        // a replacement without a row keeps the draft's
+        var sourceRowId = replacement.SourceRowId ?? current.SourceRowId;
+        if (replacement.SourceRowId is { } fresh && fresh != current.SourceRowId)
+        {
+            var keyRow = History(current.PeriodId, current.Section, current.LineNumber).Where(v => v.Id != current.Id).Select(v => v.SourceRowId).LastOrDefault(id => id is not null);
+            if (keyRow is { } had && fresh != had)
+            {
+                throw new InvalidOperationException("The key already points at another bank row; every version of a key keeps its row.");
+            }
+
+            RequireRowOf(fresh, RequirePeriod(current.PeriodId).CompanyId);
+        }
+
+        var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now(), SourceRowId = sourceRowId };
         Exec("DELETE FROM payment WHERE id = $id", ("$id", G(paymentId)));
         InsertPayment(stored);
         tx.Commit();
@@ -374,9 +426,9 @@ public sealed partial class SqliteStore : IStore
         Exec(
             """
             INSERT INTO payment (id, period_id, person_id, section, line_number, version, action, status, type_code, payment_date, gross, net_paid, source_ref,
-                                 payee_code, payee_description, facts_json, result_json, line_json, submission_id, created_at)
+                                 payee_code, payee_description, facts_json, result_json, line_json, submission_id, created_at, source_row_id)
             VALUES ($id, $period, $person, $section, $line, $version, $action, $status, $type, $date, $gross, $net, $source,
-                    $payee, $payeeType, $facts, $result, $lineJson, NULL, $created)
+                    $payee, $payeeType, $facts, $result, $lineJson, NULL, $created, $sourceRow)
             """,
             ("$id", G(stored.Id)), ("$period", G(stored.PeriodId)), ("$person", stored.PersonId is { } p ? G(p) : null), ("$section", stored.Section.ToString()),
             ("$line", stored.LineNumber), ("$version", stored.Version), ("$action", stored.Action.ToString()), ("$status", stored.Status.ToString()),
@@ -384,7 +436,7 @@ public sealed partial class SqliteStore : IStore
             ("$payee", stored.Line.Payee?.Code), ("$payeeType", stored.Line.Payee?.Description),
             ("$facts", stored.Facts is null ? null : JsonSerializer.Serialize(stored.Facts, Json)),
             ("$result", stored.Result is null ? null : JsonSerializer.Serialize(stored.Result, Json)),
-            ("$lineJson", JsonSerializer.Serialize(stored.Line, Json)), ("$created", T(stored.CreatedAt)));
+            ("$lineJson", JsonSerializer.Serialize(stored.Line, Json)), ("$created", T(stored.CreatedAt)), ("$sourceRow", stored.SourceRowId is { } row ? G(row) : null));
 
     public IReadOnlyList<StoredPayment> Payments(Guid periodId)
     {
@@ -413,7 +465,7 @@ public sealed partial class SqliteStore : IStore
 
     private const string PaymentSelect =
         """
-        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at
+        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at, source_row_id
         FROM payment
         """;
 
@@ -423,7 +475,8 @@ public sealed partial class SqliteStore : IStore
         JsonSerializer.Deserialize<PaymentLine>(r.GetString(10), Json)!,
         r.IsDBNull(8) ? null : JsonSerializer.Deserialize<PayeeTaxFacts>(r.GetString(8), Json),
         r.IsDBNull(9) ? null : JsonSerializer.Deserialize<TaxResult>(r.GetString(9), Json),
-        Dec(r, 11), Str(r, 12), r.IsDBNull(13) ? null : Guid.Parse(r.GetString(13)), Time(r, 14) ?? default);
+        Dec(r, 11), Str(r, 12), r.IsDBNull(13) ? null : Guid.Parse(r.GetString(13)), Time(r, 14) ?? default,
+        r.IsDBNull(15) ? null : Guid.Parse(r.GetString(15)));
 
     // ---------------------------------------------------------------- submissions and feedback
 
@@ -616,7 +669,7 @@ public sealed partial class SqliteStore : IStore
 
     // ---------------------------------------------------------------- schema
 
-    private void EnsureSchema()
+    private void EnsureSchema(int upTo = int.MaxValue)
     {
         Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
         var version = (int)(Scalar<long?>("SELECT MAX(version) FROM schema_version") ?? 0);
@@ -625,7 +678,7 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException($"The store is at schema version {version}, newer than this build ({SchemaVersion}).");
         }
 
-        for (var step = version; step < SchemaVersion; step++)
+        for (var step = version; step < Math.Min(SchemaVersion, upTo); step++)
         {
             using var tx = Tx();
             Exec(Migrations[step]);
@@ -633,6 +686,24 @@ public sealed partial class SqliteStore : IStore
             tx.Commit();
         }
     }
+
+    /// <summary>Raw SQL for the tests (a row the way an older build wrote it, a version check); not part of the store's surface.</summary>
+    internal int ExecuteRaw(string sql, params (string Name, object? Value)[] parameters) => Exec(sql, parameters);
+
+    internal T ScalarRaw<T>(string sql, params (string Name, object? Value)[] parameters) => Scalar<T>(sql, parameters);
+
+    /// <summary>A file store left at an older schema version — for the tests that prove the upgrade path.</summary>
+    internal static SqliteStore OpenAtVersion(string path, int version)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, ForeignKeys = true, Pooling = false }.ToString());
+        connection.Open();
+        var store = new SqliteStore(connection);
+        store.EnsureSchema(version);
+        return store;
+    }
+
+    /// <summary>The scripts as shipped, for the test that pins them: a shipped script is never edited, only followed by the next.</summary>
+    internal static IReadOnlyList<string> MigrationScripts => Migrations;
 
     /// <summary>One SQL script per schema version, applied in order; a store at version n gets scripts n+1 … N.</summary>
     private static readonly IReadOnlyList<string> Migrations =
@@ -729,6 +800,99 @@ public sealed partial class SqliteStore : IStore
             server_taxes_json TEXT NOT NULL,
             unclassified_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY (payment_id, submission_id, recorded_at));
+        """,
+        // v2 — imports: files with their bytes, recognised sheets with the layout as used, every statement row and
+        // TÖR row, the files a period's run used, the owner's layout overrides, and the bank row a declared line came from.
+        """
+        CREATE TABLE import_file (
+            id TEXT PRIMARY KEY,
+            company_id TEXT NOT NULL REFERENCES company(id),
+            kind TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            format TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            imported_at TEXT NOT NULL,
+            encoding TEXT,
+            notes TEXT,
+            content BLOB,
+            UNIQUE (company_id, sha256));
+        CREATE TABLE import_sheet (
+            id TEXT PRIMARY KEY,
+            file_id TEXT NOT NULL REFERENCES import_file(id),
+            sheet_index INTEGER NOT NULL,
+            sheet_name TEXT,
+            kind TEXT NOT NULL,
+            layout_id TEXT,
+            layout_json TEXT,
+            header_row_no INTEGER NOT NULL,
+            headers_json TEXT NOT NULL,
+            account TEXT,
+            display_name TEXT NOT NULL,
+            row_count INTEGER NOT NULL,
+            first_date TEXT,
+            last_date TEXT,
+            problems_json TEXT NOT NULL DEFAULT '[]',
+            UNIQUE (file_id, sheet_index));
+        CREATE TABLE statement_row (
+            id TEXT PRIMARY KEY,
+            sheet_id TEXT NOT NULL REFERENCES import_sheet(id),
+            row_no INTEGER NOT NULL,
+            date TEXT,
+            date_text TEXT,
+            account TEXT,
+            counterparty TEXT,
+            counterparty_code TEXT,
+            amount TEXT,
+            amount_text TEXT,
+            currency TEXT,
+            description TEXT,
+            reference TEXT,
+            transaction_id TEXT,
+            direction TEXT NOT NULL,
+            dc_text TEXT,
+            skip_reason TEXT,
+            problem TEXT,
+            row_hash TEXT NOT NULL,
+            cells_json TEXT NOT NULL,
+            UNIQUE (sheet_id, row_no));
+        CREATE INDEX statement_row_by_date ON statement_row (date);
+        CREATE INDEX statement_row_by_hash ON statement_row (row_hash);
+        CREATE TABLE tor_entry (
+            id TEXT PRIMARY KEY,
+            sheet_id TEXT NOT NULL REFERENCES import_sheet(id),
+            row_no INTEGER NOT NULL,
+            company_id TEXT NOT NULL REFERENCES company(id),
+            tor_id TEXT,
+            personal_code TEXT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            country TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            type_id TEXT,
+            type TEXT,
+            state_id TEXT,
+            state TEXT,
+            termination_id TEXT,
+            termination TEXT,
+            employer_code TEXT,
+            employer_name TEXT,
+            problem TEXT,
+            cells_json TEXT NOT NULL,
+            UNIQUE (sheet_id, row_no));
+        CREATE INDEX tor_entry_by_code ON tor_entry (company_id, personal_code);
+        CREATE TABLE period_import (
+            period_id TEXT NOT NULL REFERENCES period(id),
+            file_id TEXT NOT NULL REFERENCES import_file(id),
+            PRIMARY KEY (period_id, file_id));
+        CREATE INDEX period_import_by_file ON period_import (file_id);
+        CREATE TABLE statement_layout (
+            id TEXT PRIMARY KEY,
+            json TEXT NOT NULL,
+            updated_at TEXT NOT NULL);
+        ALTER TABLE payment ADD COLUMN source_row_id TEXT REFERENCES statement_row(id);
+        CREATE INDEX payment_by_source_row ON payment (source_row_id);
         """,
     ];
 

@@ -5,8 +5,9 @@ namespace SatellesTSD.Core.Store;
 
 /// <summary>The firm's store: companies, their people, their payment months, every declared line with its permanent
 /// key and version history, the files sent and the feedback received. One implementation per database engine; the
-/// key rules live in <see cref="LineKeyRules"/> so that they are the same everywhere.</summary>
-public interface IStore : IDisposable
+/// key rules live in <see cref="LineKeyRules"/> so that they are the same everywhere. The imported files and their
+/// rows are the <see cref="IImportStore"/> half.</summary>
+public interface IStore : IImportStore
 {
     Company AddCompany(string registryCode, string name, string? notes = null);
 
@@ -42,10 +43,6 @@ public interface IStore : IDisposable
     /// <summary>Replaces a Draft version in place (same key, same version, new figures) — a grid edit or a
     /// re-allocation of the person's month. Anything already sent is history and cannot be replaced.</summary>
     StoredPayment ReplaceDraft(Guid paymentId, StoredPayment replacement);
-
-    /// <summary>Runs several store calls as one unit: all or nothing (a month re-allocated line by line, an export
-    /// that records its submission and the period's state together).</summary>
-    void InTransaction(Action work);
 
     /// <summary>The standing version of every line of the period: per key, the latest version that is not Rejected
     /// (a draft or a pending version on top of what MTA holds counts, a refused attempt does not); when every version

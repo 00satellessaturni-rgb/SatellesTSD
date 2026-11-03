@@ -1,0 +1,257 @@
+[
+  {
+    "Id": "swedbank-et",
+    "Bank": "Swedbank",
+    "Kind": "Bank",
+    "Headers": [
+      "Kliendi konto", "Dok nr", "Makse kuupäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Saaja/maksja pank", "Tühi (ei kasutata)",
+      "Deebet/Kreedit (D/C)", "Summa", "Viitenumber", "Arhiveerimistunnus", "Selgitus", "Teenustasu", "VALUUTA TÄHIS", "Isikukood / Reg. nr"
+    ],
+    "Roles": {
+      "Account": "Kliendi konto", "Date": "Makse kuupäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Selgitus",
+      "DebitCredit": "Deebet/Kreedit (D/C)", "Currency": "VALUUTA TÄHIS", "CounterpartyCode": "Isikukood / Reg. nr", "TransactionId": "Arhiveerimistunnus", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 11/36. Excel showed three headers as Windows-1257 read as Windows-1251 ('Makse kuupдev', 'Tьhi (ei kasutata)', 'VALUUTA TДHIS'); both spellings match."
+  },
+  {
+    "Id": "kassa",
+    "Bank": "Kassa",
+    "Kind": "Table",
+    "Headers": [
+      "lehe_nimetus", "lehe_kuup", "arvestuskuu", "lehe_liik", "lehe_tüüp", "töötaja", "pangakonto number (iban)",
+      "bruto", "töötuskindlustusmakse", "kogum_pens", "maksuvaba", "tulumaks", "neto"
+    ],
+    "Roles": {
+      "Account": "lehe_nimetus", "Date": "lehe_kuup", "Counterparty": "töötaja", "Amount": "neto", "Description": "arvestuskuu", "DebitCredit": "lehe_tüüp"
+    },
+    "Direction": "Markers", "DebitMarker": "Palgaväljamaksed",
+    "Notes": "Workbook CONFIG row 12/37: the firm's cash-payout sheet. Net paid is the amount; the payment date is lehe_kuup; a row counts only when lehe_tüüp is 'Palgaväljamaksed'. bruto and the tax columns stay in the row's cells."
+  },
+  {
+    "Id": "lhv-et-long",
+    "Bank": "LHV pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Kliendi konto", "Dokumendi number", "Kuupäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Saaja panga kood", "Tühi", "Deebet/Kreedit (D/C)",
+      "Summa", "Viitenumber", "Arhiveerimistunnus", "Selgitus", "Teenustasu", "Valuuta", "Isikukood või registrikood", "Saaja/maksja panga BIC",
+      "Makse algataja nimi", "Kande viide", "Konto teenusepakkuja viide"
+    ],
+    "Roles": {
+      "Account": "Kliendi konto", "Date": "Kuupäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Selgitus",
+      "DebitCredit": "Deebet/Kreedit (D/C)", "Currency": "Valuuta", "CounterpartyCode": "Isikukood või registrikood", "TransactionId": "Kande viide", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 13/38 (19 columns)."
+  },
+  {
+    "Id": "lhv-et-short",
+    "Bank": "LHV pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Kliendi konto", "Dokumendi number", "Kuupäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Deebet/Kreedit (D/C)", "Summa", "Viitenumber",
+      "Arhiveerimistunnus", "Selgitus", "Valuuta", "Isikukood või registrikood", "Saaja/maksja panga BIC", "Makse algataja nimi", "Kande viide", "Konto teenusepakkuja viide"
+    ],
+    "Roles": {
+      "Account": "Kliendi konto", "Date": "Kuupäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Selgitus",
+      "DebitCredit": "Deebet/Kreedit (D/C)", "Currency": "Valuuta", "CounterpartyCode": "Isikukood või registrikood", "TransactionId": "Kande viide", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 14/39 (16 columns)."
+  },
+  {
+    "Id": "lhv-ru-long",
+    "Bank": "LHV pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Счёт клиента:", "Номер документа", "Дата", "Счёт плательщика/получателя", "Имя плательщика/получателя", "Код банка получателя", "Пустой",
+      "Дебет/Кредит (D/C)", "Сумма", "Номер ссылки", "Признак архивирования", "Пояснение", "Плата за услугу", "Валюта", "Личный код или регистрационный код",
+      "BIC банка получателя/плательщика", "Имя инициатора платежа", "Ссылка проводки", "Ссылка поставщика счета"
+    ],
+    "Roles": {
+      "Account": "Счёт клиента:", "Date": "Дата", "Counterparty": "Имя плательщика/получателя", "Amount": "Сумма", "Description": "Пояснение",
+      "DebitCredit": "Дебет/Кредит (D/C)", "Currency": "Валюта", "CounterpartyCode": "Личный код или регистрационный код", "TransactionId": "Ссылка проводки", "Reference": "Номер ссылки"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 15/40 (19 columns; the first header ends with a colon)."
+  },
+  {
+    "Id": "lhv-ru-short",
+    "Bank": "LHV pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Счёт клиента", "Номер документа", "Дата", "Счёт плательщика/получателя", "Имя плательщика/получателя", "Дебет/Кредит (D/C)", "Сумма", "Номер ссылки",
+      "Признак архивирования", "Пояснение", "Валюта", "Личный код или регистрационный код", "BIC банка получателя/плательщика", "Имя инициатора платежа",
+      "Ссылка проводки", "Ссылка поставщика счета"
+    ],
+    "Roles": {
+      "Account": "Счёт клиента", "Date": "Дата", "Counterparty": "Имя плательщика/получателя", "Amount": "Сумма", "Description": "Пояснение",
+      "DebitCredit": "Дебет/Кредит (D/C)", "Currency": "Валюта", "CounterpartyCode": "Личный код или регистрационный код", "TransactionId": "Ссылка проводки", "Reference": "Номер ссылки"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 16/41 (16 columns)."
+  },
+  {
+    "Id": "lhv-en",
+    "Bank": "LHV pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Customer account no", "Document no", "Date", "Sender/receiver account", "Sender/receiver name", "Sender bank code", "Empty", "Debit/Credit (D/C)",
+      "Amount", "Reference number", "Archiving code", "Description", "Fee", "Currency", "Personal code or register code", "Sender/receiver bank BIC",
+      "Ultimate debtor name", "Transaction reference", "Account servicer reference"
+    ],
+    "Roles": {
+      "Account": "Customer account no", "Date": "Date", "Counterparty": "Sender/receiver name", "Amount": "Amount", "Description": "Description",
+      "DebitCredit": "Debit/Credit (D/C)", "Currency": "Currency", "CounterpartyCode": "Personal code or register code", "TransactionId": "Transaction reference", "Reference": "Reference number"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 17/42 (19 columns)."
+  },
+  {
+    "Id": "seb-et",
+    "Bank": "SEB",
+    "Kind": "Bank",
+    "Headers": [
+      "Kliendi konto", "Dokumendi number", "Kuupäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Saaja panga kood", "Tühi", "Deebet/Kreedit (D/C)",
+      "Summa", "Viitenumber", "Arhiveerimistunnus", "Selgitus", "Teenustasu", "Valuuta", "Isikukood või registrikood"
+    ],
+    "Roles": {
+      "Account": "Kliendi konto", "Date": "Kuupäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Selgitus",
+      "DebitCredit": "Deebet/Kreedit (D/C)", "Currency": "Valuuta", "CounterpartyCode": "Isikukood või registrikood", "TransactionId": "Arhiveerimistunnus", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C", "AllowHeaderless": true, "HeaderlessAccountPattern": "^EE\\d{2}10",
+    "Notes": "Workbook CONFIG row 18/43: the first 15 columns of the long LHV export; only the column count tells them apart. SEB's own CSV has no header row and is recognised by its shape and SEB's bank code (10) in the account IBAN."
+  },
+  {
+    "Id": "coop-ru",
+    "Bank": "Coop Pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Счет клиента", "Имя клиента", "Дата", "Счет получателя/плательщика", "Имя получателя/плательщика", "Дебет/Кредит", "Сумма", "Валюта",
+      "Информация", "Ссылка", "Плата за сделку", "Номер документа", "Признак архивирования", "Регистрационный-/Личный код"
+    ],
+    "Roles": {
+      "Account": "Счет клиента", "Date": "Дата", "Counterparty": "Имя получателя/плательщика", "Amount": "Сумма", "Description": "Информация",
+      "DebitCredit": "Дебет/Кредит", "Currency": "Валюта", "CounterpartyCode": "Регистрационный-/Личный код", "TransactionId": "Признак архивирования", "Reference": "Ссылка"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 19/44 ('Счет' with е, unlike LHV's 'Счёт')."
+  },
+  {
+    "Id": "coop-et",
+    "Bank": "Coop Pank",
+    "Kind": "Bank",
+    "Headers": [
+      "Kliendi konto", "Kliendi nimi", "Kuupäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Deebet/Kreedit", "Summa", "Valuuta", "Selgitus",
+      "Viitenumber", "Teenustasu", "Dokumendi number", "Arhiveerimistunnus", "Registri-/isikukood"
+    ],
+    "Roles": {
+      "Account": "Kliendi konto", "Date": "Kuupäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Selgitus",
+      "DebitCredit": "Deebet/Kreedit", "Currency": "Valuuta", "CounterpartyCode": "Registri-/isikukood", "TransactionId": "Arhiveerimistunnus", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 20/45."
+  },
+  {
+    "Id": "luminor-et",
+    "Bank": "Luminor",
+    "Kind": "Bank",
+    "Headers": [
+      "Konto", "Dokumendi number", "Väärtuspäev", "Saaja/maksja konto", "Saaja/maksja nimi", "Deebet/krediit", "Summa", "Viitenumber",
+      "Arhiveerimiskood", "Makse andmed", "Valuuta", "Registrikood/isikukood"
+    ],
+    "Roles": {
+      "Account": "Konto", "Date": "Väärtuspäev", "Counterparty": "Saaja/maksja nimi", "Amount": "Summa", "Description": "Makse andmed",
+      "DebitCredit": "Deebet/krediit", "Currency": "Valuuta", "CounterpartyCode": "Registrikood/isikukood", "TransactionId": "Arhiveerimiskood", "Reference": "Viitenumber"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 21/46. Excel showed the date header as UTF-8 read as Windows-1251 ('VГ¤Г¤rtuspГ¤ev'); both spellings match."
+  },
+  {
+    "Id": "luminor-ru",
+    "Bank": "Luminor",
+    "Kind": "Bank",
+    "Headers": [
+      "Счёт", "Номер документа", "Дата зачисления", "Счет получателя / плательщика", "Имя получателя / плательщика", "Дебет / Кредит",
+      "Cyммa", "Нoмeр ccылки", "Код архивации", "Детали платежа", "Валюта", "Регистровый / Личный код"
+    ],
+    "Roles": {
+      "Account": "Счёт", "Date": "Дата зачисления", "Counterparty": "Имя получателя / плательщика", "Amount": "Cyммa", "Description": "Детали платежа",
+      "DebitCredit": "Дебет / Кредит", "Currency": "Валюта", "CounterpartyCode": "Регистровый / Личный код", "TransactionId": "Код архивации", "Reference": "Нoмeр ccылки"
+    },
+    "Direction": "Markers", "DebitMarker": "D", "CreditMarker": "C",
+    "Notes": "Workbook CONFIG row 22/47. The bank itself writes Latin letters into two headers ('Cyмма' has Latin C, y, a; 'Нoмeр ccылки' has Latin o, e, c, c); Excel showed the whole row as UTF-8 read as Windows-1251. Both spellings match."
+  },
+  {
+    "Id": "paysera-ru",
+    "Bank": "Paysera",
+    "Kind": "Bank",
+    "Headers": [
+      "Тип", "Номер выписки", "Номер перевода", "Дата и время", "Получатель / Плательщик", "EVP / IBAN", "Код", "Сумма и валюта", "Валюты",
+      "Назначение платежа", "Код платежа", "Кредит / Дебет", "Баланс"
+    ],
+    "Roles": {
+      "Date": "Дата и время", "Counterparty": "Получатель / Плательщик", "Amount": "Сумма и валюта", "Description": "Назначение платежа",
+      "DebitCredit": "Кредит / Дебет", "Currency": "Валюты", "TransactionId": "Номер перевода"
+    },
+    "Direction": "Markers", "DebitMarker": "Д", "CreditMarker": "К", "AmountHasCurrency": true,
+    "Notes": "Workbook CONFIG row 23/48. The markers are Cyrillic Д and К. The amount cell carries the currency ('123,45 EUR'), which the workbook could not read and counted as 0. The workbook's account role was the operation-type column 'Тип'; it is dropped here."
+  },
+  {
+    "Id": "source1",
+    "Bank": "Source1",
+    "Kind": "Bank",
+    "Headers": [
+      "Date started (UTC)", "Date completed (UTC)", "ID", "Type", "State", "Description", "Reference", "Payer", "Card number", "Card label", "Card state",
+      "Orig currency", "Orig amount", "Payment currency", "Amount", "Total amount", "Exchange rate", "Fee", "Fee currency", "Balance", "Account",
+      "International account number", "Beneficiary account number", "Beneficiary sort code or routing number", "Beneficiary IBAN", "Beneficiary BIC",
+      "Beneficiary name", "MCC", "Related transaction id", "Spend program", "Sender account", "Sender name", "Card references"
+    ],
+    "Roles": {
+      "Account": "International account number", "Date": "Date completed (UTC)", "Counterparty": "Description", "Amount": "Orig amount", "Description": "Reference",
+      "Currency": "Orig currency", "TransactionId": "ID"
+    },
+    "Direction": "Sign", "TimeZone": "UTC",
+    "Notes": "Workbook CONFIG row 24/49: a card / e-money export (Revolut shape). No direction column: the workbook counted every row as both debit and credit; here the amount's sign decides. Times are UTC and are moved to Estonian time."
+  },
+  {
+    "Id": "customtable1",
+    "Bank": "CustomTable1",
+    "Kind": "Table",
+    "Headers": [
+      "Name", "Surname", "Income tax ", "Social tax", "Amount to declare", "Travel", "FirstLastFormat", "SumFormat", "DateFormat",
+      "NameSearch", "Salary", "Date", "D/C", "SheetName"
+    ],
+    "Roles": {
+      "Account": "SheetName", "Date": "Date", "Counterparty": "NameSearch", "Amount": "Salary", "Description": "SheetName", "DebitCredit": "D/C"
+    },
+    "Direction": "Markers", "DebitMarker": "D",
+    "Notes": "Workbook CONFIG row 25/50: the firm's own helper table. The third header ends with a no-break space (U+00A0), as the workbook has it."
+  },
+  {
+    "Id": "wise",
+    "Bank": "TransferWise",
+    "Kind": "Bank",
+    "Headers": [
+      "TransferWise ID", "Date", "Date Time", "Amount", "Currency", "Description", "Payment Reference", "Running Balance", "Exchange From", "Exchange To",
+      "Exchange Rate", "Payer Name", "Payee Name", "Payee Account Number", "Merchant", "Card Last Four Digits", "Card Holder Full Name", "Attachment",
+      "Note", "Total fees", "Exchange To Amount", "Transaction Type", "Transaction Details Type"
+    ],
+    "Roles": {
+      "Date": "Date", "Counterparty": "Payee Name", "Amount": "Amount", "Description": "Payment Reference", "Currency": "Currency", "TransactionId": "TransferWise ID"
+    },
+    "Direction": "Sign", "DateFormats": [ "dd-MM-yyyy" ],
+    "Notes": "Workbook CONFIG row 26/51. No account and no direction column: the amount's sign decides (the workbook counted every row as both)."
+  },
+  {
+    "Id": "paysera-ru-short",
+    "Bank": "Paysera",
+    "Kind": "Table",
+    "Headers": [ "Дата", "Плательщик / Получатель", "Номер счета", "Назначение платежа", "Сумма", "Валюта" ],
+    "Roles": {
+      "Date": "Дата", "Counterparty": "Плательщик / Получатель", "Amount": "Сумма", "Description": "Назначение платежа", "DebitCredit": "Валюта", "Currency": "Валюта"
+    },
+    "Direction": "Markers", "DebitMarker": "EUR",
+    "Notes": "Workbook CONFIG row 27/52: a simple export whose only direction clue is the currency — every EUR row counts as money out, as the workbook had it."
+  }
+]
