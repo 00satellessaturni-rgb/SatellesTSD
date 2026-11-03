@@ -1,0 +1,1215 @@
+# CONFIG  visibility=Visible
+A1	Ettevõte:
+A3	ToDO:\n-done- 1) если в отчёт вручную добавлены люди и указан тип договора, то добавлять их в ТОР\n-done- 2) вывести название предприятия, которое будет определено, если строка "компани нейм" пустая\n3) загрузка из csv и обработка заголовков SEB\n4) улучшить алгоритм верификации имён
+A8	TÖR tuvastamine {employee_define} [1]
+A9	Töötajate loend
+B9	TÖR ID
+C9	Töötaja isikukood
+D9	Perekonnanimi
+E9	Eesnimi
+F9	Töötamise alguse aeg
+G9	Töötamise liigi ID
+H9	Töötamise liik
+I9	Kande oleku ID
+J9	Kande olek
+K9	Töötamise lõpu aeg
+L9	Lõpetamise aluse ID
+M9	Lõpetamise alus
+N9	Leping
+O9	Ameti ID
+P9	Amet
+Q9	Aadressi ID
+R9	Aadress
+S9	Riigi kood
+T9	Peatamise alguse aeg
+U9	Peatamise aluse ID
+V9	Peatamise alus
+W9	Peatamise lõpu aeg
+X9	Otsus alguse aja kohta
+Y9	Otsus töö liigi kohta
+Z9	Otsus töö lõpetamise aja kohta
+AA9	Otsus lõpetamise aluse kohta
+AB9	Tööandja registrikood või ID
+AC9	Tööandja /Tegeliku tööandja nimetus
+AD9	RKA märge
+AE9	TKA märge
+AF9	Viimase muutmise kuupäev
+AG9	Viimase muutja ID
+AH9	Viimase muutja nimi
+AI9	Tööaja määr
+AJ9	IMO
+A10	Väljavõtte tuvastamine {payout_define} [1-20]
+A11	Swedbank
+B11	Kliendi konto
+C11	Dok nr
+D11	Makse kuupдev
+E11	Saaja/maksja konto
+F11	Saaja/maksja nimi
+G11	Saaja/maksja pank
+H11	Tьhi (ei kasutata)
+I11	Deebet/Kreedit (D/C)
+J11	Summa
+K11	Viitenumber
+L11	Arhiveerimistunnus
+M11	Selgitus
+N11	Teenustasu
+O11	VALUUTA TДHIS
+P11	Isikukood / Reg. nr
+A12	Kassa
+B12	lehe_nimetus
+C12	lehe_kuup
+D12	arvestuskuu
+E12	lehe_liik
+F12	lehe_tüüp
+G12	töötaja
+H12	pangakonto number (iban)
+I12	bruto
+J12	töötuskindlustusmakse
+K12	kogum_pens
+L12	maksuvaba
+M12	tulumaks
+N12	neto
+A13	LHV pank
+B13	Kliendi konto
+C13	Dokumendi number
+D13	Kuupäev
+E13	Saaja/maksja konto
+F13	Saaja/maksja nimi
+G13	Saaja panga kood
+H13	Tühi
+I13	Deebet/Kreedit (D/C)
+J13	Summa
+K13	Viitenumber
+L13	Arhiveerimistunnus
+M13	Selgitus
+N13	Teenustasu
+O13	Valuuta
+P13	Isikukood või registrikood
+Q13	Saaja/maksja panga BIC
+R13	Makse algataja nimi
+S13	Kande viide
+T13	Konto teenusepakkuja viide
+A14	LHV pank
+B14	Kliendi konto
+C14	Dokumendi number
+D14	Kuupäev
+E14	Saaja/maksja konto
+F14	Saaja/maksja nimi
+G14	Deebet/Kreedit (D/C)
+H14	Summa
+I14	Viitenumber
+J14	Arhiveerimistunnus
+K14	Selgitus
+L14	Valuuta
+M14	Isikukood või registrikood
+N14	Saaja/maksja panga BIC
+O14	Makse algataja nimi
+P14	Kande viide
+Q14	Konto teenusepakkuja viide
+A15	LHV pank
+B15	Счёт клиента:
+C15	Номер документа
+D15	Дата
+E15	Счёт плательщика/получателя
+F15	Имя плательщика/получателя
+G15	Код банка получателя
+H15	Пустой
+I15	Дебет/Кредит (D/C)
+J15	Сумма
+K15	Номер ссылки
+L15	Признак архивирования
+M15	Пояснение
+N15	Плата за услугу
+O15	Валюта
+P15	Личный код или регистрационный код
+Q15	BIC банка получателя/плательщика
+R15	Имя инициатора платежа
+S15	Ссылка проводки
+T15	Ссылка поставщика счета
+A16	LHV pank
+B16	Счёт клиента
+C16	Номер документа
+D16	Дата
+E16	Счёт плательщика/получателя
+F16	Имя плательщика/получателя
+G16	Дебет/Кредит (D/C)
+H16	Сумма
+I16	Номер ссылки
+J16	Признак архивирования
+K16	Пояснение
+L16	Валюта
+M16	Личный код или регистрационный код
+N16	BIC банка получателя/плательщика
+O16	Имя инициатора платежа
+P16	Ссылка проводки
+Q16	Ссылка поставщика счета
+A17	LHV pank
+B17	Customer account no
+C17	Document no
+D17	Date
+E17	Sender/receiver account
+F17	Sender/receiver name
+G17	Sender bank code
+H17	Empty
+I17	Debit/Credit (D/C)
+J17	Amount
+K17	Reference number
+L17	Archiving code
+M17	Description
+N17	Fee
+O17	Currency
+P17	Personal code or register code
+Q17	Sender/receiver bank BIC
+R17	Ultimate debtor name
+S17	Transaction reference
+T17	Account servicer reference
+A18	SEB
+B18	Kliendi konto
+C18	Dokumendi number
+D18	Kuupäev
+E18	Saaja/maksja konto
+F18	Saaja/maksja nimi
+G18	Saaja panga kood
+H18	Tühi
+I18	Deebet/Kreedit (D/C)
+J18	Summa
+K18	Viitenumber
+L18	Arhiveerimistunnus
+M18	Selgitus
+N18	Teenustasu
+O18	Valuuta
+P18	Isikukood või registrikood
+A19	Coop Pank
+B19	Счет клиента
+C19	Имя клиента
+D19	Дата
+E19	Счет получателя/плательщика
+F19	Имя получателя/плательщика
+G19	Дебет/Кредит
+H19	Сумма
+I19	Валюта
+J19	Информация
+K19	Ссылка
+L19	Плата за сделку
+M19	Номер документа
+N19	Признак архивирования
+O19	Регистрационный-/Личный код
+A20	Coop Pank
+B20	Kliendi konto
+C20	Kliendi nimi
+D20	Kuupäev
+E20	Saaja/maksja konto
+F20	Saaja/maksja nimi
+G20	Deebet/Kreedit
+H20	Summa
+I20	Valuuta
+J20	Selgitus
+K20	Viitenumber
+L20	Teenustasu
+M20	Dokumendi number
+N20	Arhiveerimistunnus
+O20	Registri-/isikukood
+A21	Luminor
+B21	Konto
+C21	Dokumendi number
+D21	VГ¤Г¤rtuspГ¤ev
+E21	Saaja/maksja konto
+F21	Saaja/maksja nimi
+G21	Deebet/krediit
+H21	Summa
+I21	Viitenumber
+J21	Arhiveerimiskood
+K21	Makse andmed
+L21	Valuuta
+M21	Registrikood/isikukood
+A22	Luminor
+B22	РЎС‡С‘С‚
+C22	РќРѕРјРµСЂ РґРѕРєСѓРјРµРЅС‚Р°
+D22	Р”Р°С‚Р° Р·Р°С‡РёСЃР»РµРЅРёСЏ
+E22	РЎС‡РµС‚ РїРѕР»СѓС‡Р°С‚РµР»СЏ / РїР»Р°С‚РµР»СЊС‰РёРєР°
+F22	РРјСЏ РїРѕР»СѓС‡Р°С‚РµР»СЏ / РїР»Р°С‚РµР»СЊС‰РёРєР°
+G22	Р”РµР±РµС‚ / РљСЂРµРґРёС‚
+H22	CyРјРјa
+I22	РќoРјeСЂ ccС‹Р»РєРё
+J22	РљРѕРґ Р°СЂС…РёРІР°С†РёРё
+K22	Р”РµС‚Р°Р»Рё РїР»Р°С‚РµР¶Р°
+L22	Р’Р°Р»СЋС‚Р°
+M22	Р РµРіРёСЃС‚СЂРѕРІС‹Р№ / Р›РёС‡РЅС‹Р№ РєРѕРґ
+A23	Paysera
+B23	Тип
+C23	Номер выписки
+D23	Номер перевода
+E23	Дата и время
+F23	Получатель / Плательщик
+G23	EVP / IBAN
+H23	Код
+I23	Сумма и валюта
+J23	Валюты
+K23	Назначение платежа
+L23	Код платежа
+M23	Кредит / Дебет
+N23	Баланс
+A24	Source1
+B24	Date started (UTC)
+C24	Date completed (UTC)
+D24	ID
+E24	Type
+F24	State
+G24	Description
+H24	Reference
+I24	Payer
+J24	Card number
+K24	Card label
+L24	Card state
+M24	Orig currency
+N24	Orig amount
+O24	Payment currency
+P24	Amount
+Q24	Total amount
+R24	Exchange rate
+S24	Fee
+T24	Fee currency
+U24	Balance
+V24	Account
+W24	International account number
+X24	Beneficiary account number
+Y24	Beneficiary sort code or routing number
+Z24	Beneficiary IBAN
+AA24	Beneficiary BIC
+AB24	Beneficiary name
+AC24	MCC
+AD24	Related transaction id
+AE24	Spend program
+AF24	Sender account
+AG24	Sender name
+AH24	Card references
+A25	CustomTable1
+B25	Name
+C25	Surname
+D25	Income tax 
+E25	Social tax
+F25	Amount to declare
+G25	Travel
+H25	FirstLastFormat
+I25	SumFormat
+J25	DateFormat
+K25	NameSearch
+L25	Salary
+M25	Date
+N25	D/C
+O25	SheetName
+A26	TransferWise
+B26	TransferWise ID
+C26	Date
+D26	Date Time
+E26	Amount
+F26	Currency
+G26	Description
+H26	Payment Reference
+I26	Running Balance
+J26	Exchange From
+K26	Exchange To
+L26	Exchange Rate
+M26	Payer Name
+N26	Payee Name
+O26	Payee Account Number
+P26	Merchant
+Q26	Card Last Four Digits
+R26	Card Holder Full Name
+S26	Attachment
+T26	Note
+U26	Total fees
+V26	Exchange To Amount
+W26	Transaction Type
+X26	Transaction Details Type
+A27	Paysera
+B27	Дата
+C27	Плательщик / Получатель
+D27	Номер счета
+E27	Назначение платежа
+F27	Сумма
+G27	Валюта
+A31	Töötajate seadistused {employee_config} [1]x[name:value]
+B32	Nimi
+C32	Perekonnanimi
+D32	Isikukood
+E32	Riigikood
+F32	Algus
+G32	Lõpp
+H32	liigi ID
+I32	liik
+J32	oleku ID
+K32	olek
+L32	aluse ID
+M32	alus
+N32	Tööandja
+A33	Töötajate loend
+B33	Eesnimi
+C33	Perekonnanimi
+D33	Töötaja isikukood
+E33	Riigi kood
+F33	Töötamise alguse aeg
+G33	Töötamise lõpu aeg
+H33	Töötamise liigi ID
+I33	Töötamise liik
+J33	Kande oleku ID
+K33	Kande olek
+L33	Lõpetamise aluse ID
+M33	Lõpetamise alus
+N33	Tööandja /Tegeliku tööandja nimetus
+A34	Väljavõtte seadistused {payout_config} [1-20]
+B35	Konto/määratlus
+C35	Kuupäev
+D35	Nimi
+E35	Summa
+F35	Selgitus
+G35	Deebet/Kreedit
+H35	Type(order)
+I35	Deebet
+J35	Creedit
+A36	Swedbank
+B36	Kliendi konto
+C36	Makse kuupдev
+D36	Saaja/maksja nimi
+E36	Summa
+F36	Selgitus
+G36	Deebet/Kreedit (D/C)
+H36	1
+I36	D
+J36	C
+A37	Kassa
+B37	lehe_nimetus
+C37	lehe_kuup
+D37	töötaja
+E37	neto
+F37	arvestuskuu
+G37	lehe_tüüp
+H37	0
+I37	Palgaväljamaksed
+J37	n/a
+A38	LHV pank
+B38	Kliendi konto
+C38	Kuupäev
+D38	Saaja/maksja nimi
+E38	Summa
+F38	Selgitus
+G38	Deebet/Kreedit (D/C)
+H38	1
+I38	D
+J38	C
+A39	LHV pank
+B39	Kliendi konto
+C39	Kuupäev
+D39	Saaja/maksja nimi
+E39	Summa
+F39	Selgitus
+G39	Deebet/Kreedit (D/C)
+H39	1
+I39	D
+J39	C
+A40	LHV pank
+B40	Счёт клиента:
+C40	Дата
+D40	Имя плательщика/получателя
+E40	Сумма
+F40	Пояснение
+G40	Дебет/Кредит (D/C)
+H40	1
+I40	D
+J40	C
+A41	LHV pank
+B41	Счёт клиента
+C41	Дата
+D41	Имя плательщика/получателя
+E41	Сумма
+F41	Пояснение
+G41	Дебет/Кредит (D/C)
+H41	1
+I41	D
+J41	C
+A42	LHV pank
+B42	Customer account no
+C42	Date
+D42	Sender/receiver name
+E42	Amount
+F42	Description
+G42	Debit/Credit (D/C)
+H42	1
+I42	D
+J42	C
+A43	SEB
+B43	Kliendi konto
+C43	Kuupäev
+D43	Saaja/maksja nimi
+E43	Summa
+F43	Selgitus
+G43	Deebet/Kreedit (D/C)
+H43	1
+I43	D
+J43	C
+A44	Coop Pank
+B44	Счет клиента
+C44	Дата
+D44	Имя получателя/плательщика
+E44	Сумма
+F44	Информация
+G44	Дебет/Кредит
+H44	1
+I44	D
+J44	C
+A45	Coop Pank
+B45	Kliendi konto
+C45	Kuupäev
+D45	Saaja/maksja nimi
+E45	Summa
+F45	Selgitus
+G45	Deebet/Kreedit
+H45	1
+I45	D
+J45	C
+A46	Luminor
+B46	Konto
+C46	VГ¤Г¤rtuspГ¤ev
+D46	Saaja/maksja nimi
+E46	Summa
+F46	Makse andmed
+G46	Deebet/krediit
+H46	1
+I46	D
+J46	C
+A47	Luminor
+B47	РЎС‡С‘С‚
+C47	Р”Р°С‚Р° Р·Р°С‡РёСЃР»РµРЅРёСЏ
+D47	РРјСЏ РїРѕР»СѓС‡Р°С‚РµР»СЏ / РїР»Р°С‚РµР»СЊС‰РёРєР°
+E47	CyРјРјa
+F47	Р”РµС‚Р°Р»Рё РїР»Р°С‚РµР¶Р°
+G47	Р”РµР±РµС‚ / РљСЂРµРґРёС‚
+H47	1
+I47	D
+J47	C
+A48	Paysera
+B48	Тип
+C48	Дата и время
+D48	Получатель / Плательщик
+E48	Сумма и валюта
+F48	Назначение платежа
+G48	Кредит / Дебет
+H48	1
+I48	Д
+J48	К
+A49	Source1
+B49	International account number
+C49	Date completed (UTC)
+D49	Description
+E49	Orig amount
+F49	Reference
+H49	1
+A50	CustomTable1
+B50	SheetName
+C50	Date
+D50	NameSearch
+E50	Salary
+F50	SheetName
+G50	D/C
+H50	0
+I50	D
+J50	n/a
+A51	TransferWise
+C51	Date
+D51	Payee Name
+E51	Amount
+F51	Payment Reference
+H51	1
+A52	Paysera
+C52	Дата
+D52	Плательщик / Получатель
+E52	Сумма
+F52	Назначение платежа
+G52	Валюта
+H52	0
+I52	EUR
+J52	n/a
+A56	Kategooria filtrid {category_filters} [1-20]
+B57	Palgad
+C57	Dividendid
+D57	Üür
+E57	Kommunaalkulud
+F57	Kompensatsioon
+G57	Haigusleht
+H57	Laenud
+I57	TÖR-väline palgad
+J57	Trahvid
+A58	Swedbank
+B58	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C58	*dividen*
+D58	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E58	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F58	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G58	*haigus*,hl,*hl *,TVL*
+H58	*laen*
+I58	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J58	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A59	Kassa
+B59	*tasu*,*202*
+A60	LHV pank
+B60	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C60	*dividen*
+D60	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E60	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F60	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G60	*haigus*,hl,*hl *,TVL*
+H60	*laen*
+I60	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J60	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A61	LHV pank
+B61	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C61	*dividen*
+D61	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E61	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F61	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G61	*haigus*,hl,*hl *,TVL*
+H61	*laen*
+I61	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J61	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A62	LHV pank
+B62	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C62	*dividen*
+D62	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E62	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F62	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G62	*haigus*,hl,*hl *,TVL*
+H62	*laen*
+I62	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J62	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A63	LHV pank
+B63	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C63	*dividen*
+D63	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E63	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F63	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G63	*haigus*,hl,*hl *,TVL*
+H63	*laen*
+I63	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J63	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A64	LHV pank
+B64	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C64	*dividen*
+D64	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E64	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F64	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G64	*haigus*,hl,*hl *,TVL*
+H64	*laen*
+I64	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J64	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A65	SEB
+B65	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C65	*dividen*
+D65	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E65	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F65	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G65	*haigus*,hl,*hl *,TVL*
+H65	*laen*
+I65	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J65	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A66	Coop Pank
+B66	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C66	*dividen*
+D66	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E66	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F66	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G66	*haigus*,hl,*hl *,TVL*
+H66	*laen*
+I66	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J66	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A67	Coop Pank
+B67	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C67	*dividen*
+D67	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E67	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F67	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G67	*haigus*,hl,*hl *,TVL*
+H67	*laen*
+I67	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J67	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A68	Luminor
+B68	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C68	*dividen*
+D68	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E68	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F68	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G68	*haigus*,hl,*hl *,TVL*
+H68	*laen*
+I68	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J68	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A69	Luminor
+B69	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C69	*dividen*
+D69	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E69	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F69	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G69	*haigus*,hl,*hl *,TVL*
+H69	*laen*
+I69	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J69	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A70	Paysera
+B70	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C70	*dividen*
+D70	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E70	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F70	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G70	*haigus*,hl,*hl *,TVL*
+H70	*laen*
+I70	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J70	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A71	Source1
+B71	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C71	*dividen*
+D71	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E71	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F71	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G71	*haigus*,hl,*hl *,TVL*
+H71	*laen*
+I71	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J71	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A72	CustomTable1
+B72	*custom*
+I72	*custom*
+A73	TransferWise
+B73	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C73	*dividen*
+D73	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E73	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F73	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G73	*haigus*,hl,*hl *,TVL*
+H73	*laen*
+I73	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J73	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A74	Paysera
+B74	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+C74	*dividen*
+D74	üür*,* üür*,* uur*,* ььr*,*korter*r,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+E74	*kom*un*al*,*kom*un*a*arv*,*[a-z][a-z] [0-9]-[0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9]-[0-9][0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9]*,*[a-z][a-z] [0-9][0-9][0-9]-[0-9][0-9][0-9]*;*/*,*\*,*arve nr*,*invoice*,*arve number*,*saateleht*,*transpor*,*puhkus*,*puhke*t*,*ri*reis*,*t*riid*kulu*,arve [0-9][0-9]-[0-9][0-9],*palk*
+F74	*kompensatsi*on*,*l?hetus*,*p??va*raha*,*l??hetus*,*h?vitis*,*h?vitamine*,*komandeering*,komande*r*tasu,*t*riid*kulu*,*reis*,*transpor*,s?idu*raha,maj?ndus*,*majutus*,*auto*komp*,*tran*por*kulu*,*travel*,*compensation*;*haigus*
+G74	*haigus*,hl,*hl *,TVL*
+H74	*laen*
+I74	*palk*,*plak*,*pal?*,*talk*,tasu,*t??tasu*,*202*tasu*,*l*p*arve*,*l*p*makse*,*avans*,*too?asu*,*t*su*kuu*,*kuu*t*su*,j*nuar*tasu,v*bruar*tasu,m?rts*tasu,april*tasu,mai*tasu,juun*tasu,juul*tasu,august*tasu,septemb*r*tasu,okt*b*r*tasu,novemb*r*tasu,detsemb*r*tasu,*lisatasu*,*puhkus*,*puhk*tasu*,*puhlus*,*puhus*,ja*nuar,ja*nuar*kuu,ve*bruar,ve*bruar*kuu,m*rts,m*rts*kuu,aprill,aprill*kuu,mai,mai*kuu,juuni,juuni*kuu,juuli,juuli*kuu,august,august*kuu,september,septemb*kuu,okto*ber,okto*b*kuu,november,novemb*kuu,detsember,detsemb*kuu,*abit??d*,adminit??*,admiinit??*,*??? tun*,*preemia*,*premia*,*advance payment*;*laen*
+J74	*trahv*,*riigil?iv*,*Valsts*kase*,*HISTEENUSED*,*Tallinna*Linnakantselei*,*RAHANDUSMINISTEERIUM*,*Baltic*Parking*,*EUROPARK*ESTONIA*
+A78	Kategooria seadistused {category_config}
+B79	Palgad	=IF(LEN(B57)>0,B57,"")
+C79	Dividendid	=IF(LEN(C57)>0,C57,"")
+D79	Üür	=IF(LEN(D57)>0,D57,"")
+E79	Kommunaalkulud	=IF(LEN(E57)>0,E57,"")
+F79	Kompensatsioon	=IF(LEN(F57)>0,F57,"")
+G79	Haigusleht	=IF(LEN(G57)>0,G57,"")
+H79	Laenud	=IF(LEN(H57)>0,H57,"")
+I79	TÖR-väline palgad	=IF(LEN(I57)>0,I57,"")
+J79	Trahvid	=IF(LEN(J57)>0,J57,"")
+K79		=IF(LEN(K57)>0,K57,"")
+L79		=IF(LEN(L57)>0,L57,"")
+M79		=IF(LEN(M57)>0,M57,"")
+N79		=IF(LEN(N57)>0,N57,"")
+O79		=IF(LEN(O57)>0,O57,"")
+P79		=IF(LEN(P57)>0,P57,"")
+Q79		=IF(LEN(Q57)>0,Q57,"")
+R79		=IF(LEN(R57)>0,R57,"")
+S79		=IF(LEN(S57)>0,S57,"")
+T79		=IF(LEN(T57)>0,T57,"")
+U79		=IF(LEN(U57)>0,U57,"")
+V79		=IF(LEN(V57)>0,V57,"")
+W79		=IF(LEN(W57)>0,W57,"")
+X79		=IF(LEN(X57)>0,X57,"")
+Y79		=IF(LEN(Y57)>0,Y57,"")
+Z79		=IF(LEN(Z57)>0,Z57,"")
+A80	Deebet/Creedit (D/C)
+B80	D
+C80	D
+D80	D
+E80	D
+F80	D
+G80	D
+H80	D
+I80	D
+J80	D
+A81	Töötajapõhine (Y/N/tühi)
+B81	y
+F81	y
+G81	y
+I81	n
+A82	Palk (Y/N)
+B82	y
+C82	n
+D82	n
+E82	n
+F82	n
+G82	n
+H82	n
+I82	n
+J82	n
+A83	Aruande leht (Y/N)
+B83	y
+C83	y
+D83	y
+E83	y
+F83	y
+G83	y
+H83	y
+I83	y
+J83	y
+A84	Lisatabel (Y/N)
+B84	n
+C84	y
+D84	y
+E84	y
+F84	y
+G84	y
+H84	y
+I84	y
+J84	y
+A85	Saaja kontroll
+J85	y
+A86	Grupp
+A87	TOR/Kategooria kood
+D87	uur
+G87	haigus
+A88	Kategooria aruanded {category_report}
+A89	(not used)
+A91	Vahearuande seadistused {report_config}
+B92	Töötaja isikukood
+C92	Perekonnanimi
+D92	Eesnimi
+E92	Maksuvaba teave
+F92	Residentsus
+G92	Pension
+H92	Kontrollkuupäev
+I92	Töötamise alguse aeg
+J92	Töötamise liik
+K92	Kande olek
+L92	Töötamise lõpu aeg
+M92	<Summad #column>
+N92	PALK NETO KOKKU
+A93	Vahearuanne
+B93	Töötaja isikukood
+C93	Perekonnanimi
+D93	Eesnimi
+E93	Maksuvaba
+F93	Residentsus
+G93	Pension
+H93	Kontroll-kp
+I93	Töötamise alguse aeg
+J93	Töötamise liik
+K93	Kande olek
+L93	Töötamise lõpu aeg
+M93	4
+N93	PALK NETO KOKKU
+A94	TSD lisa 1 seadistused {tsdl1_config}
+A95	Veeru kood
+B95	1000
+C95	1010
+D95	1020
+E95	1030
+F95	1050
+G95	1060
+H95	1070
+I95	1080
+J95	1090
+K95	1100
+L95	1110
+M95	1120
+N95	1130
+O95	1140
+P95	1170
+Q95	1160_610
+R95	1160_640
+S95	1160_650
+A96	Veeru pealkiri
+B96	Väljamakse saaja isikukood
+C96	Väljamakse saaja ees- ja perekonnanimi
+D96	Väljamakse liigi kood
+E96	Väljamakse summa
+F96	Millisest riigist on väljastatud A1/ E101 tõend
+G96	Arvutatav: Sotsiaalmaksuga maksustatav väljamakse
+H96	Sotsiaalmaksuga maksustatavalt väljamakselt maha arvatud töövõimetuspensionäri tasu osa, millelt maksab sotsiaalmaksu riik
+I96	Sotsiaalmaksuga maksustatavalt väljamakselt maha arvatud tasu osa, millelt on sotsiaalmaks deklareeritud eelmistel kuudel sotsiaalmaksu kuumääralt
+J96	Sotsiaalmaksuga maksustatava summa suurendus seoses sotsiaalmaksu miinimum kohustusega
+K96	Arvutatav: Sotsiaalmaks. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+L96	Arvutatav: Kinnipeetud kohustusliku kogumispensioni makse. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+M96	Arvutatav: Töötuskindlustusmaksega maksustatav väljamakse
+N96	Arvutatav: Kinnipeetud töötuskindlustusmakse. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+O96	Arvutatav: Tööandja töötuskindlustusmakse. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+P96	Arvutatav: Kinnipeetud tulumaks. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+Q96	Tulumaksu kinnipidamisel maha arvatud maksuvaba tulu summa liigiga 610
+R96	Tulumaksu kinnipidamisel maha arvatud maksuvaba tulu summa liigiga 640
+S96	Tulumaksu kinnipidamisel maha arvatud maksuvaba tulu summa liigiga 650. Kehtiv alates 01.01.2023
+A97	Summa (y/n)
+B97	n
+C97	n
+D97	n
+E97	y
+F97	n
+G97	y
+H97	y
+I97	y
+J97	y
+K97	y
+L97	y
+M97	y
+N97	y
+O97	y
+P97	y
+Q97	y
+R97	y
+S97	y
+A98	Arvutatav (y/n)
+B98	n
+C98	n
+D98	n
+E98	n
+F98	n
+G98	y
+H98	n
+I98	n
+J98	n
+K98	y
+L98	y
+M98	y
+N98	y
+O98	y
+P98	y
+Q98	n
+R98	n
+S98	n
+A99	TSD lisa 2 seadistused {tsdl2_config}
+A100	Veeru kood
+B100	2000
+C100	2010
+D100	2020
+E100	2030
+F100	2040
+G100	2060
+H100	2070
+I100	2080
+J100	2090
+K100	2100
+L100	2110
+M100	2120
+N100	2130
+O100	2140
+P100	2150
+Q100	2160
+R100	2170
+S100	2154_610
+T100	2154_650
+A101	Veeru pealkiri
+B101	Väljamakse saaja isiku- või registrikood Eestis
+C101	Väljamakse saaja nimi või ees- ja perekonnanimi
+D101	Väljamakse saaja residendiriik
+E101	Väljamakse liigi kood
+F101	Väljamakse summa
+G101	Millisest riigist on väljastatud A1/E101
+H101	Arvutatav: Sotsiaalmaksuga maksustatav väljamakse
+I101	Sotsiaalmaksuga maksustatavalt väljamakselt maha arvatud töövõimetuspensionäri tasu osa, millelt maksab sotsiaalmaksu riik
+J101	Sotsiaalmaksuga maksustatavalt väljamakselt maha arvatud tasu osa, millelt on sotsiaalmaks deklareeritud eelmistel kuudel sotsiaalmaksu kuumääralt
+K101	Sotsiaalmaksuga maksustatava summa suurendus seoses sotsiaalmaksu miinimum kohustusega
+L101	Arvutatav: Sotsiaalmaks. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+M101	Arvutatav: Töötuskindlustusmaksega maksustatav väljamakse
+N101	Arvutatav: Kinnipeetud töötuskindlustusmakse. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+O101	Arvutatav: Tööandja töötuskindlustusmakse. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+P101	Arvutatav: Tulumaksuga maksustatav väljamakse
+Q101	Arvutatav: Kinnipeetud tulumaksu määr
+R101	Arvutatav: Kinnipeetud tulumaks. Arvutatud summast lubatud teatud väike hälve käsitsi sisestamise puhul.
+S101	Tulumaksu kinnipidamisel maha arvatud maksuvaba tulu summa liigiga 610, Lisa2 kasutusel alates 01.01.2022
+T101	Tulumaksu kinnipidamisel maha arvatud maksuvaba tulu summa liigiga 650. Kasutusel alates 01.01.2023
+A102	Summa (y/n)
+B102	n
+C102	n
+D102	n
+E102	n
+F102	y
+G102	n
+H102	y
+I102	y
+J102	y
+K102	y
+L102	y
+M102	y
+N102	y
+O102	y
+P102	y
+Q102	y
+R102	y
+S102	y
+T102	y
+A103	Arvutatav (y/n)
+B103	n
+C103	n
+D103	n
+E103	n
+F103	n
+G103	n
+H103	y
+I103	n
+J103	n
+K103	n
+L103	y
+M103	y
+N103	y
+O103	y
+P103	y
+Q103	y
+R103	y
+S103	n
+T103	n
+A104	Maksude seadistused {taxes_config}
+A105	Maksud ja Määrad
+B105	Tulumaks
+C105	Kindlustatu töötuskindlustusmakse määr
+D105	Tööandja töötuskindlustusmakse määr
+E105	Sotsiaalmaks
+F105	Sotsiaalmaksu minimaalse kohustuse aluseks olev kuumäär
+G105	Kogumispension
+H105	Maksuvaba tulu aastas
+I105	Aastatulu piir 1
+J105	Aastatulu piir 2
+K105	Aastatulu jagaja
+L105	Vanaduspensioniiga maksuvaba tulu aastas
+B106	0.22
+C106	0.016
+D106	0.008
+E106	0.33
+F106	886
+G106	0.02
+H106	8400
+I106	14400
+J106	25200
+K106	10800
+L106	9312
+A107	TSD Lisa 1 TOR/Kategooria koodide seadistus {tsdl1-tor-cat_matrix}
+A108	TOR/Kategooria kood
+B108	1
+C108	600
+D108	507
+E108	602
+F108	uur
+G108	haigus
+H108	601
+I108	autorent
+J108	501
+K108	a1t
+L108	a1v
+A109	Nimetus
+B109	Tööleping
+C109	VÕS leping
+D109	Viisa alusel - tööleping
+E109	Viisa alusel -VÕS leping
+F109	Üür
+G109	Haigusleht
+H109	Juhtimis-, kontrollorgani liige
+I109	Autorent
+J109	Tasuta töötamine
+K109	A1 tööleping (a1t)
+L109	A1 võs leping (a1v)
+A110	TSD kood
+B110	10
+C110	17
+D110	10
+E110	17
+F110	57
+G110	24
+H110	21
+I110	50
+J110	10
+K110	11
+L110	19
+A111	Tulumaks (y/n)
+B111	y
+C111	y
+D111	y
+E111	y
+F111	y
+G111	y
+H111	y
+I111	y
+J111	y
+K111	n
+L111	n
+A112	Kindlustatu töötuskindlustusmakse
+B112	y
+C112	y
+D112	y
+E112	y
+F112	n
+G112	n
+H112	n
+I112	n
+J112	y
+K112	y
+L112	y
+A113	Tööandja töötuskindlustusmakse
+B113	y
+C113	y
+D113	y
+E113	y
+F113	n
+G113	n
+H113	n
+I113	n
+J113	y
+K113	y
+L113	y
+A114	Sotsiaalmaks
+B114	y
+C114	y
+D114	y
+E114	y
+F114	n
+G114	n
+H114	y
+I114	n
+J114	y
+K114	y
+L114	y
+A115	Kasuta sotsiaalmaksu minimaalse kohustuse aluseks olev kuumäär
+B115	y
+C115	n
+D115	y
+E115	n
+F115	n
+G115	n
+H115	n
+I115	n
+J115	n
+K115	y
+L115	n
+A116	Kogumispension
+B116	y
+C116	y
+D116	y
+E116	y
+F116	n
+G116	n
+H116	y
+I116	n
+J116	y
+K116	y
+L116	y
+A117	Maksuvaba summa
+B117	y
+C117	y
+D117	y
+E117	y
+F117	n
+G117	n
+H117	y
+I117	n
+J117	y
+K117	n
+L117	n
+A118	TSD Lisa 2 TOR/Kategooria koodide seadistus {tsdl2-tor-cat_matrix}
+A119	TOR/Kategooria kood
+B119	1
+C119	600
+D119	507
+E119	602
+F119	501
+G119	haigus
+H119	a1t
+I119	a1v
+J119	uur
+A120	Nimetus
+B120	Tööleping
+C120	VÕS leping
+D120	Viisa alusel - tööleping
+E120	Viisa alusel -VÕS leping
+F120	Tasuta töötamine
+G120	Haigusleht
+H120	A1 tööleping (a1t)
+I120	A1 võs leping (a1v)
+J120	Üür
+A121	TSD kood
+B121	120
+C121	123
+D121	120
+E121	123
+F121	120
+G121	129
+H121	122
+I121	125
+J121	205
+A122	Tulumaks (y/n)
+B122	y
+C122	y
+D122	y
+E122	y
+F122	y
+G122	y
+H122	n
+I122	n
+J122	y
+A123	Kindlustatu töötuskindlustusmakse
+B123	y
+C123	y
+D123	y
+E123	y
+F123	y
+G123	n
+H123	y
+I123	y
+J123	n
+A124	Tööandja töötuskindlustusmakse
+B124	y
+C124	y
+D124	y
+E124	y
+F124	y
+G124	n
+H124	y
+I124	y
+J124	n
+A125	Sotsiaalmaks
+B125	y
+C125	y
+D125	y
+E125	y
+F125	y
+G125	n
+H125	y
+I125	y
+J125	n
+A126	Kasuta sotsiaalmaksu minimaalse kohustuse aluseks olev kuumäär
+B126	y
+C126	n
+D126	y
+E126	n
+F126	n
+G126	n
+H126	y
+I126	n
+J126	n
+A127	Kogumispension
+B127	n
+C127	n
+D127	n
+E127	n
+F127	n
+G127	n
+H127	n
+I127	n
+J127	n
+A128	Maksuvaba summa
+B128	n
+C128	n
+D128	n
+E128	n
+F128	n
+G128	n
+H128	n
+I128	n
+J128	n
+A129	Süsteemi andmed {system_data}
+A130	System texts
+B130	kogumispensioni sissemaksed lõppenud
+B131	on lõppenud
+A132	System data
+B132	SubFirstNames (a1,a2,a3,...;b1,b2,...)
+B133	SERHII,SERGII,SERGEI,SERGHEI,SERGIY;PAVEL,PAVLO;GHEORGHE,Georghi;andrey,andrii
+A134	System data 2

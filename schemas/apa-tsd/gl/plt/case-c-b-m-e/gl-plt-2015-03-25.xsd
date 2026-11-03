@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Palette entry point for the APA TSD set (cor + bus + muc + ext), written by SatellesTSD (2026-11-03) after the
+     package's gl-plt-all-2015-03-25.xsd. MTA's example instances point their schemaRef at
+     ../plt/case-c-b-m-e/gl-plt-2015-03-25.xsd, which MTA's XSD package does not include. -->
+<schema xmlns="http://www.w3.org/2001/XMLSchema"
+        targetNamespace="http://www.xbrl.org/int/gl/plt/2015-03-25"
+        xmlns:gl-plt="http://www.xbrl.org/int/gl/plt/2015-03-25"
+        elementFormDefault="qualified">
+  <import namespace="http://www.xbrl.org/int/gl/cor/2015-03-25" schemaLocation="gl-cor-content-2015-03-25.xsd"/>
+</schema>

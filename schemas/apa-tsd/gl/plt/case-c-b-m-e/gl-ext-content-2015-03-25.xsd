@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- STUB, written by SatellesTSD (2026-11-03). MTA's restricted gl-cor-content and gl-bus-content schemas import the
+     Estonian extension module (gl-ext) but reference none of its elements in the TSD sections EE0201001/EE0201002, and
+     MTA's XSD package (APA_TSD_XSD_naidised, 23.09.2026) does not ship the module. This empty schema lets the set compile
+     offline. Replace it with MTA's gl-ext-content-2015-03-25.xsd if one is ever published. -->
+<schema xmlns="http://www.w3.org/2001/XMLSchema"
+        targetNamespace="http://www.xbrl.org/int/gl/ext/2015-03-25"
+        elementFormDefault="qualified"/>
