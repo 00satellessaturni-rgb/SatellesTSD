@@ -184,7 +184,7 @@ Total before X-tee ≈ 78 h.
 
 ## 7. S1 — what landed (2026-11-03)
 
-`SatellesTSD.Core` (net10.0, no packages) and `SatellesTSD.Tests` (xUnit, 74 tests, all green); the WinForms project references Core. Git initialised, nothing committed.
+`SatellesTSD.Core` (net10.0, no packages) and `SatellesTSD.Tests` (xUnit, 82 tests, all green); the WinForms project references Core. Committed as `867e9c9` on `master` (2026-11-03, on the owner's "commit and push"); no GitHub remote existed at that moment — the push follows once `00satellessaturni-rgb/SatellesTSD` is created.
 
 - `Tax/PaymentTypes` — 24 VALJAMLIIK codes with MTA's matrix flags (SM, minimum, zero, UI, KP, TM rate, MVT, 640, treaty) plus the A1 variant rows per kind (`A1Kinds`; 156 has only the foreign one; the Estonian-A1 row keeps the minimum only on 10/120/138).
 - `Tax/TaxEngine` — per payment, gross→net or net→gross (the workbook's `cCalc2026` tiers and re-derivation), A1 and non-resident modifiers, the exemption capped at amount − KP − TK; refuses a refund, a type/payee mismatch, a minimum increase where none applies, an unchecked II-pillar status or unknown rate where the pension is withheld.
