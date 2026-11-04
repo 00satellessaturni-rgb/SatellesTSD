@@ -53,6 +53,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _closeButton = new(UiText.Close);
     private readonly ToolStripMenuItem _newCompanyButton = new(UiText.NewCompany);
     private readonly ToolStripMenuItem _closeCompanyButton = new(UiText.CloseCompany);
+    private readonly Label _salaryTotal = new() { Dock = DockStyle.Bottom, Height = 24, TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 8, 0), Font = new Font(Control.DefaultFont, FontStyle.Bold) };
     private readonly ToolStripMenuItem _importButton = new(UiText.ImportFiles);
     private readonly ToolStripMenuItem _filesButton = new(UiText.Files);
     private readonly ToolStripMenuItem _matchButton = new(UiText.RunMatch);
@@ -126,10 +127,11 @@ public sealed class MainForm : Form
 
         _grids.Panel1.Controls.Add(_personsGrid);
         _grids.Panel1.Controls.Add(SearchBar(_personsSearch));
+        _grids.Panel1.Controls.Add(_salaryTotal);
         _grids.Panel2.Controls.Add(_paymentsGrid);
         _grids.Panel2.Controls.Add(SearchBar(_paymentsSearch));
         _grids.Panel2.Controls.Add(_scopeTabs);
-        _personsSearch.TextChanged += (_, _) => Filter(_personsGrid, _personsSearch.Text);
+        _personsSearch.TextChanged += (_, _) => { Filter(_personsGrid, _personsSearch.Text); UpdateSalaryTotal(); };
         _paymentsSearch.TextChanged += (_, _) => Filter(_paymentsGrid, _paymentsSearch.Text);
         _scopeTabs.SelectedIndexChanged += (_, _) =>
         {
@@ -213,6 +215,8 @@ public sealed class MainForm : Form
     internal ToolStripItem CloseCompanyButton => _closeCompanyButton;
 
     internal ToolStripComboBox CompanyBox => _companyBox;
+
+    internal Label SalaryTotalLabel => _salaryTotal;
     internal MenuStrip Menus => _menu;
     internal TextBox PersonsSearch => _personsSearch;
     internal TextBox PaymentsSearch => _paymentsSearch;
@@ -1054,6 +1058,7 @@ public sealed class MainForm : Form
         if (_view is null)
         {
             RebuildScopes(null);
+            UpdateSalaryTotal();
             _filling = false;
             ShowSelectedPerson();
             return;
@@ -1142,6 +1147,7 @@ public sealed class MainForm : Form
             }
         }
 
+        UpdateSalaryTotal();
         _filling = false;
         ShowSelectedPerson();
         if (_view.RowsLeftOut > 0)
@@ -1937,6 +1943,24 @@ public sealed class MainForm : Form
         if (period.UploadedAt is { } u && period.State >= PeriodState.Uploaded) { parts.Add($"{UiText.PeriodState(PeriodState.Uploaded)} {u.ToLocalTime():dd.MM.yyyy HH:mm}"); }
         if (period.ConfirmedAt is { } c && period.State == PeriodState.Confirmed) { parts.Add($"{UiText.PeriodState(PeriodState.Confirmed)} {c.ToLocalTime():dd.MM.yyyy HH:mm}"); }
         return parts.Count == 0 ? "" : " (" + string.Join(", ", parts) + ")";
+    }
+
+    /// <summary>The line under the persons grid: the "PALK NETO KOKKU" column's total over every person (what the
+    /// Vahearuanne adds up to), and the total of the rows the search leaves shown when that differs from it.</summary>
+    private void UpdateSalaryTotal()
+    {
+        if (_view is null)
+        {
+            _salaryTotal.Text = "";
+            return;
+        }
+
+        var total = _view.Persons.Where(p => !p.IsUnmatched).Sum(p => p.SalaryTotal);
+        var rows = _personsGrid.Rows.Cast<DataGridViewRow>().ToList();
+        var shown = rows.Any(r => !r.Visible)
+            ? rows.Where(r => r.Visible).Select(r => r.Tag as ReviewPerson).Where(p => p is { IsUnmatched: false }).Sum(p => p!.SalaryTotal) as decimal?
+            : (decimal?)null;
+        _salaryTotal.Text = UiText.SalaryTotalLine(total, shown == total ? null : shown); // the bracket only when the rows shown add up to something else
     }
 
     /// <summary>"Maksuvaba": the monthly exemption applied at this payer in the month's year — the person's own figure,

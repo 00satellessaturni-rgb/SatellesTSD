@@ -434,7 +434,7 @@ The owner's word after S11: importing files should not need a company chosen fir
 **Decisions made inside S12 (for veto)**
 69. The files' TÖR export names the employer; the month comes from the combos (reaching back to the month chosen). With no company shown the employer's company is found or created without a question; with another company shown the window asks before switching, saying whether the company will be created or taken up — "no" imports nothing, since the files belong to the employer the export names, never silently to the company that happened to be shown; several employers in the selection are refused unless one of them is the company shown, which then takes the files (the stray rows said by the import); without a TÖR export the files go to the company shown, as before. The files are read once, under the busy state.
 
-### S13 — what landed (2026-11-04, 585 + 6 tests green)
+### S13 — what landed (2026-11-04, 585 + 6 tests green, committed `29f4c08`)
 
 The owner's word after the first release: the Maksuvaba column said "ei" for everyone; the buttons should sit in a menu strip, grouped (the Deklaratsioon tab's own buttons stay); every table should sort, filter and search; the payments table should have a tab per category.
 
@@ -451,7 +451,7 @@ The owner's word after the first release: the Maksuvaba column said "ei" for eve
 71. The tables sort by the value, not by the text: money and dates are typed cells formatted as before. The search box filters on the text shown in the row, any column, and hides rather than removes, so that editing a filtered grid writes to the right payment.
 72. The payments tabs are the scope of the grid: the person picked, everything, a category, or no category; the persons grid's selection only drives the Valitud isik tab and the person form. The unmatched pseudo-row's payments appear under Kõik, under their category, and under Tundmatu kategooria like everyone else's.
 
-### S14 — what landed (2026-11-04, 585 + 6 tests green)
+### S14 — what landed (2026-11-04, 585 + 6 tests green, committed `b775ff1`; released as 0.12.0 to the NAS folder the same day, commit `e4b71c2`)
 
 The owner's word after S13: (1) the rows without a payee name must be in Otsingu kontroll — "the accountant should be aware of all transactions"; (2) with a company shown, a way to close it before importing another company's files; (3) is a TÖR export checked against the company shown? (Yes, twice: before the import the window reads the employer and asks before switching — S12; at the import `TorParser.CheckEmployer` says in the file's outcome when the export is of another employer.)
 
@@ -466,6 +466,13 @@ The owner's word after S13: (1) the rows without a payee name must be in Otsingu
 73. A statement row without a payee is a transaction the accountant sees: listed as nobody's with no category and never declared by itself; the run never searches it for a person; a decision on it (a category, a person) stands like any other, and once a person is named it may be declared. Only blank rows and pasted header rows stay out.
 74. What cannot be read of a payee-less row (a date, an amount) is no import problem — the row is not a payment — and is shown as the text the statement had.
 75. "Sulge ettevõte" leaves no company shown until one is picked; the setting remembers it across restarts (an empty company setting), so a program started after it opens with none shown.
+
+### The owner's list after 0.12.0 (2026-11-04)
+
+1. **The total of "PALK NETO KOKKU"** — a bold line under the persons grid: the column's total over every person of the review (the sum the Vahearuanne adds up to; nobody's rows, which the grid gives no total, are not in it), and, when the search box hides rows, the total of the rows shown in brackets ("näidatud read"). Refreshed with the grid and with every keystroke in the search box; empty when no company or month is shown. The Vahearuanne sheet keeps the macro's shape (no total row) — say the word if the sheet should have one too. Window test added. Reviewed (one Opus lens, a refuter per finding): two findings folded — the label's font was the old stock font, not the window's; the bracket now appears only when the rows shown add up to something else.
+
+**Decisions made (for veto)**
+76. The total line counts the persons of the Vahearuanne — register persons and persons added by hand — and not the rows nobody matched; the search box's filter adds the sum of the rows left shown, so that a filtered grid never passes for the whole.
 
 ### Reference material in this repo
 - `docs/reference/apa-xml-reference.md` — element-by-element XBRL GL format, business rules, feedback, confirmation, gotchas.

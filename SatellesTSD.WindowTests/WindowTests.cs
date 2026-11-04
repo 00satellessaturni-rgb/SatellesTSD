@@ -72,13 +72,19 @@ public class WindowTests
             Assert.Equal(typeof(decimal), persons.Columns["total"]!.ValueType); // money sorts by value, not by text
 
             // the search box hides what does not match, and the hidden rows come back when it is cleared
+            // the total line under the grid: the column's total, and the rows shown when the search hides some
+            Assert.Equal("PALK NETO KOKKU: 905,92", form.SalaryTotalLabel.Text.Replace('.', ','));
+            form.PersonsSearch.Text = "tamm";
+            Ui.Pump();
+            Assert.Equal("PALK NETO KOKKU: 905,92 (näidatud read: 0,00)", form.SalaryTotalLabel.Text.Replace('.', ','));
             form.PersonsSearch.Text = "maasi";
             Ui.Pump();
             Assert.Equal(1, persons.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
-            Assert.Equal("MAASIKAS", persons.CurrentRow?.Cells["last"].Value?.ToString());
+            Assert.Equal("MAASIKAS", persons.CurrentRow?.Cells["last"].Value?.ToString()); // the current row follows the search, and stays once it is cleared
             form.PersonsSearch.Text = "";
             Ui.Pump();
             Assert.Equal(3, persons.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
+            Assert.Equal("PALK NETO KOKKU: 905,92", form.SalaryTotalLabel.Text.Replace('.', ','));
 
             // the payments tabs: the person picked, every payment, each category, the payments without one
             var tabs = form.ScopeTabs;
@@ -120,6 +126,7 @@ public class WindowTests
             Ui.Pump();
             Assert.Null(form.View);
             Assert.Equal(-1, form.CompanyBox.SelectedIndex);
+            Assert.Equal("", form.SalaryTotalLabel.Text);
             Assert.False(form.CloseCompanyButton.Enabled);
             Assert.True(form.ImportButton.Enabled);
             Assert.Equal(0, form.PersonsGrid.Rows.Count);

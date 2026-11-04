@@ -33,6 +33,10 @@ internal static class UiText
     public const string FirstName = "Eesnimi";
     public const string Exemption = "Maksuvaba";
     public const string SalaryTotal = "PALK NETO KOKKU";
+
+    /// <summary>The line under the persons grid: the column's total, and the total of the rows shown when the search hides some.</summary>
+    public static string SalaryTotalLine(decimal total, decimal? shown) =>
+        shown is { } s ? $"{SalaryTotal}: {Money(total)} (näidatud read: {Money(s)})" : $"{SalaryTotal}: {Money(total)}";
     public const string Residency = "Residentsus";
     public const string Pension = "Pension";
     public const string CheckedOn = "Kontrollitud";
