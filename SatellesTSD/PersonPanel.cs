@@ -2,6 +2,7 @@ using System.Globalization;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Store;
+using SatellesTSD.Core.Tax;
 
 namespace SatellesTSD;
 
@@ -150,7 +151,8 @@ public sealed class PersonPanel : UserControl
         _onPension.Checked = person?.OnOldAgeOrFlexiblePension == true;
         _pensionAgeYear.Text = person?.PensionAgeYear?.ToString(CultureInfo.InvariantCulture) ?? "";
         _exemptionApplied.Checked = person?.BasicExemptionApplied == true;
-        _exemptionMonthly.Text = person?.BasicExemptionMonthly?.ToString("0.00", CultureInfo.CurrentCulture) ?? "";
+        // the allowance in force stands in the box unless the person has one of their own (a smaller one by their application)
+        _exemptionMonthly.Text = person is null ? "" : (person.BasicExemptionMonthly ?? TaxRates.Year2026.BasicExemptionMonth).ToString("0.00", CultureInfo.CurrentCulture);
         _minimum.Checked = person?.SocialTaxMinimumApplies ?? true;
         _a1.SelectedIndex = (int)(person?.A1 ?? A1Case.None);
         _a1Country.Text = person?.A1Country ?? "";
@@ -200,7 +202,7 @@ public sealed class PersonPanel : UserControl
             OnOldAgeOrFlexiblePension = _onPension.Checked,
             PensionAgeYear = pensionAgeYear,
             BasicExemptionApplied = _exemptionApplied.Checked,
-            BasicExemptionMonthly = exemption,
+            BasicExemptionMonthly = exemption == TaxRates.Year2026.BasicExemptionMonth ? null : exemption, // the allowance in force is the default, never a figure of the person's own
             SocialTaxMinimumApplies = _minimum.Checked,
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),
             A1Country = Null(_a1Country.Text),

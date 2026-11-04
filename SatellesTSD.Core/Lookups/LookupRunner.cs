@@ -56,7 +56,33 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     private DateTime _lastRequest = DateTime.MinValue;
 
     /// <summary>The control date of a period: its last day, as the workbook took it.</summary>
+    /// <summary>The latest day a person's facts can be checked for in a period: its last day.</summary>
     public static DateOnly ControlDateOf(Period period) => new DateOnly(period.Year, period.Month, 1).AddMonths(1).AddDays(-1);
+
+    /// <summary>The day a person's facts are checked for: the person's latest payout of the month (the facts at the
+    /// payout decide the taxes), never later than the period's last day, and the last day itself when the person had
+    /// no dated payout in the month. Never the day the check is made.</summary>
+    public static DateOnly ControlDateOf(Period period, IEnumerable<DateOnly> payoutDates)
+    {
+        ArgumentNullException.ThrowIfNull(payoutDates);
+        var last = ControlDateOf(period);
+        var first = new DateOnly(period.Year, period.Month, 1);
+        return payoutDates.Where(d => d >= first && d <= last).DefaultIfEmpty(last).Max();
+    }
+
+    /// <summary>The control date of one person in a period, from the period's run: their payouts of the month.</summary>
+    public DateOnly ControlDateFor(Person person, Period period)
+    {
+        ArgumentNullException.ThrowIfNull(person);
+        ArgumentNullException.ThrowIfNull(period);
+        var run = _store.LoadMatchResult(period.Id);
+        var registerPerson = run?.Persons.FirstOrDefault(p => p.Key == person.RegisterKey)
+            ?? (person.PersonalCode is { } code ? run?.Persons.FirstOrDefault(p => p.Person.PersonalCode == code) : null);
+        return registerPerson is null || run is null ? ControlDateOf(period) : ControlDateOf(period, PayoutDates(run, registerPerson));
+    }
+
+    private static IEnumerable<DateOnly> PayoutDates(MatchResult run, MatchPerson registerPerson) =>
+        run.Hits.Where(h => h.PersonKey == registerPerson.Key && h.Row.Date is not null).Select(h => h.Row.Date!.Value);
 
     /// <summary>"2 %", "4 %", "6 %" — the same in every culture; "unknown" for none.</summary>
     public static string Percent(decimal? rate) => rate is { } r ? (r * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " %" : "unknown";
@@ -72,10 +98,10 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var problems = new List<string>();
         var persons = PersonsOf(period, problems);
         var outcomes = new List<PersonLookupOutcome>();
-        foreach (var person in persons)
+        foreach (var (person, payoutDate) in persons)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var outcome = await LookUpAsync(person, controlDate, cancellationToken).ConfigureAwait(false);
+            var outcome = await LookUpAsync(person, payoutDate, cancellationToken).ConfigureAwait(false);
             outcomes.Add(outcome);
             progress?.Report(outcome);
         }
@@ -247,14 +273,16 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
     /// <summary>The persons a run looks up: those of the period's match run (created in the store from the register
     /// when missing), else every person of the company.</summary>
-    private List<Person> PersonsOf(Period period, List<string> problems)
+    /// <summary>The persons to look up, each with the day their facts are checked for (their latest payout of the
+    /// month, else the period's last day).</summary>
+    private List<(Person Person, DateOnly ControlDate)> PersonsOf(Period period, List<string> problems)
     {
-        var persons = new List<Person>();
+        var persons = new List<(Person, DateOnly)>();
         var run = _store.LoadMatchResult(period.Id);
         if (run is null)
         {
             problems.Add("The period has no match run; every person of the company is looked up.");
-            persons.AddRange(_store.Persons(period.CompanyId));
+            persons.AddRange(_store.Persons(period.CompanyId).Select(p => (p, ControlDateOf(period))));
             return persons;
         }
 
@@ -266,7 +294,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 continue;
             }
 
-            persons.Add(Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson));
+            persons.Add((Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson), ControlDateOf(period, PayoutDates(run, matchPerson))));
         }
 
         return persons;

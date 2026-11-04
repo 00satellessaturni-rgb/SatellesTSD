@@ -75,8 +75,8 @@ public sealed class CompanyDialog : FieldDialog
 
     public CompanyDialog() : base(UiText.NewCompanyTitle)
     {
-        Field(UiText.RegistryCode, _code);
         Field(UiText.Name, _name);
+        Field(UiText.RegistryCode, _code);
         Buttons();
     }
 

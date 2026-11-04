@@ -145,11 +145,13 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     public Task<LookupRunReport> RunLookupsAsync(Guid periodId, IProgress<PersonLookupOutcome>? progress = null, CancellationToken cancellationToken = default) =>
         Runner().RunAsync(periodId, cancellationToken, progress);
 
-    /// <summary>The lookups for one person, for the period's control date.</summary>
+    /// <summary>The lookups for one person, for the day their facts are checked for in the period (their latest
+    /// payout of the month, else its last day).</summary>
     public Task<PersonLookupOutcome> LookUpAsync(Person person, Period period, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(period);
-        return Runner().LookUpAsync(person, LookupRunner.ControlDateOf(period), cancellationToken);
+        var runner = Runner();
+        return runner.LookUpAsync(person, runner.ControlDateFor(person, period), cancellationToken);
     }
 
     private LookupRunner Runner() =>

@@ -60,10 +60,43 @@ public class LookupRunnerTests
         new(store, residency, pension, options ?? new LookupOptions(TimeSpan.Zero));
 
     [Fact]
-    public void The_control_date_is_the_periods_last_day()
+    public void The_control_date_is_the_latest_payout_of_the_month_and_never_later_than_its_last_day()
     {
-        Assert.Equal(new DateOnly(2026, 10, 31), LookupRunner.ControlDateOf(new Period(Guid.NewGuid(), Guid.NewGuid(), 2026, 10, PeriodState.Draft, null, null, null)));
+        var october = new Period(Guid.NewGuid(), Guid.NewGuid(), 2026, 10, PeriodState.Draft, null, null, null);
+        Assert.Equal(new DateOnly(2026, 10, 31), LookupRunner.ControlDateOf(october));
         Assert.Equal(new DateOnly(2028, 2, 29), LookupRunner.ControlDateOf(new Period(Guid.NewGuid(), Guid.NewGuid(), 2028, 2, PeriodState.Draft, null, null, null)));
+        Assert.Equal(new DateOnly(2026, 10, 20), LookupRunner.ControlDateOf(october, [new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 20), new DateOnly(2026, 11, 2)]));
+        Assert.Equal(new DateOnly(2026, 10, 31), LookupRunner.ControlDateOf(october, []));
+        Assert.Equal(new DateOnly(2026, 10, 31), LookupRunner.ControlDateOf(october, [new DateOnly(2026, 9, 30), new DateOnly(2026, 11, 2)])); // no payout in the month: its last day
+    }
+
+    [Fact]
+    public async Task A_run_checks_each_person_on_their_latest_payout_of_the_month()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup();
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var residency = new FakeResidency
+            {
+                Answers = { [ReviewFixtures.MariCode] = LookupResult<ResidencyFinding>.Found(Resident(), "ei leitud"), [ReviewFixtures.JaanCode] = LookupResult<ResidencyFinding>.Found(Resident(), "ei leitud") },
+            };
+            var pension = new FakePension
+            {
+                Answers = { [ReviewFixtures.MariCode] = LookupResult<PensionFinding>.Found(Member(0.02m), "liitunud"), [ReviewFixtures.JaanCode] = LookupResult<PensionFinding>.Found(Member(0.02m), "liitunud") },
+            };
+            var runner = Runner(store, residency, pension);
+
+            var report = await runner.RunAsync(period.Id);
+            Assert.Equal(Control, report.ControlDate); // the period's last day bounds every check
+            var mari = store.FindPerson(company.Id, ReviewFixtures.MariCode)!;
+            var jaan = store.FindPerson(company.Id, ReviewFixtures.JaanCode)!;
+            Assert.All(store.Lookups(mari.Id), r => Assert.Equal(new DateOnly(2026, 10, 5), r.ControlDate)); // paid on the 5th
+            Assert.All(store.Lookups(jaan.Id), r => Assert.Equal(new DateOnly(2026, 10, 31), r.ControlDate)); // paid in November only: the month's last day
+            Assert.Equal(new DateOnly(2026, 10, 5), runner.ControlDateFor(mari, period));
+            Assert.Equal(new DateOnly(2026, 10, 31), runner.ControlDateFor(jaan, period));
+            Assert.Equal(new DateOnly(2026, 10, 31), runner.ControlDateFor(Person.New(company.Id, "Kati", "Kask", "47001010000"), period)); // not in the run
+        }
     }
 
     [Fact]

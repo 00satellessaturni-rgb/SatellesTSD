@@ -1035,7 +1035,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        using var dialog = new OpenFileDialog { Multiselect = true, Filter = UiText.FileFilter, InitialDirectory = _settings.LastFolder ?? DefaultFolder() };
+        using var dialog = new OpenFileDialog { Multiselect = true, Filter = UiText.FileFilter, InitialDirectory = ImportFolder() };
         if (dialog.ShowDialog(this) != DialogResult.OK || dialog.FileNames.Length == 0)
         {
             return;
@@ -1374,10 +1374,17 @@ public sealed class MainForm : Form
         return dates.Count == 0 ? "" : UiText.Day(dates.Min());
     }
 
-    private static string DefaultFolder()
+    /// <summary>Where the import dialog opens: the user's Downloads folder, where the exports and statements land;
+    /// the folder last picked when there is no Downloads; the documents folder as the last resort.</summary>
+    private string ImportFolder()
     {
-        var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Palgad");
-        return Directory.Exists(downloads) ? downloads : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        if (Directory.Exists(downloads))
+        {
+            return downloads;
+        }
+
+        return _settings.LastFolder is { } last && Directory.Exists(last) ? last : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
     }
 
     private void Log(string line)
