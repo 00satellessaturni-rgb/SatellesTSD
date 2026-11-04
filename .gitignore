@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# the publish script's output (tools\Publish-Release.ps1)
+release/

@@ -21,6 +21,7 @@ public sealed class DeclarationPanel : UserControl
     private readonly Button _reopen = Button(UiText.Reopen);
     private readonly Button _accept = Button(UiText.ResolveAccepted);
     private readonly Button _reject = Button(UiText.ResolveRejected);
+    private readonly Button _history = Button(UiText.History);
     private readonly DataGridView _lines = new()
     {
         Dock = DockStyle.Fill,
@@ -52,9 +53,23 @@ public sealed class DeclarationPanel : UserControl
 
     public event Action<StoredPayment, bool>? ResolveRequested;
 
+    /// <summary>The selected key's every version wanted (the history dialog).</summary>
+    public event Action<DeclaredLine>? HistoryRequested;
+
+    // the window tests drive the panel through these
+    internal DataGridView LinesGrid => _lines;
+    internal Button BuildButton => _build;
+    internal Button UploadedButton => _uploaded;
+    internal Button ConfirmedButton => _confirmed;
+    internal Button ReopenButton => _reopen;
+    internal Button AcceptButton => _accept;
+    internal Button RejectButton => _reject;
+    internal Button HistoryButton => _history;
+    internal ListView SubmissionsList => _submissions;
+
     public DeclarationPanel()
     {
-        _buttons.Controls.AddRange([_build, _export, _withdraw, _uploaded, _feedback, _confirmed, _reopen, _accept, _reject]);
+        _buttons.Controls.AddRange([_build, _export, _withdraw, _uploaded, _feedback, _confirmed, _reopen, _accept, _reject, _history]);
         foreach (var (name, header, right) in new[]
         {
             ("key", UiText.Key, false), ("action", UiText.Action, false), ("status", UiText.Status, false), ("person", UiText.Person, false), ("type", UiText.Type, false),
@@ -90,6 +105,7 @@ public sealed class DeclarationPanel : UserControl
         _reopen.Click += (_, _) => ReopenRequested?.Invoke();
         _accept.Click += (_, _) => { if (SelectedLine is { } l) { ResolveRequested?.Invoke(l.Payment, true); } };
         _reject.Click += (_, _) => { if (SelectedLine is { } l) { ResolveRequested?.Invoke(l.Payment, false); } };
+        _history.Click += (_, _) => { if (SelectedLine is { } l) { HistoryRequested?.Invoke(l); } };
         _lines.SelectionChanged += (_, _) => { if (!_filling) { EnableLineButtons(); } };
         _submissions.SelectedIndexChanged += (_, _) => { if (!_filling) { EnableSubmissionButtons(); } };
         _lines.DataError += (_, e) => { e.ThrowException = false; };
@@ -199,6 +215,7 @@ public sealed class DeclarationPanel : UserControl
         var pending = SelectedLine?.Payment.Pending == true;
         _accept.Enabled = pending;
         _reject.Enabled = pending;
+        _history.Enabled = SelectedLine is not null;
     }
 
     private static Button Button(string text) => new() { Text = text, AutoSize = true, Margin = new Padding(3) };

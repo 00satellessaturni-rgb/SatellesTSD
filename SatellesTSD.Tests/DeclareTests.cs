@@ -224,6 +224,104 @@ public class DeclareTests
     }
 
     [Fact]
+    public void An_M_draft_over_a_sent_R_becomes_an_R_once_the_R_beneath_is_refused()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        var sent = box.Lines.Single();
+        Assert.Equal((LineAction.R, PaymentStatus.Sent), (sent.Action, sent.Status));
+
+        // reopened before the feedback came; the figures change: an M draft hides the sent R
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        box.Declarer.Build(box.Period.Id);
+        var m = box.Lines.Single();
+        Assert.Equal((LineAction.M, PaymentStatus.Draft, 2), (m.Action, m.Status, m.Version));
+        var history = box.Store.History(box.Period.Id, sent.Section, sent.LineNumber);
+        Assert.Equal([PaymentStatus.Sent, PaymentStatus.Draft], history.Select(v => v.Status));
+
+        // the hidden R settled as refused (the history view's business): the stale M cannot go out, the next build makes the draft an R again
+        box.Submitter.Resolve(history[0].Id, onServer: false);
+        Assert.Equal(PeriodSubmitter.LinesStale, Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder)).Code);
+        var rebuilt = box.Declarer.Build(box.Period.Id);
+        Assert.True(rebuilt.Count(LineChange.Replaced) == 1, string.Join(" | ", rebuilt.Persons.SelectMany(p => p.Lines.Select(l => $"{l.Key} {l.Action} {l.Change} {l.Note}").Concat(p.Problems)).Concat(rebuilt.Problems)));
+        var r = box.Lines.Single();
+        Assert.Equal((sent.LineNumber, LineAction.R, PaymentStatus.Draft), (r.LineNumber, r.Action, r.Status));
+
+        // a T draft over a refused R has nothing to cancel: the next build deletes it
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SetDeclare(box.Salary, false);
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.Cancelled));
+        var t = box.Lines.Single();
+        Assert.Equal((LineAction.T, PaymentStatus.Draft), (t.Action, t.Status));
+        box.Submitter.Resolve(box.Store.History(box.Period.Id, t.Section, t.LineNumber).Single(v => v.Pending).Id, onServer: false);
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.Deleted));
+        Assert.Empty(box.Lines.Where(l => l.Status == PaymentStatus.Draft));
+        box.Workspace.SetDeclare(box.Salary, true);
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.New));
+        Assert.Equal((LineAction.R, PaymentStatus.Draft), (box.Lines.Single().Action, box.Lines.Single().Status));
+
+        // the R accepted and the figures changed again: an M over the accepted copy, the long-standing path
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { PensionRate = 0.04m });
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.Changed));
+        Assert.Equal(LineAction.M, box.Lines.Single().Action);
+    }
+
+    [Fact]
+    public void Refusing_an_earlier_version_by_hand_refuses_the_later_pending_ones_that_presumed_it()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder); // the M goes out while the R still awaits its verdict
+        box.Submitter.MarkUploaded(box.Period.Id);
+        var line = box.Lines.Single();
+        var history = box.Store.History(box.Period.Id, line.Section, line.LineNumber);
+        Assert.Equal([(LineAction.R, PaymentStatus.Sent), (LineAction.M, PaymentStatus.Sent)], history.Select(v => (v.Action, v.Status)));
+
+        // the R never reached MTA: the M that presumed it is refused with it, and the next build sends an R again
+        box.Submitter.Resolve(history[0].Id, onServer: false);
+        Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Rejected], box.Store.History(box.Period.Id, line.Section, line.LineNumber).Select(v => v.Status));
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.New));
+        Assert.Equal((line.LineNumber, LineAction.R, PaymentStatus.Draft), (box.Lines.Single().LineNumber, box.Lines.Single().Action, box.Lines.Single().Status));
+
+        // an accepted copy beneath keeps a later pending M alive when an in-between version is refused by hand
+        using var other = Ready();
+        other.Declarer.Build(other.Period.Id);
+        other.Submitter.Export(other.Period.Id, other.Folder);
+        other.Submitter.MarkUploaded(other.Period.Id);
+        other.Submitter.Resolve(other.Lines.Single().Id, onServer: true);
+        other.Submitter.Reopen(other.Period.Id);
+        other.Workspace.SavePerson(other.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        other.Declarer.Build(other.Period.Id);
+        other.Submitter.Export(other.Period.Id, other.Folder);
+        other.Submitter.MarkUploaded(other.Period.Id);
+        other.Submitter.Reopen(other.Period.Id);
+        other.Workspace.SavePerson(other.Mari with { PensionRate = 0.04m });
+        other.Declarer.Build(other.Period.Id);
+        other.Submitter.Export(other.Period.Id, other.Folder, "PARANDUSPOHJUS_1");
+        other.Submitter.MarkUploaded(other.Period.Id);
+        var key = other.Lines.Single();
+        var versions = other.Store.History(other.Period.Id, key.Section, key.LineNumber);
+        Assert.Equal([PaymentStatus.Accepted, PaymentStatus.Sent, PaymentStatus.Sent], versions.Select(v => v.Status));
+        other.Submitter.Resolve(versions[1].Id, onServer: false);
+        Assert.Equal([PaymentStatus.Accepted, PaymentStatus.Rejected, PaymentStatus.Sent], other.Store.History(other.Period.Id, key.Section, key.LineNumber).Select(v => v.Status));
+    }
+
+    [Fact]
     public void A_correction_after_the_file_went_out_is_an_M_or_a_T_on_the_same_key_and_the_next_file_names_its_reason()
     {
         using var box = Ready();

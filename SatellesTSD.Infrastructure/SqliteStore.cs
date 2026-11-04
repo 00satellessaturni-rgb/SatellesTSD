@@ -670,6 +670,21 @@ public sealed partial class SqliteStore : IStore
 
         var status = !onServer ? PaymentStatus.Rejected : payment.Action == LineAction.T ? PaymentStatus.Cancelled : PaymentStatus.Accepted;
         SetStatus(payment.Id, status);
+        if (!onServer)
+        {
+            // the mirror of the feedback's "_5" rule: a version refused by hand never reached the server, so a later
+            // pending M or T on the key presumed it wrongly — unless another version holds the key on the server
+            var history = History(payment.PeriodId, payment.Section, payment.LineNumber);
+            var held = history.Any(v => v.Id != payment.Id && v.Status is PaymentStatus.Accepted or PaymentStatus.NeedsChange);
+            if (!held)
+            {
+                foreach (var later in history.Where(v => v.Version > payment.Version && v.Pending))
+                {
+                    SetStatus(later.Id, PaymentStatus.Rejected);
+                }
+            }
+        }
+
         tx.Commit();
     }
 

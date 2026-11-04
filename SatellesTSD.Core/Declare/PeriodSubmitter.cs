@@ -17,6 +17,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     public const string ReasonNeeded = "CORRECTION_REASON_NEEDED";
     public const string WrongState = "WRONG_STATE";
     public const string LinesPending = "LINES_PENDING";
+    public const string LinesStale = "LINES_STALE";
     public const string SchemasMissing = "SCHEMAS_MISSING";
     public const string SourceApplication = "SatellesTSD";
 
@@ -39,6 +40,21 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         if (drafts.Count == 0)
         {
             throw new DeclareException(NoDrafts, "The period has no draft lines; build them from the review first.");
+        }
+
+        // a draft was legal when it was built; what stands beneath it may have changed since (a hidden version refused
+        // from the history view, a feedback report read after a rebuild) — a stale M or T would be refused black
+        foreach (var draft in drafts)
+        {
+            var beneath = _store.History(periodId, draft.Section, draft.LineNumber).Where(v => v.Id != draft.Id).ToList();
+            try
+            {
+                LineKeyRules.Check(draft.Action, beneath);
+            }
+            catch (LineKeyException e)
+            {
+                throw new DeclareException(LinesStale, $"Line {draft.LineNumber} ({draft.Action}) no longer fits what stands beneath it ({e.Code}); build the lines again before exporting.");
+            }
         }
 
         if (period.ConfirmedAt is not null && correctionReason is null)

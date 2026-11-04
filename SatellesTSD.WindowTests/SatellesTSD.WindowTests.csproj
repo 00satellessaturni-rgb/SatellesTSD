@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The window's own tests: the real MainForm opened on a temporary file store, driven through its panels and
+       grids on an STA thread with a pumped message loop. Needs a Windows desktop session; dotnet test on the
+       solution runs it beside SatellesTSD.Tests. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SatellesTSD\SatellesTSD.csproj" />
+    <ProjectReference Include="..\SatellesTSD.Core\SatellesTSD.Core.csproj" />
+    <ProjectReference Include="..\SatellesTSD.Infrastructure\SatellesTSD.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the review fixture (fake data) and the xlsx idiom, shared with the Core tests -->
+    <Compile Include="..\SatellesTSD.Tests\ReviewFixtures.cs" Link="Shared\ReviewFixtures.cs" />
+    <Compile Include="..\SatellesTSD.Tests\Tables.cs" Link="Shared\Tables.cs" />
+    <None Include="..\schemas\apa-tsd\**" Link="schemas\apa-tsd\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

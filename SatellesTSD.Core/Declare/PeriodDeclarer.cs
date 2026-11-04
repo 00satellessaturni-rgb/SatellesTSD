@@ -291,8 +291,24 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             if (existing.Section == section && existing.Action != LineAction.T)
             {
-                _store.ReplaceDraft(existing.Id, Draft(existing.LineNumber, existing.Action, null));
-                return new BuiltLine { Key = existing.LineNumber, Section = section, Action = existing.Action, Change = LineChange.Replaced, Source = reference };
+                // the action follows what stands beneath the draft now, not what it was drafted as: an M over a copy
+                // the server refused since (settled from the history view) must go out as an R
+                var action = HistoryStanding(existing) is { OnServer: true } ? LineAction.M : LineAction.R;
+                if (action == existing.Action)
+                {
+                    _store.ReplaceDraft(existing.Id, Draft(existing.LineNumber, action, null));
+                }
+                else
+                {
+                    // the store replaces a draft only under its own action: the draft goes and the line is drafted anew —
+                    // checked against the key's rules first, so a refusal never costs the draft (the build's transaction
+                    // does not undo a step that failed after another succeeded)
+                    LineKeyRules.Check(action, _store.History(period.Id, existing.Section, existing.LineNumber).Where(v => v.Id != existing.Id).ToList());
+                    _store.DeleteDraft(existing.Id);
+                    _store.AddPayment(Draft(existing.LineNumber, action, null));
+                }
+
+                return new BuiltLine { Key = existing.LineNumber, Section = section, Action = action, Change = LineChange.Replaced, Source = reference };
             }
 
             // another section, or a T draft of a payment declared again: the draft goes, the line is made afresh from what stands beneath
@@ -357,6 +373,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         switch (payment.Status)
         {
             case PaymentStatus.Draft when payment.Action == LineAction.T:
+                if (HistoryStanding(payment) is not { OnServer: true })
+                {
+                    // the copy the T was to cancel was refused since (settled from the history view): nothing to cancel
+                    _store.DeleteDraft(payment.Id);
+                    return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Deleted, Source = source, Note = "nothing on the server to cancel" };
+                }
+
                 return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Kept, Source = source, Note = "cancellation drafted" };
             case PaymentStatus.Draft:
                 _store.DeleteDraft(payment.Id);

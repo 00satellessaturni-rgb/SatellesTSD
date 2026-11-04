@@ -64,12 +64,15 @@ public sealed class MainForm : Form
     private readonly SplitContainer _outer = new() { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
     private readonly SplitContainer _grids = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
 
+    /// <summary>The release version from the project file ("0.10.0"), as the title and the release folder name it.</summary>
+    public static string AppVersion => typeof(MainForm).Assembly.GetName().Version is { } v ? v.ToString(3) : "0";
+
     public MainForm(string settingsPath, AppSettings settings, string? storeOverride)
     {
         _settingsPath = settingsPath;
         _settings = settings;
         _storeOverride = storeOverride;
-        Text = UiText.Title;
+        Text = $"{UiText.Title} v{AppVersion}";
         Size = new Size(1500, 900);
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -138,14 +141,63 @@ public sealed class MainForm : Form
         _declaration.FeedbackRequested += async submission => await ReadFeedbackAsync(submission);
         _declaration.ConfirmedRequested += MarkConfirmed;
         _declaration.ReopenRequested += () => { if (Confirm(UiText.ReopenConfirm, UiText.Reopen)) { Declare(s => s.Submitter.Reopen(_view!.Period.Id), UiText.Reopen); } };
-        _declaration.ResolveRequested += (payment, onServer) =>
-        {
-            if (Confirm(onServer ? UiText.ResolveAcceptedConfirm : UiText.ResolveRejectedConfirm, onServer ? UiText.ResolveAccepted : UiText.ResolveRejected))
-            {
-                Declare(s => s.Submitter.Resolve(payment.Id, onServer), $"{payment.LineNumber}: {(onServer ? UiText.ResolveAccepted : UiText.ResolveRejected)}");
-            }
-        };
+        _declaration.ResolveRequested += (payment, onServer) => Resolve(payment, onServer);
+        _declaration.HistoryRequested += ShowHistory;
         FormClosing += OnClosing;
+    }
+
+    // ---------------------------------------------------------------- the window tests' seams
+
+    internal bool IsBusy => _busy;
+    internal DataGridView PersonsGrid => _personsGrid;
+    internal DataGridView PaymentsGrid => _paymentsGrid;
+    internal TabControl Tabs => _tabs;
+    internal DeclarationPanel Declaration => _declaration;
+    internal PersonPanel PersonEditor => _personPanel;
+    internal AppServices? Services => _services;
+    internal ReviewView? View => _view;
+
+    /// <summary>Answers a confirmation question in place of the message box (the window tests set it).</summary>
+    internal Func<string, string, bool>? Confirming;
+
+    /// <summary>Takes a failure in place of the message box (the window tests set it).</summary>
+    internal Action<Exception>? Failing;
+
+    internal void Reload() => ReloadView();
+
+    private void Resolve(StoredPayment payment, bool onServer, Action? then = null)
+    {
+        if (Confirm(onServer ? UiText.ResolveAcceptedConfirm : UiText.ResolveRejectedConfirm, onServer ? UiText.ResolveAccepted : UiText.ResolveRejected))
+        {
+            Declare(s => s.Submitter.Resolve(payment.Id, onServer), $"{payment.LineNumber}: {(onServer ? UiText.ResolveAccepted : UiText.ResolveRejected)}");
+            then?.Invoke();
+        }
+    }
+
+    /// <summary>The history dialog of a key, wired to the window: a resolve asked there goes through the same
+    /// confirmation and store call as the grid's, then the dialog reads the versions again.</summary>
+    internal HistoryDialog CreateHistory(DeclaredLine line)
+    {
+        if (_services is null)
+        {
+            throw new InvalidOperationException("No store is open.");
+        }
+
+        var dialog = new HistoryDialog(_services, line);
+        dialog.ResolveRequested += (version, onServer) => Resolve(version, onServer, dialog.Reload);
+        return dialog;
+    }
+
+    private void ShowHistory(DeclaredLine line)
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        using var dialog = CreateHistory(line);
+        dialog.ShowDialog(this);
+        ReloadView();
     }
 
     // ---------------------------------------------------------------- the declaration
@@ -170,7 +222,7 @@ public sealed class MainForm : Form
     }
 
     private bool Confirm(string question, string title) =>
-        MessageBox.Show(this, question, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
+        Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
 
     /// <summary>A short store action on the declaration side, logged under its name, the view reloaded.</summary>
     private void Declare(Action<AppServices> action, string name)
@@ -1337,6 +1389,12 @@ public sealed class MainForm : Form
     private void Fail(Exception e)
     {
         Log($"{UiText.Problem}: {e.Message}");
+        if (Failing is { } take)
+        {
+            take(e);
+            return;
+        }
+
         MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 

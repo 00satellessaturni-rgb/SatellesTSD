@@ -207,6 +207,12 @@ internal static class UiText
 
     public static string ActionText(LineAction action) => Core.Report.ReportText.ActionText(action);
 
+    // the key's history
+    public const string History = "Ajalugu…";
+    public const string HistoryTitle = "Võtme ajalugu";
+    public const string CreatedAt = "Loodud";
+    public const string Close = "Sulge";
+
     // the report workbook
     public const string ExportReport = "Ekspordi aruanne…";
     public const string ReportFolder = "Vali kaust, kuhu aruanne salvestada";
