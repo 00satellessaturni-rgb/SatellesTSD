@@ -7,6 +7,8 @@ using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
 using SatellesTSD.Infrastructure;
+using SatellesTSD.Infrastructure.Updates;
+using ReleaseState = SatellesTSD.Infrastructure.Updates.UpdateState;
 
 namespace SatellesTSD;
 
@@ -54,6 +56,10 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripButton _calculatorButton = new(UiText.Calculator);
     private readonly ToolStripButton _reportButton = new(UiText.ExportReport);
+    private readonly ToolStripButton _updateButton = new(UiText.CheckUpdates) { Alignment = ToolStripItemAlignment.Right };
+    private UpdateCheck? _updateCheck;
+    private bool _checkingUpdates;
+    private bool _handedOver;
     private readonly ToolStripLabel _stateLabel = new("") { Font = new Font(Control.DefaultFont, FontStyle.Bold) };
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly DeclarationPanel _declaration = new() { Dock = DockStyle.Fill };
@@ -72,7 +78,10 @@ public sealed class MainForm : Form
         _settingsPath = settingsPath;
         _settings = settings;
         _storeOverride = storeOverride;
-        Text = $"{UiText.Title} v{AppVersion}";
+        // the published program alone looks for updates: a build folder's copy or a test host's window never touches the share
+        UpdatesEnabled = Environment.ProcessPath is { } exe && string.Equals(Path.GetFileName(exe), Updater.ExeName, StringComparison.OrdinalIgnoreCase)
+            && typeof(MainForm).Assembly.Location.Length == 0;
+        Text = TitleText();
         Size = new Size(1500, 900);
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -83,7 +92,9 @@ public sealed class MainForm : Form
             new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(),
             _importButton, _filesButton, _matchButton, _lookupButton, _cancelButton, new ToolStripSeparator(),
             _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _reportButton, _calculatorButton, new ToolStripSeparator(), _stateLabel,
+            _updateButton,
         ]);
+        _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
 
         _grids.Panel1.Controls.Add(_personsGrid);
         _grids.Panel2.Controls.Add(_paymentsGrid);
@@ -164,6 +175,208 @@ public sealed class MainForm : Form
     internal Action<Exception>? Failing;
 
     internal void Reload() => ReloadView();
+
+    /// <summary>Whether the window looks for updates in the release folder: only the published program does.</summary>
+    internal bool UpdatesEnabled;
+
+    // ---------------------------------------------------------------- updates from the release folder
+
+    private string TitleText()
+    {
+        var title = $"{UiText.Title} v{AppVersion}";
+        return _updateCheck is { State: ReleaseState.Available, Release: { } release } ? $"{title} — {UiText.UpdateAvailableTitle} v{release.Version.ToString(3)}" : title;
+    }
+
+    private static string ExePath => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, Updater.ExeName);
+
+    /// <summary>The running version with every part, for the comparison (the title shows three).</summary>
+    private static Version CurrentVersion => typeof(MainForm).Assembly.GetName().Version is { } v ? Updater.Normal(v) : new Version(0, 0, 0, 0);
+
+    /// <summary>Looks in the release folder, off the UI thread with a timeout, and says what it found: in the title and
+    /// on the button; at start the offer opens by itself when it may, by hand the answer is told either way. The copy
+    /// that installed this one, if any, is told the window runs once the check is over.</summary>
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (!UpdatesEnabled || _checkingUpdates)
+        {
+            StartupFinished(true);
+            return;
+        }
+
+        _checkingUpdates = true;
+        _updateButton.Text = UiText.CheckingUpdates;
+        UpdateState();
+        UpdateCheck result;
+        try
+        {
+            var folder = Updater.ReleaseFolderFor(ExePath);
+            result = await Updater.CheckAsync(folder, CurrentVersion);
+        }
+        catch (Exception e)
+        {
+            result = new UpdateCheck(ReleaseState.Failed, Updater.DefaultReleaseFolder, null, e.Message);
+        }
+        finally
+        {
+            _checkingUpdates = false;
+        }
+
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        _updateCheck = result;
+        ShowUpdateState();
+        Log(result.State switch
+        {
+            ReleaseState.Available => $"{UiText.CheckUpdates}: {UiText.UpdateAvailableTitle} v{result.Release!.Version.ToString(3)}",
+            ReleaseState.UpToDate => $"{UiText.CheckUpdates}: {UiText.UpToDate}",
+            _ => $"{UiText.CheckUpdates}: {Words(result)} {result.Detail}",
+        });
+        StartupFinished(result.State != ReleaseState.Failed);
+
+        if (manual)
+        {
+            switch (result.State)
+            {
+                case ReleaseState.Available:
+                    OfferUpdate(fromStart: false);
+                    break;
+                case ReleaseState.UpToDate:
+                    var elsewhere = !string.Equals(result.Folder, Updater.DefaultReleaseFolder, StringComparison.OrdinalIgnoreCase);
+                    MessageBox.Show(this, UiText.UpToDate + (elsewhere ? $"\n\n{UiText.UpdateFolderOverride}\n{result.Folder}" : ""), UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    break;
+                default:
+                    MessageBox.Show(this, $"{Words(result)}\n{result.Detail}\n\n{UiText.UpdateFolderLine} {result.Folder}", UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    break;
+            }
+        }
+        else if (result.State == ReleaseState.Available && MayOfferAtStart(result.Release!))
+        {
+            OfferUpdate(fromStart: true);
+        }
+    }
+
+    private static string Words(UpdateCheck result) => result.State switch
+    {
+        ReleaseState.NoRelease => UiText.NoRelease,
+        ReleaseState.Unreachable => UiText.UpdatesUnreachable,
+        ReleaseState.BadRelease => UiText.UpdatesBad,
+        _ => UiText.UpdatesFailed,
+    };
+
+    /// <summary>Whether the check at start may open the update window by itself: only while this window is in front
+    /// with no dialog of its own open and no run going, for a copy that is updated in place, and not for the build
+    /// that already failed to start here — the title and the button still offer it in every case.</summary>
+    private bool MayOfferAtStart(ReleaseManifest release) =>
+        !_busy && ActiveForm == this && WindowState != FormWindowState.Minimized && OwnedForms.Length == 0
+        && Updater.InstallBlockOf(ExePath, System.Diagnostics.Debugger.IsAttached) == InstallBlock.None && !Updater.FailedHere(ExePath, release);
+
+    private void ShowUpdateState()
+    {
+        Text = TitleText();
+        var available = _updateCheck is { State: ReleaseState.Available, Release: { } release };
+        _updateButton.Text = available ? $"Uuenda v{_updateCheck!.Release!.Version.ToString(3)}…" : UiText.CheckUpdates;
+        _updateButton.ToolTipText = _updateCheck is { State: not (ReleaseState.Available or ReleaseState.UpToDate) } failed ? $"{Words(failed)} {failed.Detail}" : "";
+        UpdateState();
+    }
+
+    /// <summary>After an update the copy that installed this one waits for the signal; given once the window is up and
+    /// its first check is over — or, when the check itself faulted, the window ends so that the old copy puts itself back.</summary>
+    private static void StartupFinished(bool checkWorked)
+    {
+        if (Program.ReadySignal is not { } signal)
+        {
+            return;
+        }
+
+        if (!checkWorked)
+        {
+            Environment.Exit(Updater.FailedExitCode);
+        }
+
+        Updater.SignalReady(signal);
+        Program.ReadySignal = null;
+    }
+
+    private void OfferUpdate(bool fromStart)
+    {
+        if (_busy || _updateCheck is not { State: ReleaseState.Available, Release: { } release })
+        {
+            return;
+        }
+
+        switch (Updater.InstallBlockOf(ExePath, System.Diagnostics.Debugger.IsAttached))
+        {
+            case InstallBlock.BuildFolder:
+                MessageBox.Show(this, UiText.UpdateBlockedBuild, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            case InstallBlock.NetworkDrive:
+                MessageBox.Show(this, $"{UiText.UpdateBlockedNetwork}\n{ExePath}", UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel();
+            ReloadView();
+        }
+
+        // the new version reads the settings and opens the store when it starts: both are let go of just before
+        var storePath = _services?.StorePath;
+        using var dialog = new UpdateDialog(ExePath, _updateCheck.Folder, release, CurrentVersion, fromStart, () =>
+        {
+            SaveSettings();
+            _lookups?.Cancel();
+            _services?.Dispose();
+            _services = null;
+            _view = null;
+            _period = null;
+        });
+        dialog.ShowDialog(this);
+        if (dialog.Started)
+        {
+            _handedOver = true; // the new version runs: this window closes without saving over what it may have changed
+            Close();
+            return;
+        }
+
+        if (_services is null && storePath is not null)
+        {
+            // the update did not go through: the store is taken up again — put back from its copy when the new
+            // version had already upgraded it beyond this build
+            OpenStore(storePath);
+        }
+    }
+
+    /// <summary>A store this build cannot open because a newer one upgraded it: offers the copy that build left beside
+    /// it before upgrading, and takes the store up again from it.</summary>
+    private bool OfferStoreRestore(string path, Exception failure)
+    {
+        if (!SqliteStore.IsNewerThanThisBuild(failure) || SqliteStore.NewerBackupOf(path) is not { } backup)
+        {
+            return false;
+        }
+
+        var aside = SqliteStore.AsidePathFor(path);
+        if (!Confirm($"{UiText.StoreNewerRestore}\n{backup}\n\n{UiText.StoreNewerRestoreQuestion}\n{aside}", UiText.Title))
+        {
+            return false;
+        }
+
+        try
+        {
+            SqliteStore.RestoreBackup(path, backup, aside);
+            Log($"{UiText.StoreRestored}: {backup}");
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Fail(e);
+            return false;
+        }
+    }
 
     private void Resolve(StoredPayment payment, bool onServer, Action? then = null)
     {
@@ -498,6 +711,9 @@ public sealed class MainForm : Form
         {
             OpenStore(path);
         }
+
+        // the release folder is asked once the window is up, off the UI thread, never holding it
+        BeginInvoke(async () => await CheckForUpdatesAsync(manual: false));
     }
 
     private void OnClosing(object? sender, FormClosingEventArgs e)
@@ -510,12 +726,20 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (_personPanel.IsDirty && !_handedOver)
         {
             ResolveDirtyPanel();
         }
 
-        SaveSettings();
+        if (!_handedOver)
+        {
+            SaveSettings();
+        }
+
+        // a window closed by hand while its first check still ran was running all the same: the copy that installed
+        // it must not take the silence for a failed start
+        StartupFinished(true);
+
         _services?.Dispose();
         _services = null;
     }
@@ -552,6 +776,11 @@ public sealed class MainForm : Form
         try
         {
             _services = new AppServices(path);
+        }
+        catch (Exception e) when (OfferStoreRestore(path, e))
+        {
+            OpenStore(path); // the copy put back opens as this build's
+            return;
         }
         catch (Exception e)
         {
@@ -1023,6 +1252,8 @@ public sealed class MainForm : Form
         _declaration.Enabled = !_busy;
         _calculatorButton.Enabled = !_busy;
         _reportButton.Enabled = !_busy && _view is not null;
+        _updateButton.Visible = UpdatesEnabled;
+        _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
         UseWaitCursor = _busy;
     }
 

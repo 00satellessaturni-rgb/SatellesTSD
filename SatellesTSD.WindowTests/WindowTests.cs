@@ -83,6 +83,54 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_update_dialog_closes_on_a_hand_over_and_only_then_while_it_works()
+    {
+        Ui.Run(() =>
+        {
+            var release = new SatellesTSD.Infrastructure.Updates.ReleaseManifest(new Version(0, 11, 0, 0), "SatellesTSD-v0.11.0.zip", 1, new string('A', 64), "trial", null);
+            using var dialog = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: true, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            dialog.Show();
+            Ui.Pump();
+            Assert.Equal("Hiljem", dialog.StopButton.Text); // Enter means later at the offer
+            Assert.Same(dialog.StopButton, dialog.AcceptButton);
+
+            // while it works the window cannot be closed; a hand-over closes it with OK
+            dialog.SimulateWorking();
+            dialog.Close();
+            Ui.Pump();
+            Assert.True(dialog.Visible);
+            dialog.SimulateHandOver();
+            Ui.Pump();
+            Assert.True(dialog.Started);
+            Assert.False(dialog.Visible);
+            Assert.Equal(DialogResult.OK, dialog.DialogResult);
+        });
+
+        Ui.Run(() =>
+        {
+            var release = new SatellesTSD.Infrastructure.Updates.ReleaseManifest(new Version(0, 11, 0, 0), "SatellesTSD-v0.11.0.zip", 1, new string('A', 64), null, null);
+            using var dialog = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            dialog.Show();
+            Ui.Pump();
+            // a silent new version with nothing to put back: the text says so, and the window may be closed
+            dialog.SimulateNoAnswer(withPrevious: false);
+            Assert.Equal(("Oota veel", "Sulge"), (dialog.InstallButton.Text, dialog.StopButton.Text));
+            Assert.Contains("jääb tööle", dialog.StatusText, StringComparison.Ordinal);
+            dialog.Close();
+            Ui.Pump();
+            Assert.False(dialog.Visible);
+        });
+    }
+
+    [Fact]
     public void The_history_dialog_lists_every_version_and_settles_the_one_beneath()
     {
         using var fixture = new WindowFixture((store, _, period, folder) =>

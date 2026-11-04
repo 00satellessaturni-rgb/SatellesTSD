@@ -219,6 +219,63 @@ internal static class UiText
     public const string ReportSaved = "Aruanne on salvestatud:";
     public const string OpenFolderQuestion = "Avada kaust?";
 
+    // updates from the release folder
+    public const string CheckUpdates = "Kontrolli uuendusi";
+    public const string CheckingUpdates = "Kontrollin uuendusi…";
+    public const string UpdateTitle = "Programmi uuendus";
+    public const string UpdateAvailableTitle = "saadaval";
+    public const string UpToDate = "Uuendusi ei ole: see on uusim versioon.";
+    public const string NoRelease = "Uuenduste kaustas ei ole veel ühtegi versiooni.";
+    public const string UpdatesUnreachable = "Uuenduste kausta ei saa lugeda (kas võrguketas S: on ühendatud?).";
+    public const string UpdatesBad = "Uuenduste kausta latest.txt ei kõlba.";
+    public const string UpdatesFailed = "Uuenduste kontroll ebaõnnestus.";
+    public const string UpdateFolderLine = "Uuenduste kaust:";
+    public const string UpdateBlockedBuild = "See koopia käivitati Visual Studio ehituskaustast; seda ei uuendata.";
+    public const string UpdateBlockedNetwork = "See koopia käivitati võrgukettalt; asenda see käsitsi, kui kõik programmi aknad on suletud.";
+    public const string UpdateOtherWindows = "Programmi teised aknad töötavad vana versiooniga, kuni need suletakse.";
+    public const string UpdateNow = "Uuenda ja käivita uuesti";
+    public const string Later = "Hiljem";
+    public const string WaitMore = "Oota veel";
+    public const string PutBack = "Taasta eelmine versioon";
+    public const string UpdateChecking = "Kontrollin…";
+    public const string UpdateDownloading = "Kopeerin…";
+    public const string UpdateUnpacking = "Pakin lahti ja kontrollin…";
+    public const string UpdateInstalling = "Paigaldan…";
+    public const string UpdateStarting = "Käivitan uut versiooni…";
+    public const string UpdateClosingNew = "Sulgen uut versiooni…";
+    public const string UpdateCancelled = "Uuendamine katkestati.";
+    public const string UpdateNoLongerOffered = "Seda versiooni enam ei pakuta.";
+    public const string UpdateNewerInstalled = "Programmi teine aken on juba paigaldanud uuema versiooni. Sulge kõik aknad ja käivita programm uuesti.";
+    public const string UpdateNoAnswer = "Uus versioon käivitus, kuid ei vastanud ühe minuti jooksul — võib-olla ootab see oma aknas vastust. Oota veel või taasta eelmine versioon (uus suletakse).";
+    public const string UpdateNoAnswerNoWayBack = "Uus versioon käivitus, kuid ei vastanud ühe minuti jooksul — võib-olla ootab see oma aknas vastust. Oota veel või sulge see aken; uus versioon jääb tööle.";
+    public const string UpdateStoreNote = "Kui uus versioon jõudis andmebaasi uuendada, pakub programm järgmisel avamisel andmebaasi varukoopia taastamist.";
+    public const string StoreNewerRestore = "Andmebaasi on uuendanud programmi uuem versioon ja see versioon ei saa seda avada. Selle kõrval on varukoopia uuendamise eelsest seisust:";
+    public const string StoreNewerRestoreQuestion = "Taastada varukoopia? Uuendatud andmebaas jääb kõrvale nimega";
+    public const string StoreRestored = "Andmebaasi varukoopia taastati";
+    public const string UpdateNewExited = "Uus versioon ei käivitunud";
+    public const string UpdateNotClosed = "Uut versiooni ei õnnestunud sulgeda. Sulge selle aken ja käivita programm uuesti.";
+    public const string UpdateKept = "Alles jäi versioon";
+    public const string UpdateFailed = "Uuendamine ebaõnnestus:";
+    public const string UpdateTellOwner = "Teata sellest programmi omanikule.";
+    public const string UpdateReadFailed = "Uuendust ei õnnestunud lugeda.";
+    public const string UpdateIncomplete = "Uuenduse fail on poolik — võib-olla seda alles kopeeritakse. Proovi hiljem.";
+    public const string UpdateDamaged = "Uuenduse fail on rikutud (kontrollsumma ei klapi).";
+    public const string UpdateNotProgram = "Uuenduse fail ei ole SatellesTSD programm.";
+    public const string UpdateVersionMismatch = "Uuenduse faili versioon ei vasta latest.txt-le.";
+    public const string UpdateSchemasMissing = "Uuendusest puudub skeemide kaust.";
+    public const string UpdateNoWrite = "Programmi kausta ei saa kirjutada.";
+    public const string UpdateBusy = "Uuenduse fail on teise programmi (viirusetõrje?) käes. Proovi uuesti.";
+    public const string UpdateOtherWindowUpdating = "Programmi teine aken juba uuendab. Oota, kuni see lõpetab.";
+    public const string UpdateFolderOverride = "Uuenduste kaust (failist SatellesTSD.update-folder.txt):";
+    public const string UpdateSwapFailed = "Programmi ei õnnestunud asendada.";
+    public const string UpdateRevertFailed = "Eelmist versiooni ei õnnestunud tagasi panna.";
+    public const string UpdateBadZip = "Uuenduse faili ei õnnestunud lahti pakkida.";
+
+    public static string UpdateDescription(string current, string offered, string? published, string folder, int otherWindows) =>
+        $"Praegune versioon: {current}\nPakutav versioon: {offered}{(published is null ? "" : $" (avaldatud {published})")}\n{UpdateFolderLine} {folder}\n\n" +
+        "Programm kopeerib uue versiooni enda kõrvale, kontrollib seda, asendab ennast ja käivitub uuesti. Andmebaas ja seaded jäävad puutumata." +
+        (otherWindows > 0 ? $"\n\n{UpdateOtherWindows}" : "");
+
     public static string ReasonText(string code) => code switch
     {
         "PARANDUSPOHJUS_1" => "1 — vead väljamaksete või maksude arvestamisel",

@@ -45,6 +45,7 @@ public sealed partial class SqliteStore : IStore
         var store = new SqliteStore(connection);
         try
         {
+            store.BackUpBeforeUpgrade(path);
             store.EnsureSchema();
         }
         catch
@@ -723,6 +724,71 @@ public sealed partial class SqliteStore : IStore
         Exec("UPDATE payment SET status = $status WHERE id = $id", ("$id", G(paymentId)), ("$status", status.ToString()));
 
     // ---------------------------------------------------------------- schema
+
+    /// <summary>The copy an upgrade leaves behind: the store as it was just before this build's schema, beside the file
+    /// ("firm.db.before-v7"), so that an older program can be put back after an update that went wrong. Made afresh at
+    /// every upgrade to this version (a copy from an earlier, undone attempt would be stale), written whole or not at all.</summary>
+    public static string BackupPathFor(string path) => $"{path}.before-v{SchemaVersion}";
+
+    /// <summary>Where a store upgraded beyond this build goes when its copy is put back: "firm.db.newer-v7".</summary>
+    public static string AsidePathFor(string path) => $"{path}.newer-v{SchemaVersion + 1}";
+
+    /// <summary>Whether a failure to open the store says it was upgraded by a newer build.</summary>
+    public static bool IsNewerThanThisBuild(Exception failure) =>
+        failure is InvalidOperationException && failure.Message.Contains("newer than this build", StringComparison.Ordinal);
+
+    /// <summary>The copy a newer build left beside the store before upgrading it past this build's schema — the earliest
+    /// such copy, the store as this build last knew it — or null when there is none.</summary>
+    public static string? NewerBackupOf(string path)
+    {
+        var folder = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+        {
+            return null;
+        }
+
+        var prefix = Path.GetFileName(path) + ".before-v";
+        return Directory.GetFiles(folder, prefix + "*")
+            .Select(f => (File: f, Version: int.TryParse(Path.GetFileName(f)[prefix.Length..], out var v) ? v : -1))
+            .Where(x => x.Version > SchemaVersion)
+            .OrderBy(x => x.Version)
+            .Select(x => x.File)
+            .FirstOrDefault();
+    }
+
+    /// <summary>Puts the copy back in place of the store: the upgraded store goes aside under the given name, the copy
+    /// is copied in (the copy itself stays, for another try).</summary>
+    public static void RestoreBackup(string path, string backup, string aside)
+    {
+        if (File.Exists(aside))
+        {
+            File.Delete(aside);
+        }
+
+        File.Move(path, aside);
+        File.Copy(backup, path);
+    }
+
+    private void BackUpBeforeUpgrade(string path)
+    {
+        Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+        var version = (int)(Scalar<long?>("SELECT MAX(version) FROM schema_version") ?? 0);
+        if (version == 0 || version >= SchemaVersion)
+        {
+            return;
+        }
+
+        var backup = BackupPathFor(path);
+        var partial = backup + ".partial";
+        File.Delete(partial);
+        using (var copy = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = partial, Pooling = false }.ToString()))
+        {
+            copy.Open();
+            _connection.BackupDatabase(copy);
+        }
+
+        File.Move(partial, backup, overwrite: true);
+    }
 
     private void EnsureSchema(int upTo = int.MaxValue)
     {

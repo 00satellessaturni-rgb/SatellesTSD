@@ -25,10 +25,18 @@ VBA) is in [docs/reference](docs/reference).
 2. First run: the window asks for the store file. Cancel the picker and use **Uus andmebaas…** to create one
    (the suggested name is `SatellesTSD.db`); put it in a folder that is backed up. The choice is remembered
    in `%AppData%\SatellesTSD\settings.json`, with the company and the month last shown.
-3. Update: close the app, unpack the newer `SatellesTSD-v<version>.zip` beside the older folder and point
-   the shortcut at the new folder's `SatellesTSD.exe` (the old folder can then go). The store and the
-   settings live outside the folder, so nothing is lost. A store opened by a newer version cannot be
-   opened by an older one.
+3. Updates come by themselves. At every start the program looks in the release folder on the office NAS
+   (`S:\2. DOKUMENDID JA FAILID\IT\SatellesTsdUpdate`); when a newer version is there, the title says so
+   ("SatellesTSD v0.10.0 — saadaval v0.11.0") and the button at the toolbar's right reads "Uuenda v0.11.0…".
+   The update window also opens by itself once, while the window is idle; there Enter means "Hiljem". The
+   update copies the new version beside the program, checks it (size, checksum, that it is this program at
+   that version, with its schemas), swaps the exe and the schemas folder in, starts the new version and closes
+   the old one. The store and the settings are untouched; before the first upgrade of the store's own format
+   a copy is left beside it (`firma.db.before-v<N>`). Should the new version not answer within a minute, the
+   window asks whether to wait or to put the previous version back. "Kontrolli uuendusi" asks the folder again.
+   Not offered for a copy run from a build folder or from a network drive (replace those by hand), and other
+   open windows keep the old version until closed. A text file `SatellesTSD.update-folder.txt` beside the exe,
+   naming another folder on its first line, is for trying a release on one PC.
 4. If the window ever fails, it writes `%AppData%\SatellesTSD\viga.log`; send that file along.
 
 Command-line switches: `--store <file>` opens that store instead of the remembered one; `--settings <file>`
@@ -86,7 +94,10 @@ powershell -ExecutionPolicy Bypass -File tools\Publish-Release.ps1
 (Windows PowerShell's default policy does not run scripts; the switch allows this one run.) The script refuses
 a dirty or unpushed tree, reads the version from `SatellesTSD\SatellesTSD.csproj` (`<Version>`, the one the
 window title shows), publishes a self-contained win-x64 single-file build with the `schemas\apa-tsd` folder
-beside the exe, and puts `release\SatellesTSD-v<version>\` with a `release.txt` (version, commit, SHA-256) and
-a zip next to it. Raise `<Version>` before every release; a folder already there for the version is refused
-unless `-Force`. `-OutputFolder` sends it elsewhere. `-AllowDirty` is for trying the script only: the output
-is then named `-dirty` and says so, never the release of its commit.
+beside the exe, puts `release\SatellesTSD-v<version>\` with a `release.txt` (version, commit, SHA-256) and a
+zip next to it, and then sends the zip to the release folder on the NAS with a `latest.txt` naming it, written
+last. Every copy of the program offers the new version at its next start. Raise `<Version>` before every
+release; a version not newer than the one on offer is refused. `-LocalOnly` stops before the NAS;
+`-ReleaseFolder` names another folder (the usual one is the constant in `Updater.cs`); `-Withdraw` puts the
+previous release back on offer; `-OutputFolder` sends the local output elsewhere. `-AllowDirty` is for trying
+the script only: the output is then named `-dirty` and says so, and never goes to the NAS.
