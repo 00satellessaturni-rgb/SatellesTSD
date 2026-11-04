@@ -50,6 +50,11 @@ public sealed record Person(
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,
             false, null, false, null, true, A1Case.None, null, null, null, null, null);
 
+    /// <summary>The monthly exemption this person's lines would use in a year: the person's own figure, else the
+    /// allowance in force (the pension-age one once the person has reached it), as the allocator reckons it.</summary>
+    public decimal ExemptionMonthInForce(int year, TaxRates rates) =>
+        BasicExemptionMonthly ?? (PensionAgeYear is { } pensionAgeYear && year >= pensionAgeYear ? rates.PensionAgeExemptionMonth : rates.BasicExemptionMonth);
+
     public PayeeTaxFacts FactsFor(int year, decimal socialTaxMinimumShare = 1m) => new(
         Residency, ResidenceCountry, FundedPensionMember, PensionRate, OnOldAgeOrFlexiblePension,
         PensionAgeYear is { } pensionAgeYear && year >= pensionAgeYear,

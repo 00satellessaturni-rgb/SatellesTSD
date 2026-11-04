@@ -24,6 +24,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly TaxRates _rates = rates ?? TaxRates.Year2026;
+
+    /// <summary>The rates the review reckons with (the report and the window show the allowance in force from them).</summary>
+    public TaxRates Rates => _rates;
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
     /// <summary>The catalog in force for a new run: the owner's saved document, else the embedded default.</summary>
@@ -317,7 +320,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     {
         RequireNames(firstName, lastName);
         var code = CheckedCode(companyId, personalCode, null);
-        return _store.AddPerson(Person.New(companyId, firstName.Trim(), lastName.Trim(), code, residency) with { TorEmploymentTypeId = Clean(torEmploymentTypeId) });
+        // a resident has the basic exemption applied at this payer unless the accountant says otherwise; a non-resident
+        // only by the EEA application the accountant enters
+        return _store.AddPerson(Person.New(companyId, firstName.Trim(), lastName.Trim(), code, residency) with { TorEmploymentTypeId = Clean(torEmploymentTypeId), BasicExemptionApplied = residency == Residency.Resident });
     }
 
     private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates)

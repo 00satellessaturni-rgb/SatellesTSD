@@ -27,7 +27,7 @@ VBA) is in [docs/reference](docs/reference).
    in `%AppData%\SatellesTSD\settings.json`, with the company and the month last shown.
 3. Updates come by themselves. At every start the program looks in the release folder on the office NAS
    (`S:\2. DOKUMENDID JA FAILID\IT\SatellesTsdUpdate`); when a newer version is there, the title says so
-   ("SatellesTSD v0.10.0 — saadaval v0.11.0") and the button at the toolbar's right reads "Uuenda v0.11.0…".
+   ("SatellesTSD v0.10.0 — saadaval v0.11.0") and the Andmebaas menu's item reads "Uuenda v0.11.0…".
    The update window also opens by itself once, while the window is idle; there Enter means "Hiljem". The
    update copies the new version beside the program, checks it (size, checksum, that it is this program at
    that version, with its schemas), swaps the exe and the schemas folder in, starts the new version and closes
@@ -43,6 +43,12 @@ Command-line switches: `--store <file>` opens that store instead of the remember
 reads and writes the settings there instead of `%AppData%` (both take a path after them).
 
 ## A month, step by step
+
+The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
+(import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
+(the report, the calculator); the toolbar keeps the company and the month. Every table sorts on a header
+click and has an **Otsi:** box that hides the rows without the text. The payments table has tabs: the
+person picked, every payment of the month, one per category, and the payments without a category.
 
 1. **Periood**: pick the payment month (the previous month is offered). The company need not be picked
    when the files hold the TÖR export: it names the employer, and the program takes the company up or

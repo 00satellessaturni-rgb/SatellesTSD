@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Model;
@@ -22,6 +23,7 @@ public sealed class DeclarationPanel : UserControl
     private readonly Button _accept = Button(UiText.ResolveAccepted);
     private readonly Button _reject = Button(UiText.ResolveRejected);
     private readonly Button _history = Button(UiText.History);
+    private readonly TextBox _search = new() { Width = 220 };
     private readonly DataGridView _lines = new()
     {
         Dock = DockStyle.Fill,
@@ -66,6 +68,16 @@ public sealed class DeclarationPanel : UserControl
     internal Button RejectButton => _reject;
     internal Button HistoryButton => _history;
     internal ListView SubmissionsList => _submissions;
+    internal TextBox LinesSearch => _search;
+
+    /// <summary>What is typed in the search box hides every line with no cell containing it.</summary>
+    private void Filter()
+    {
+        var needle = _search.Text.Trim();
+        static bool Matches(DataGridViewRow row, string text) => row.Cells.Cast<DataGridViewCell>().Any(c => c.FormattedValue?.ToString()?.Contains(text, StringComparison.OrdinalIgnoreCase) == true);
+        MainForm.FilterRows(_lines, needle, Matches);
+        EnableLineButtons();
+    }
 
     public DeclarationPanel()
     {
@@ -78,14 +90,23 @@ public sealed class DeclarationPanel : UserControl
             ("mvt", UiText.ExemptionUsed, true), ("source", UiText.SourceColumn, false), ("feedback", UiText.Feedback, false), ("version", UiText.Version, true),
         })
         {
+            // a right-aligned column holds money (sorted by value) but for the version count, a number
+            var money = right && name != "version";
             _lines.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = name,
                 HeaderText = header,
-                SortMode = DataGridViewColumnSortMode.NotSortable,
-                DefaultCellStyle = { Alignment = right ? DataGridViewContentAlignment.MiddleRight : DataGridViewContentAlignment.MiddleLeft },
+                SortMode = DataGridViewColumnSortMode.Automatic,
+                ValueType = money ? typeof(decimal) : name == "version" ? typeof(int) : typeof(string),
+                DefaultCellStyle = { Alignment = right ? DataGridViewContentAlignment.MiddleRight : DataGridViewContentAlignment.MiddleLeft, Format = money ? "N2" : "" },
             });
         }
+
+        var searchBar = new Panel { Dock = DockStyle.Top, Height = 28, Padding = new Padding(3) };
+        searchBar.Controls.Add(new Label { Text = UiText.Search, AutoSize = true, Location = new Point(4, 7) });
+        _search.Location = new Point(44, 3);
+        searchBar.Controls.Add(_search);
+        _search.TextChanged += (_, _) => Filter();
 
         _submissions.Columns.Add(UiText.File, 300);
         _submissions.Columns.Add(UiText.Time, 120);
@@ -94,6 +115,7 @@ public sealed class DeclarationPanel : UserControl
         _submissions.Columns.Add(UiText.Feedback, 200);
         Controls.Add(_lines);
         Controls.Add(_submissions);
+        Controls.Add(searchBar);
         Controls.Add(_buttons);
 
         _build.Click += (_, _) => BuildRequested?.Invoke();
@@ -125,6 +147,9 @@ public sealed class DeclarationPanel : UserControl
         _view = view;
         _submissionList = submissions;
         var keepKey = SelectedLine?.Payment.LineNumber;
+        var sortedColumn = _lines.SortedColumn?.Name;
+        var sortDirection = _lines.SortOrder == SortOrder.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        DataGridViewRow? keepRow = null;
         _lines.Rows.Clear();
         foreach (var line in lines)
         {
@@ -137,18 +162,18 @@ public sealed class DeclarationPanel : UserControl
                 line.Person is { } person ? $"{person.LastName} {person.FirstName}" : "",
                 p.Line.TypeCode ?? "",
                 UiText.Day(p.Line.DocumentDate),
-                p.NetPaid is { } net ? UiText.Money(net) : "",
-                r is null ? "" : UiText.Money(r.Gross),
-                r is null ? "" : UiText.Money(r.SocialTax),
-                r is null || r.SocialTaxMinimumIncrease == 0 ? "" : UiText.Money(r.SocialTaxMinimumIncrease),
-                r is null ? "" : UiText.Money(r.FundedPension),
-                r is null ? "" : UiText.Money(r.UnemploymentEmployee),
-                r is null ? "" : UiText.Money(r.UnemploymentEmployer),
-                r is null ? "" : UiText.Money(r.IncomeTax),
-                r is null || r.ExemptionUsed == 0 ? "" : UiText.Money(r.ExemptionUsed),
+                p.NetPaid is { } net ? net : null,
+                r is null ? null : r.Gross,
+                r is null ? null : r.SocialTax,
+                r is null || r.SocialTaxMinimumIncrease == 0 ? null : r.SocialTaxMinimumIncrease,
+                r is null ? null : r.FundedPension,
+                r is null ? null : r.UnemploymentEmployee,
+                r is null ? null : r.UnemploymentEmployer,
+                r is null ? null : r.IncomeTax,
+                r is null || r.ExemptionUsed == 0 ? null : r.ExemptionUsed,
                 p.SourceRef == PeriodDeclarer.MinimumSource ? UiText.Minimum : p.SourceRef == ReviewWorkspace.ByHandSource ? UiText.ByHand : p.SourceRef ?? "",
                 line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "",
-                line.Versions.ToString(CultureInfo.InvariantCulture));
+                line.Versions);
             var row = _lines.Rows[index];
             row.Tag = line;
             row.DefaultCellStyle.BackColor = p.Status switch
@@ -167,8 +192,20 @@ public sealed class DeclarationPanel : UserControl
 
             if (keepKey is not null && p.LineNumber == keepKey)
             {
-                _lines.CurrentCell = row.Cells[0];
+                keepRow = row;
             }
+        }
+
+        // the sort the accountant chose stands after the rows are made afresh, then the search box's filter, then the key kept
+        if (sortedColumn is not null && _lines.Columns.Contains(sortedColumn))
+        {
+            _lines.Sort(_lines.Columns[sortedColumn]!, sortDirection);
+        }
+
+        Filter();
+        if (keepRow is { Visible: true })
+        {
+            _lines.CurrentCell = keepRow.Cells[0];
         }
 
         _submissions.Items.Clear();

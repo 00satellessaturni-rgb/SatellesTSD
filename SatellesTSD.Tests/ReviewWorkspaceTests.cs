@@ -415,11 +415,14 @@ public class ReviewWorkspaceTests
             workspace.Load(period.Id);
             var added = workspace.AddPerson(company.Id, " Peeter ", "Kask", "50001010006", "600");
             Assert.Equal(("Peeter", "Kask", "50001010006", "600", Residency.Resident), (added.FirstName, added.LastName, added.PersonalCode, added.TorEmploymentTypeId, added.Residency));
+            Assert.True(added.BasicExemptionApplied, "a resident added by hand starts with the exemption applied");
             Assert.Equal(ReviewWorkspace.PersonExists, Assert.Throws<ReviewException>(() => workspace.AddPerson(company.Id, "Peeter", "Kask", "50001010006", null)).Code);
             Assert.Equal(ReviewWorkspace.NameMissing, Assert.Throws<ReviewException>(() => workspace.AddPerson(company.Id, "Peeter", "", null, null)).Code);
             Assert.Equal(ReviewWorkspace.CodeInvalid, Assert.Throws<ReviewException>(() => workspace.AddPerson(company.Id, "Peeter", "Kask", "abc", null)).Code);
             var codeless = workspace.AddPerson(company.Id, "Anna", "Kask", null, null, Residency.NonResident);
             Assert.Null(codeless.PersonalCode);
+            Assert.False(codeless.BasicExemptionApplied, "a non-resident gets the exemption only by the application the accountant enters");
+            Assert.All(workspace.Load(period.Id).Persons.Where(p => p.Register is not null), p => Assert.True(p.Person!.BasicExemptionApplied, "a person taken from the register starts with the exemption applied"));
 
             var view = workspace.Load(period.Id);
             Assert.Equal(3, view.Persons.Count); // a person without lines is in the pickers, not in the grid
@@ -465,7 +468,7 @@ public class ReviewWorkspaceTests
             Assert.Empty(Salary(workspace.Load(period.Id)).Checks);
 
             var fresh = () => store.Persons(mari.CompanyId).Single(p => p.Id == mari.Id);
-            workspace.SavePerson(fresh() with { BasicExemptionMonthly = 300m });
+            workspace.SavePerson(fresh() with { BasicExemptionApplied = false, BasicExemptionMonthly = 300m }); // a new person has the exemption applied by default
             Assert.Equal([PaymentChecks.ExemptionWithoutApplication], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
 
             workspace.SavePerson(fresh() with { BasicExemptionApplied = true, FundedPensionMember = true, PensionRate = null });

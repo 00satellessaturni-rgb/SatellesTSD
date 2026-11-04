@@ -99,8 +99,17 @@ public class ReportTests
         Assert.Equal(["48712219406", "MAASIKAS", "MARI", "905.92", "905.92", "700", "EE", "ei ole liitunud", "2026-11-04", "2024-02-15", "Tööleping", "Kehtiv", ""], Texts(sheet, 2)); // Kontroll-kp = the day the facts were confirmed
         Assert.Equal(ReportCellKind.Code, sheet.At(2, 1).Kind);
         Assert.Equal(ReportCellKind.Date, sheet.At(2, 9).Kind);
-        Assert.Equal(["38810140309", "TAMM", "JAAN", "", "0", "", "kontrollimata", "kontrollimata", "", "2020-01-01", "VÕS leping", "Lõpetatud", "2026-09-30"], Texts(sheet, 3));
+        Assert.Equal(["38810140309", "TAMM", "JAAN", "", "0", "700", "kontrollimata", "kontrollimata", "", "2020-01-01", "VÕS leping", "Lõpetatud", "2026-09-30"], Texts(sheet, 3));
         Assert.True(sheet.Row(4).Cells.Count == 0, "the person block ends at a blank row");
+
+        // Maksuvaba: empty when the exemption is not applied; the pension-age allowance once the person has reached it
+        var jaan = box.View.Persons[1].Person!;
+        box.Workspace.SavePerson(jaan with { BasicExemptionApplied = false });
+        Assert.Equal("", Texts(box.Build().Sheet(ReportText.InterimSheet)!, 3)[5]);
+        box.Workspace.SavePerson(jaan with { BasicExemptionApplied = true, PensionAgeYear = 2026 });
+        Assert.Equal("776", Texts(box.Build().Sheet(ReportText.InterimSheet)!, 3)[5]);
+        box.Workspace.SavePerson(jaan with { BasicExemptionApplied = true, PensionAgeYear = 2027 });
+        Assert.Equal("700", Texts(box.Build().Sheet(ReportText.InterimSheet)!, 3)[5]);
 
         // the accountant's word, not the run's: the salary set to no category leaves the Vahearuanne
         box.Workspace.SetCategory(box.Salary, null);

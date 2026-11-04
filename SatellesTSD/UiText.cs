@@ -126,6 +126,7 @@ internal static class UiText
     public const string Cancelled = "katkestatud";
     public const string Done = "valmis";
     public const string NoCompany = "Vali või lisa ettevõte.";
+
     public const string ImportNeedsEmployer = "Failide hulgas ei ole TÖR väljavõtet, mis nimetaks tööandja (registrikood ja nimi). Vali ettevõte või lisa failide hulka TÖR väljavõte.";
     public const string ImportOtherEmployer = "Failide TÖR väljavõte nimetab teise tööandja:";
     public const string ImportSwitchToExisting = "Vahetada ettevõte selle vastu ja importida failid sinna?";
@@ -137,6 +138,17 @@ internal static class UiText
     public const string Editable = "muudetav";
     public const string RowsLeftOut = "rida ilma saajata jäeti kõrvale";
     public const string Problem = "Viga";
+
+    // the menus (with their Alt keys) and the grids' tools
+    public const string MenuStore = "&Andmebaas";
+    public const string MenuCompany = "&Ettevõte";
+    public const string MenuPeriod = "&Periood";
+    public const string MenuPerson = "&Isik";
+    public const string MenuTools = "&Tööriistad";
+    public const string Search = "Otsi:";
+    public const string ScopeSelectedPerson = "Valitud isik";
+    public const string ScopeAll = "Kõik";
+    public const string BadAmountMark = "?";
 
     // the declaration tab
     public const string ReviewTab = "Ülevaatus";

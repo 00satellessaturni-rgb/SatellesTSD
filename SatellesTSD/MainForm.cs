@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Import;
@@ -33,6 +34,7 @@ public sealed class MainForm : Form
     private readonly AppSettings _settings;
     private readonly string? _storeOverride;
     private AppServices? _services;
+    private readonly ToolStripSeparator _updateSeparator = new(); // shown with the update item, hidden with it
     private ReviewView? _view;
     private Period? _period;
     private CancellationTokenSource? _lookups;
@@ -44,20 +46,33 @@ public sealed class MainForm : Form
     private readonly ToolStripComboBox _companyBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = 240 };
     private readonly ToolStripComboBox _yearBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = 70 };
     private readonly ToolStripComboBox _monthBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, AutoSize = false, Width = 50 };
-    private readonly ToolStripButton _openStoreButton = new(UiText.OpenStore);
-    private readonly ToolStripButton _newStoreButton = new(UiText.NewStore);
-    private readonly ToolStripButton _newCompanyButton = new(UiText.NewCompany);
-    private readonly ToolStripButton _importButton = new(UiText.ImportFiles);
-    private readonly ToolStripButton _filesButton = new(UiText.Files);
-    private readonly ToolStripButton _matchButton = new(UiText.RunMatch);
-    private readonly ToolStripButton _lookupButton = new(UiText.RunLookups);
-    private readonly ToolStripButton _cancelButton = new(UiText.Cancel) { Enabled = false };
-    private readonly ToolStripButton _addLineButton = new(UiText.AddLine);
-    private readonly ToolStripButton _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
-    private readonly ToolStripButton _newPersonButton = new(UiText.NewPerson);
-    private readonly ToolStripButton _calculatorButton = new(UiText.Calculator);
-    private readonly ToolStripButton _reportButton = new(UiText.ExportReport);
-    private readonly ToolStripButton _updateButton = new(UiText.CheckUpdates) { Alignment = ToolStripItemAlignment.Right };
+    // the commands, in the menus by their group: the store, the company, the period, the person, the tools
+    private readonly MenuStrip _menu = new();
+    private readonly ToolStripMenuItem _openStoreButton = new(UiText.OpenStore);
+    private readonly ToolStripMenuItem _newStoreButton = new(UiText.NewStore);
+    private readonly ToolStripMenuItem _closeButton = new(UiText.Close);
+    private readonly ToolStripMenuItem _newCompanyButton = new(UiText.NewCompany);
+    private readonly ToolStripMenuItem _importButton = new(UiText.ImportFiles);
+    private readonly ToolStripMenuItem _filesButton = new(UiText.Files);
+    private readonly ToolStripMenuItem _matchButton = new(UiText.RunMatch);
+    private readonly ToolStripMenuItem _lookupButton = new(UiText.RunLookups);
+    private readonly ToolStripMenuItem _cancelButton = new(UiText.Cancel) { Enabled = false };
+    private readonly ToolStripMenuItem _addLineButton = new(UiText.AddLine);
+    private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
+    private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
+    private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
+    private readonly ToolStripMenuItem _reportButton = new(UiText.ExportReport);
+    private readonly ToolStripMenuItem _updateButton = new(UiText.CheckUpdates);
+
+    // the grids' tools: a search box over each, and the payments shown by the person picked or by category
+    private readonly TextBox _personsSearch = new() { Width = 220 };
+    private readonly TextBox _paymentsSearch = new() { Width = 220 };
+    private readonly TabControl _scopeTabs = new() { Dock = DockStyle.Top, Height = 26, Multiline = false };
+    private sealed record Scope(string Kind, string? Category);
+    private const string ScopeSelected = "selected";
+    private const string ScopeAll = "all";
+    private const string ScopeUnknown = "unknown";
+    private const string ScopeCategory = "category";
     private UpdateCheck? _updateCheck;
     private bool _checkingUpdates;
     private bool _handedOver;
@@ -86,19 +101,48 @@ public sealed class MainForm : Form
         Size = new Size(1500, 900);
         StartPosition = FormStartPosition.CenterScreen;
 
+        // the menus hold the commands by their group; the toolbar below them holds what is chosen: the store, the company, the month
+        var storeMenu = new ToolStripMenuItem(UiText.MenuStore);
+        storeMenu.DropDownItems.AddRange([_openStoreButton, _newStoreButton, _updateSeparator, _updateButton, new ToolStripSeparator(), _closeButton]);
+        var companyMenu = new ToolStripMenuItem(UiText.MenuCompany);
+        companyMenu.DropDownItems.AddRange([_newCompanyButton, _filesButton]);
+        var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
+        periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
+        var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
+        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton]);
+        var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
+        toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
+        _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu]);
+        MainMenuStrip = _menu;
         _toolbar.Items.AddRange(
         [
-            new ToolStripLabel(UiText.Store), _storeLabel, _openStoreButton, _newStoreButton, new ToolStripSeparator(),
-            new ToolStripLabel(UiText.Company), _companyBox, _newCompanyButton, new ToolStripSeparator(),
-            new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(),
-            _importButton, _filesButton, _matchButton, _lookupButton, _cancelButton, new ToolStripSeparator(),
-            _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _reportButton, _calculatorButton, new ToolStripSeparator(), _stateLabel,
-            _updateButton,
+            new ToolStripLabel(UiText.Store), _storeLabel, new ToolStripSeparator(),
+            new ToolStripLabel(UiText.Company), _companyBox, new ToolStripSeparator(),
+            new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(), _stateLabel,
         ]);
         _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
+        _closeButton.Click += (_, _) => Close();
 
         _grids.Panel1.Controls.Add(_personsGrid);
+        _grids.Panel1.Controls.Add(SearchBar(_personsSearch));
         _grids.Panel2.Controls.Add(_paymentsGrid);
+        _grids.Panel2.Controls.Add(SearchBar(_paymentsSearch));
+        _grids.Panel2.Controls.Add(_scopeTabs);
+        _personsSearch.TextChanged += (_, _) => Filter(_personsGrid, _personsSearch.Text);
+        _paymentsSearch.TextChanged += (_, _) => Filter(_paymentsGrid, _paymentsSearch.Text);
+        _scopeTabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_filling)
+            {
+                return;
+            }
+
+            // the payment current stays current when the tab picked still shows it; the remove command follows
+            var key = KeyOf(SelectedPayment);
+            FillPayments();
+            SelectPayment(key);
+            _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true };
+        };
         var reviewTab = new TabPage(UiText.ReviewTab);
         reviewTab.Controls.Add(_grids);
         var declarationTab = new TabPage(UiText.DeclarationTab);
@@ -112,6 +156,7 @@ public sealed class MainForm : Form
         Controls.Add(_outer);
         Controls.Add(logPanel);
         Controls.Add(_toolbar);
+        Controls.Add(_menu);
 
         BuildPaymentColumns();
 
@@ -161,7 +206,11 @@ public sealed class MainForm : Form
     // ---------------------------------------------------------------- the window tests' seams
 
     internal bool IsBusy => _busy;
-    internal ToolStripButton ImportButton => _importButton;
+    internal ToolStripItem ImportButton => _importButton;
+    internal MenuStrip Menus => _menu;
+    internal TextBox PersonsSearch => _personsSearch;
+    internal TextBox PaymentsSearch => _paymentsSearch;
+    internal TabControl ScopeTabs => _scopeTabs;
     internal DataGridView PersonsGrid => _personsGrid;
     internal DataGridView PaymentsGrid => _paymentsGrid;
     internal TabControl Tabs => _tabs;
@@ -962,25 +1011,30 @@ public sealed class MainForm : Form
     private void FillPersons(Guid? keepPerson, bool keepUnmatched)
     {
         _filling = true;
+        var sort = SortOf(_personsGrid);
         _personsGrid.Rows.Clear();
         _personsGrid.Columns.Clear();
         if (_view is null)
         {
+            RebuildScopes(null);
             _filling = false;
             ShowSelectedPerson();
             return;
         }
 
+        RebuildScopes(_view);
         _personsGrid.Columns.Add(Column("code", UiText.PersonalCode));
         _personsGrid.Columns.Add(Column("last", UiText.LastName));
         _personsGrid.Columns.Add(Column("first", UiText.FirstName));
-        _personsGrid.Columns.Add(Column("exemption", UiText.Exemption));
+        var exemption = Column("exemption", UiText.Exemption, money: true);
+        exemption.DefaultCellStyle.NullValue = UiText.No; // none applied: "ei", sorted below every amount
+        _personsGrid.Columns.Add(exemption);
         foreach (var source in _view.Sources)
         {
-            _personsGrid.Columns.Add(Column("src:" + source, source == ReviewWorkspace.ByHandSource ? UiText.ByHand : source, right: true));
+            _personsGrid.Columns.Add(Column("src:" + source, source == ReviewWorkspace.ByHandSource ? UiText.ByHand : source, money: true));
         }
 
-        _personsGrid.Columns.Add(Column("total", UiText.SalaryTotal, right: true));
+        _personsGrid.Columns.Add(Column("total", UiText.SalaryTotal, money: true));
         _personsGrid.Columns.Add(Column("residency", UiText.Residency));
         _personsGrid.Columns.Add(Column("pension", UiText.Pension));
         _personsGrid.Columns.Add(Column("checked", UiText.CheckedOn));
@@ -988,22 +1042,22 @@ public sealed class MainForm : Form
         _personsGrid.Columns.Add(Column("state", UiText.EntryState));
         _personsGrid.Columns.Add(Column("problems", UiText.Problems));
 
-        var selectRow = 0;
+        DataGridViewRow? keepRow = null; // the row itself, since a sort moves the indexes
         foreach (var person in _view.Persons)
         {
-            var values = new List<object>();
+            var values = new List<object?>();
             if (person.IsUnmatched)
             {
-                values.AddRange(["", UiText.UnmatchedRow, "", ""]);
-                values.AddRange(_view.Sources.Select(_ => (object)""));
-                values.AddRange(["", "", "", "", "", "", ""]);
+                values.AddRange(["", UiText.UnmatchedRow, "", null]);
+                values.AddRange(_view.Sources.Select(_ => (object?)null));
+                values.AddRange([null, "", "", "", "", "", ""]);
             }
             else
             {
                 var p = person.Person;
-                values.AddRange([person.PersonalCode ?? "", person.LastName, person.FirstName, ExemptionText(p)]);
-                values.AddRange(_view.Sources.Select(s => (object)(person.SalaryBySource.TryGetValue(s, out var sum) ? UiText.Money(sum) : "")));
-                values.Add(UiText.Money(person.SalaryTotal));
+                values.AddRange([person.PersonalCode ?? "", person.LastName, person.FirstName, ExemptionValue(p)]);
+                values.AddRange(_view.Sources.Select(s => MoneyOrBlank(person.SalaryBySource.TryGetValue(s, out var sum) ? sum : null)));
+                values.Add(person.SalaryTotal);
                 values.Add(p is null ? "" : UiText.ResidencyText(p));
                 values.Add(p is null ? "" : UiText.PensionText(p));
                 values.Add(p is null ? "" : CheckedText(p));
@@ -1018,9 +1072,10 @@ public sealed class MainForm : Form
             if (person.IsUnmatched)
             {
                 row.DefaultCellStyle.Font = new Font(_personsGrid.Font, FontStyle.Italic);
+                row.Cells["exemption"].Style.NullValue = null; // an empty text would count as the default and inherit the column's "ei"
                 if (keepUnmatched)
                 {
-                    selectRow = index;
+                    keepRow = row;
                 }
             }
             else if (person.Problems.Count > 0)
@@ -1028,15 +1083,26 @@ public sealed class MainForm : Form
                 row.DefaultCellStyle.BackColor = Color.LightYellow;
             }
 
+            if (person.Person is null && !person.IsUnmatched)
+            {
+                row.Cells["exemption"].Style.NullValue = null; // nothing to say of a person the store does not hold
+            }
+
             if (keepPerson is { } id && person.PersonId == id)
             {
-                selectRow = index;
+                keepRow = row;
             }
         }
 
         if (_personsGrid.Rows.Count > 0)
         {
-            _personsGrid.CurrentCell = _personsGrid.Rows[selectRow].Cells[0];
+            Resort(_personsGrid, sort);
+            Filter(_personsGrid, _personsSearch.Text);
+            var target = keepRow is { Visible: true } ? keepRow : _personsGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Visible);
+            if (target is not null)
+            {
+                _personsGrid.CurrentCell = target.Cells[0];
+            }
         }
 
         _filling = false;
@@ -1046,6 +1112,56 @@ public sealed class MainForm : Form
             Log($"{_view.RowsLeftOut} {UiText.RowsLeftOut}");
         }
     }
+
+    /// <summary>The payments tabs: the person picked, every payment, one tab per category of the run's catalog, and
+    /// the payments without a category. Rebuilt only when the categories changed, the tab picked kept.</summary>
+    private void RebuildScopes(ReviewView? view)
+    {
+        var wanted = new List<(string Text, Scope Tag)> { (UiText.ScopeSelectedPerson, new Scope(ScopeSelected, null)), (UiText.ScopeAll, new Scope(ScopeAll, null)) };
+        if (view is not null)
+        {
+            wanted.AddRange(view.Catalog.Categories.Select(c => (c.Name, new Scope(ScopeCategory, c.Name))));
+            wanted.Add((Core.Report.ReportText.UnknownCategorySheet, new Scope(ScopeUnknown, null)));
+        }
+
+        var current = _scopeTabs.TabPages.Cast<TabPage>().Select(p => (p.Text, (Scope)p.Tag!)).ToList();
+        if (current.SequenceEqual(wanted))
+        {
+            return;
+        }
+
+        var keep = _scopeTabs.SelectedTab?.Tag as Scope;
+        _scopeTabs.TabPages.Clear();
+        foreach (var (text, tag) in wanted)
+        {
+            _scopeTabs.TabPages.Add(new TabPage(text) { Tag = tag });
+        }
+
+        _scopeTabs.SelectedTab = _scopeTabs.TabPages.Cast<TabPage>().FirstOrDefault(p => Equals(p.Tag, keep)) ?? _scopeTabs.TabPages[0];
+    }
+
+    private Scope CurrentScope => _scopeTabs.SelectedTab?.Tag as Scope ?? new Scope(ScopeSelected, null);
+
+    /// <summary>The payments the payments grid shows under the tab picked.</summary>
+    private IReadOnlyList<ReviewPayment> ScopedPayments(ReviewPerson? person)
+    {
+        if (_view is null)
+        {
+            return [];
+        }
+
+        var scope = CurrentScope;
+        var all = _view.Persons.SelectMany(p => p.Payments);
+        return scope.Kind switch
+        {
+            ScopeAll => all.ToList(),
+            ScopeUnknown => all.Where(p => p.Category is null).ToList(),
+            ScopeCategory => all.Where(p => string.Equals(p.Category, scope.Category, StringComparison.OrdinalIgnoreCase)).ToList(),
+            _ => person?.Payments ?? [],
+        };
+    }
+
+    private void FillPayments() => FillPayments(SelectedPerson);
 
     private void ShowSelectedPerson()
     {
@@ -1093,10 +1209,10 @@ public sealed class MainForm : Form
     private void BuildPaymentColumns()
     {
         _paymentsGrid.Columns.Add(Column("document", UiText.Document));
-        _paymentsGrid.Columns.Add(Column("date", UiText.Date));
+        _paymentsGrid.Columns.Add(Column("date", UiText.Date, date: true));
         _paymentsGrid.Columns.Add(Column("payee", UiText.PayeeOnStatement));
         _paymentsGrid.Columns.Add(Column("description", UiText.Description));
-        _paymentsGrid.Columns.Add(Column("amount", UiText.Amount, right: true));
+        _paymentsGrid.Columns.Add(Column("amount", UiText.Amount, money: true));
         _paymentsGrid.Columns.Add(Column("verdict", UiText.Verdict));
         _paymentsGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = ColCategory, HeaderText = UiText.Category, DisplayMember = nameof(Choice.Text), ValueMember = nameof(Choice.Value), FlatStyle = FlatStyle.Flat, Width = 130 });
         _paymentsGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = ColType, HeaderText = UiText.PaymentType, DisplayMember = nameof(Choice.Text), ValueMember = nameof(Choice.Value), FlatStyle = FlatStyle.Flat, Width = 260 });
@@ -1106,16 +1222,23 @@ public sealed class MainForm : Form
         _paymentsGrid.Columns.Add(Column("check", UiText.Check));
         foreach (DataGridViewColumn column in _paymentsGrid.Columns)
         {
-            column.ReadOnly = column.Name is not (ColCategory or ColType or ColDeclare or ColPerson or ColNote);
-            column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            // the columns the accountant edits are not sorted (a pick would move the row under the mouse); the rest sort by a header click
+            var editable = column.Name is ColCategory or ColType or ColDeclare or ColPerson or ColNote;
+            column.ReadOnly = !editable;
+            if (editable)
+            {
+                column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            }
         }
     }
 
     private void FillPayments(ReviewPerson? person)
     {
         _filling = true;
+        var sort = SortOf(_paymentsGrid);
         _paymentsGrid.Rows.Clear();
-        if (_view is null || person is null)
+        var payments = ScopedPayments(person);
+        if (_view is null || (person is null && CurrentScope.Kind == ScopeSelected))
         {
             _filling = false;
             return;
@@ -1124,17 +1247,17 @@ public sealed class MainForm : Form
         // every value a row can hold is in its combo's list, so nothing shows as a blank by mistake
         var categories = new List<Choice> { new("", UiText.Default), new(None, UiText.NoCategory) };
         categories.AddRange(_view.Catalog.Categories.Select(c => new Choice(c.Name, c.Name)));
-        categories.AddRange(person.Payments.Select(p => p.Category).OfType<string>().Distinct(StringComparer.Ordinal).Where(c => categories.All(x => x.Value != c)).Select(c => new Choice(c, c)));
+        categories.AddRange(payments.Select(p => p.Category).OfType<string>().Distinct(StringComparer.Ordinal).Where(c => categories.All(x => x.Value != c)).Select(c => new Choice(c, c)));
         var types = new List<Choice> { new("", UiText.Default) };
         types.AddRange(PaymentTypes.All.Select(t => new Choice(t.Code, $"{t.Code} {t.NameEt}")));
-        types.AddRange(person.Payments.Select(p => p.TypeCode).OfType<string>().Distinct(StringComparer.Ordinal).Where(c => types.All(x => x.Value != c)).Select(c => new Choice(c, c)));
+        types.AddRange(payments.Select(p => p.TypeCode).OfType<string>().Distinct(StringComparer.Ordinal).Where(c => types.All(x => x.Value != c)).Select(c => new Choice(c, c)));
         var persons = new List<Choice> { new("", UiText.Default), new(None, UiText.Nobody) };
         persons.AddRange(_view.StorePersons.Select(p => new Choice(p.Id.ToString("N"), $"{p.LastName} {p.FirstName} {p.PersonalCode ?? p.MrrCode ?? ""}".Trim())));
         ((DataGridViewComboBoxColumn)_paymentsGrid.Columns[ColCategory]!).DataSource = categories;
         ((DataGridViewComboBoxColumn)_paymentsGrid.Columns[ColType]!).DataSource = types;
         ((DataGridViewComboBoxColumn)_paymentsGrid.Columns[ColPerson]!).DataSource = persons;
 
-        foreach (var payment in person.Payments)
+        foreach (var payment in payments)
         {
             var verdict = payment.IsByHand ? UiText.ByHand : payment.VerdictText + (payment.Masks.Length > 0 ? $"  ({payment.Masks})" : "");
             var parts = payment.Checks.Select(c => c.Code).Concat(payment.Flags.Where(f => payment.Checks.All(c => c.Code != f))).ToList();
@@ -1145,10 +1268,10 @@ public sealed class MainForm : Form
 
             var index = _paymentsGrid.Rows.Add(
                 payment.IsByHand ? UiText.ByHand : payment.Reference,
-                payment.Date is { } d ? UiText.Day(d) : payment.DateText ?? "",
+                payment.Date is { } d ? d.ToDateTime(TimeOnly.MinValue) : null,
                 payment.Payee,
                 payment.Description ?? "",
-                payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal) ? "?" : UiText.Money(payment.Amount),
+                payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal) ? null : payment.Amount,
                 verdict,
                 payment.Category ?? None,
                 payment.TypeCode ?? "",
@@ -1159,6 +1282,10 @@ public sealed class MainForm : Form
             var row = _paymentsGrid.Rows[index];
             row.Tag = payment;
             row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}"));
+            if (payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
+            {
+                row.Cells["amount"].Style.NullValue = UiText.BadAmountMark; // an amount that could not be read, shown as such, sorted as none
+            }
             if (!payment.Declare)
             {
                 row.DefaultCellStyle.ForeColor = Color.Gray;
@@ -1172,9 +1299,17 @@ public sealed class MainForm : Form
             {
                 row.Cells[0].Style.Font = new Font(_paymentsGrid.Font, FontStyle.Bold);
             }
+
+            if (payment.Date is null && payment.DateText is { Length: > 0 } dateText)
+            {
+                row.Cells["date"].Style.NullValue = dateText; // the text the statement had, which no date was read from, shown and searchable, sorted as none
+                row.Cells["date"].ToolTipText = dateText;
+            }
         }
 
         _paymentsGrid.ReadOnly = !Editable || _busy;
+        Resort(_paymentsGrid, sort);
+        Filter(_paymentsGrid, _paymentsSearch.Text);
         _filling = false;
     }
 
@@ -1187,7 +1322,7 @@ public sealed class MainForm : Form
 
         foreach (DataGridViewRow row in _paymentsGrid.Rows)
         {
-            if (row.Tag is ReviewPayment p && (wanted.RowId is { } r ? p.RowId == r : p.LineId is not null && p.LineId == wanted.LineId))
+            if (row.Visible && row.Tag is ReviewPayment p && (wanted.RowId is { } r ? p.RowId == r : p.LineId is not null && p.LineId == wanted.LineId))
             {
                 _paymentsGrid.CurrentCell = row.Cells[0];
                 return;
@@ -1272,6 +1407,7 @@ public sealed class MainForm : Form
         _calculatorButton.Enabled = !_busy;
         _reportButton.Enabled = !_busy && _view is not null;
         _updateButton.Visible = UpdatesEnabled;
+        _updateSeparator.Visible = UpdatesEnabled;
         _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
         UseWaitCursor = _busy;
     }
@@ -1684,14 +1820,74 @@ public sealed class MainForm : Form
         EditMode = DataGridViewEditMode.EditOnEnter,
     };
 
-    private static DataGridViewTextBoxColumn Column(string name, string header, bool right = false) => new()
+    /// <summary>A read-only text column, sortable by a click on its header. A money column holds decimals shown with
+    /// two decimals, a date column dates shown as dd.MM.yyyy, so that the sort is by value, not by text.</summary>
+    private static DataGridViewTextBoxColumn Column(string name, string header, bool right = false, bool money = false, bool date = false) => new()
     {
         Name = name,
         HeaderText = header,
         ReadOnly = true,
-        SortMode = DataGridViewColumnSortMode.NotSortable,
-        DefaultCellStyle = { Alignment = right ? DataGridViewContentAlignment.MiddleRight : DataGridViewContentAlignment.MiddleLeft },
+        SortMode = DataGridViewColumnSortMode.Automatic,
+        ValueType = money ? typeof(decimal) : date ? typeof(DateTime) : typeof(string),
+        DefaultCellStyle =
+        {
+            Alignment = right || money ? DataGridViewContentAlignment.MiddleRight : DataGridViewContentAlignment.MiddleLeft,
+            Format = money ? "N2" : date ? "dd.MM.yyyy" : "",
+        },
     };
+
+    /// <summary>The search box over a grid: what is typed hides every row with no cell containing it.</summary>
+    private static Panel SearchBar(TextBox box)
+    {
+        var bar = new Panel { Dock = DockStyle.Top, Height = 28, Padding = new Padding(3) };
+        var label = new Label { Text = UiText.Search, AutoSize = true, Location = new Point(4, 7) };
+        box.Location = new Point(44, 3);
+        bar.Controls.Add(label);
+        bar.Controls.Add(box);
+        return bar;
+    }
+
+    private static void Filter(DataGridView grid, string text) => FilterRows(grid, text.Trim(), Matches);
+
+    /// <summary>Shows the rows that match the needle and hides the rest. The current row stays when it matches; else the
+    /// first row shown becomes current (a hidden row can hold no current cell, and a grid with rows should have one).</summary>
+    internal static void FilterRows(DataGridView grid, string needle, Func<DataGridViewRow, string, bool> matches)
+    {
+        var rows = grid.Rows.Cast<DataGridViewRow>().ToList();
+        var shown = rows.Where(r => needle.Length == 0 || matches(r, needle)).ToList();
+        foreach (var row in shown)
+        {
+            row.Visible = true; // first, so that the row made current is a visible one
+        }
+
+        var current = grid.CurrentCell?.OwningRow;
+        if (current is null || !shown.Contains(current))
+        {
+            grid.CurrentCell = shown.FirstOrDefault()?.Cells[0];
+        }
+
+        foreach (var row in rows.Except(shown))
+        {
+            row.Visible = false;
+        }
+    }
+
+    private static bool Matches(DataGridViewRow row, string needle) =>
+        row.Cells.Cast<DataGridViewCell>().Any(c => c.FormattedValue?.ToString()?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true);
+
+    /// <summary>The sort a grid stands in, to put it back after the rows are made afresh.</summary>
+    private static (string? Column, ListSortDirection Direction) SortOf(DataGridView grid) =>
+        (grid.SortedColumn?.Name, grid.SortOrder == SortOrder.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending);
+
+    private static void Resort(DataGridView grid, (string? Column, ListSortDirection Direction) sort)
+    {
+        if (sort.Column is { } name && grid.Columns.Contains(name) && grid.Columns[name] is { SortMode: DataGridViewColumnSortMode.Automatic } column)
+        {
+            grid.Sort(column, sort.Direction);
+        }
+    }
+
+    private static object? MoneyOrBlank(decimal? amount) => amount is { } a ? a : null;
 
     /// <summary>The dates the state has come through (the store never clears a stamp, so a Draft shows none and an
     /// Exported period its export only).</summary>
@@ -1704,8 +1900,10 @@ public sealed class MainForm : Form
         return parts.Count == 0 ? "" : " (" + string.Join(", ", parts) + ")";
     }
 
-    private static string ExemptionText(Person? person) =>
-        person is null ? "" : !person.BasicExemptionApplied ? UiText.No : person.BasicExemptionMonthly is { } amount ? UiText.Money(amount) : UiText.Yes;
+    /// <summary>"Maksuvaba": the monthly exemption applied at this payer in the month's year — the person's own figure,
+    /// else the allowance in force — or none (shown as "ei") when none is applied.</summary>
+    private decimal? ExemptionValue(Person? person) =>
+        person is null || !person.BasicExemptionApplied ? null : person.ExemptionMonthInForce(_view!.Period.Year, _services?.Workspace.Rates ?? TaxRates.Year2026);
 
     private static string CheckedText(Person person)
     {

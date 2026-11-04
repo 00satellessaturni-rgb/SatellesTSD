@@ -47,6 +47,7 @@ public static class RegisterPersons
         }
 
         var entry = registerPerson.Entry;
-        return store.AddPerson(Person.New(companyId, entry.FirstName.Trim(), entry.LastName.Trim(), registerPerson.Person.PersonalCode) with { TorEmploymentTypeId = entry.TypeId, RegisterKey = key });
+        // an employee of the register has the basic exemption applied at this payer unless the accountant says otherwise
+        return store.AddPerson(Person.New(companyId, entry.FirstName.Trim(), entry.LastName.Trim(), registerPerson.Person.PersonalCode) with { TorEmploymentTypeId = entry.TypeId, RegisterKey = key, BasicExemptionApplied = true });
     }
 }

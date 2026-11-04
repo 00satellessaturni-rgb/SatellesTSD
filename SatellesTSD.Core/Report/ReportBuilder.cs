@@ -39,7 +39,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
     {
         var view = _workspace.Load(periodId);
         var at = _clock.GetLocalNow().DateTime;
-        var context = new Context(view, _store);
+        var context = new Context(view, _store, _workspace.Rates);
         var sheets = new List<ReportSheet> { Interim(context), };
         if (TorSheet(context) is { } tor)
         {
@@ -86,7 +86,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             cells.Add(ReportCell.Amount(person.SalaryTotal));
             var store = person.Person;
             var entry = person.Register is { Entries.Count: > 0 } register ? register.Entry : null;
-            cells.Add(store is { BasicExemptionApplied: true, BasicExemptionMonthly: { } exemption } ? ReportCell.Amount(exemption) : ReportCell.Empty);
+            cells.Add(store is { BasicExemptionApplied: true } ? ReportCell.Amount(store.ExemptionMonthInForce(view.Period.Year, context.Rates)) : ReportCell.Empty);
             cells.Add(store is null ? ReportCell.Empty : ReportCell.Of(ReportText.ResidencyText(store)));
             cells.Add(store is null ? ReportCell.Empty : ReportCell.Of(ReportText.PensionText(store)));
             cells.Add(ReportCell.Day(CheckedOn(store)));
@@ -439,13 +439,15 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
         : row.Amount is { } amount ? ReportCell.Amount(amount)
         : ReportCell.Of(row.AmountText);
 
-    private sealed class Context(ReviewView view, IStore store)
+    private sealed class Context(ReviewView view, IStore store, Tax.TaxRates rates)
     {
         private Dictionary<Guid, StatementRow>? _rows;
 
         public ReviewView View { get; } = view;
 
         public IStore Store { get; } = store;
+
+        public Tax.TaxRates Rates { get; } = rates;
 
         /// <summary>A stored statement row of the run's sources, by id.</summary>
         public StatementRow? Row(Guid rowId)

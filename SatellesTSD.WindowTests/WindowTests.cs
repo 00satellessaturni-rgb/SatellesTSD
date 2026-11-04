@@ -45,6 +45,78 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_grids_sort_by_a_header_filter_by_the_search_box_and_the_payments_follow_the_tab_picked()
+    {
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            workspace.AddHandLine(period.Id, view.Persons[0].PersonId, new DateOnly(2026, 10, 20), 120m, "Mari Maasikas", "haigusleht", "Haigusleht");
+            workspace.SetCategory(view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ"), "Üür");
+            workspace.SavePerson(view.Persons[1].Person! with { BasicExemptionApplied = false }); // the second person asks for no exemption here
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            // the commands sit in the menus, grouped; the toolbar keeps what is chosen
+            Assert.Equal(["Andmebaas", "Ettevõte", "Periood", "Isik", "Tööriistad"], form.Menus.Items.Cast<ToolStripMenuItem>().Select(m => m.Text.Replace("&", "")));
+            Assert.Contains(form.ImportButton, ((ToolStripMenuItem)form.Menus.Items[2]).DropDownItems.Cast<ToolStripItem>());
+
+            // Maksuvaba: the amount when applied, "ei" when not, nothing on the unmatched row
+            var persons = form.PersonsGrid;
+            Assert.Equal(["700,00", "ei", ""], persons.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["exemption"].FormattedValue?.ToString()?.Replace('.', ',')));
+
+            // the persons sort by a header: the last names descending put the register's second person first
+            persons.Sort(persons.Columns["last"]!, System.ComponentModel.ListSortDirection.Descending);
+            Ui.Pump();
+            Assert.Equal("TAMM", persons.Rows[0].Cells["last"].Value?.ToString());
+            Assert.Equal(typeof(decimal), persons.Columns["total"]!.ValueType); // money sorts by value, not by text
+
+            // the search box hides what does not match, and the hidden rows come back when it is cleared
+            form.PersonsSearch.Text = "maasi";
+            Ui.Pump();
+            Assert.Equal(1, persons.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
+            Assert.Equal("MAASIKAS", persons.CurrentRow?.Cells["last"].Value?.ToString());
+            form.PersonsSearch.Text = "";
+            Ui.Pump();
+            Assert.Equal(3, persons.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
+
+            // the payments tabs: the person picked, every payment, each category, the payments without one
+            var tabs = form.ScopeTabs;
+            Assert.Equal(["Valitud isik", "Kõik", "Palgad", "Dividendid", "Üür", "Kommunaalkulud", "Kompensatsioon", "Haigusleht", "Laenud", "TÖR-väline palgad", "Trahvid", "Tundmatu kategooria"], tabs.TabPages.Cast<TabPage>().Select(p => p.Text));
+            tabs.SelectedIndex = 1;
+            Ui.Pump();
+            Assert.Equal(4, form.PaymentsGrid.Rows.Count); // the salary, the hand line, the second person's row, the stranger's
+            // the amounts sort by value (typed cells), the dates likewise
+            form.PaymentsGrid.Sort(form.PaymentsGrid.Columns["amount"]!, System.ComponentModel.ListSortDirection.Ascending);
+            Ui.Pump();
+            var amounts = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => Assert.IsType<decimal>(r.Cells["amount"].Value)).ToList();
+            Assert.Equal(amounts.OrderBy(a => a), amounts);
+            Assert.Equal(120m, amounts[0]);
+            Assert.IsType<DateTime>(form.PaymentsGrid.Rows[0].Cells["date"].Value);
+            Assert.Equal(SortOrder.Ascending, form.PaymentsGrid.SortOrder);
+            form.PaymentsSearch.Text = "kinnisvara";
+            Ui.Pump();
+            Assert.Equal("Kinnisvara OÜ", form.PaymentsGrid.CurrentRow?.Cells["payee"].Value?.ToString()); // the search moves the current row to one shown
+            form.PaymentsSearch.Text = "";
+            Ui.Pump();
+            tabs.SelectedIndex = tabs.TabPages.Cast<TabPage>().ToList().FindIndex(p => p.Text == "Üür");
+            Ui.Pump();
+            Assert.Equal("Kinnisvara OÜ", Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>()).Cells["payee"].Value?.ToString());
+            tabs.SelectedIndex = tabs.TabPages.Count - 1;
+            Ui.Pump();
+            Assert.Equal("Jaan Tamm", Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>()).Cells["payee"].Value?.ToString()); // outside the month, no category
+            form.PaymentsSearch.Text = "nobody-here";
+            Ui.Pump();
+            Assert.Equal(0, form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
+            form.PaymentsSearch.Text = "";
+            tabs.SelectedIndex = 0;
+            Ui.Pump();
+            Assert.Equal(2, form.PaymentsGrid.Rows.Count); // the person picked: the salary and the hand line
+            Assert.Equal(typeof(DateTime), form.PaymentsGrid.Columns["date"]!.ValueType);
+        }));
+    }
+
+    [Fact]
     public void The_declaration_tab_builds_the_lines_marks_the_upload_and_settles_a_line()
     {
         using var fixture = new WindowFixture();
@@ -56,6 +128,15 @@ public class WindowTests
             Assert.True(panel.BuildButton.Enabled);
             panel.BuildButton.PerformClick();
             Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 1, what: "the build");
+            // the lines' search box hides and restores, and leaves a current line
+            panel.LinesSearch.Text = "nobody-here";
+            Ui.Pump();
+            Assert.False(panel.LinesGrid.Rows[0].Visible);
+            panel.LinesSearch.Text = "";
+            Ui.Pump();
+            Assert.True(panel.LinesGrid.Rows[0].Visible);
+            Assert.NotNull(panel.LinesGrid.CurrentRow);
+            Assert.IsType<int>(panel.LinesGrid.Rows[0].Cells["version"].Value);
             var row = panel.LinesGrid.Rows[0];
             Assert.Equal(("R uus", "mustand", "MAASIKAS MARI", "10"), (row.Cells["action"].Value, row.Cells["status"].Value, row.Cells["person"].Value, row.Cells["type"].Value));
             Assert.False(panel.UploadedButton.Enabled);
