@@ -23,6 +23,8 @@ public sealed record ImportProblem(int? RowNo, string Code, string Message)
     /// <summary>A two-marker layout's direction cell holds neither marker.</summary>
     public const string BadMarker = "BAD_MARKER";
     public const string NoRows = "NO_ROWS";
+    /// <summary>A row above the header row that reads as a payment of the layout: not read, since it is not the statement's.</summary>
+    public const string AboveHeader = "ABOVE_HEADER";
     /// <summary>What the file reader had to make do with (a quote never closed): kept with the sheet so the stored rows never look complete when they are not.</summary>
     public const string ReaderWarning = "READER_WARNING";
 }
@@ -135,7 +137,10 @@ public sealed record ParsedStatement(
 /// rows without a counterparty are kept (marked), and a bad date or amount is a problem on the row, not a silent 0.</summary>
 public static class StatementParser
 {
-    public const int DefaultHeaderSearchRows = 5;
+    /// <summary>How far down a sheet the header row is looked for. A bank's export may put a logo, a title and the
+    /// account above the table (Paysera's from October 2026 has the header on row 6); thirty rows is far beyond any
+    /// such block, and a data row never reads as a layout's header.</summary>
+    public const int DefaultHeaderSearchRows = 30;
 
     public static DetectionResult Detect(SheetTable sheet, LayoutCatalog catalog, int headerSearchRows = DefaultHeaderSearchRows)
     {
@@ -290,6 +295,17 @@ public static class StatementParser
         var problems = new List<ImportProblem>();
         var lastRow = sheet.LastRow;
         string? lastAccount = null;
+
+        // what sits above the header row is a title block, never read; a row there that reads as a payment of the
+        // layout (exports pasted together, a headerless block first) is said, since it is left out
+        for (var rowNo = 1; rowNo < detection.HeaderRowNo; rowNo++)
+        {
+            if (LooksLikeDataRow(sheet, rowNo, layout))
+            {
+                problems.Add(new ImportProblem(rowNo, ImportProblem.AboveHeader, $"Row {rowNo} sits above the header row and reads as a payment; rows above the header are not read."));
+            }
+        }
+
         for (var rowNo = detection.HeaderRowNo + 1; rowNo <= lastRow; rowNo++)
         {
             var cells = sheet.TextsOf(rowNo);

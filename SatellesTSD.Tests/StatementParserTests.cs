@@ -115,6 +115,29 @@ public class StatementParserTests
     }
 
     [Fact]
+    public void A_header_row_below_a_title_block_with_a_picture_is_found_too()
+    {
+        // Paysera's export from October 2026: an empty row, a title row with two long cells (the logo sits over it as a
+        // drawing the reader never sees), an empty row, the account line, an empty row, the header on row 6
+        var paysera = Catalog.Find("paysera-ru")!;
+        var sheet = Tables.Sheet(
+            Tables.Row(),
+            Tables.Row("Paysera LT, UAB, Pilaitės pr. 16, Vilnius", null, null, null, null, null, "Выписка по счёту за период 2026-10-01 – 2026-10-31"),
+            Tables.Row(),
+            Tables.Row("EVP0000000000001 Näidis OÜ"),
+            Tables.Row(),
+            paysera.Headers.ToArray(),
+            DataRowFor(paysera));
+
+        var result = StatementParser.Detect(sheet, Catalog);
+
+        Assert.Equal(("paysera-ru", 6), (result.Match?.Layout.Id, result.Match?.HeaderRowNo));
+        var parsed = StatementParser.Parse(sheet, result.Match!);
+        Assert.Equal(7, Assert.Single(parsed.Rows).RowNo); // the title rows are not rows of the statement
+        Assert.Single(parsed.Payments);
+    }
+
+    [Fact]
     public void An_unknown_header_row_names_the_nearest_layout_and_the_differences()
     {
         var lhv = Catalog.Find("lhv-et-long")!;
@@ -154,6 +177,20 @@ public class StatementParserTests
         // the same shape with no date in the date column is not SEB
         var notSeb = Tables.Sheet(Tables.Row("EE59", "x", "eile", "", "N", "", "", "C", "1,01", "", "", "", "0", "EUR", ""));
         Assert.False(StatementParser.Detect(notSeb, Catalog).Recognised);
+
+        // a headerless block pasted above an export with its header: the header row wins, and the payment row left
+        // above it is said, not lost in silence
+        var seb = Catalog.Find("seb-et")!;
+        var pasted = Tables.Sheet(
+            Tables.Row("EE591010220215133228", "TT", "02.10.2026", "EE497700771001131757", "StopFire OÜ", "LHVBEE22", "H", "D", "500,00", "", "RO4262101896L02", "Reserv SEB", "0", "EUR", ""),
+            seb.Headers.ToArray(),
+            Tables.Row("EE591010220215133228", "TM168358936", "01.10.2026", "", "AS SEB PANK", "EEUHEE2X", "H", "C", "1,01", "", "RO4248947827L02", "intresside väljamakse EUR", "0", "EUR", ""));
+        var pastedResult = StatementParser.Detect(pasted, Catalog);
+        Assert.Equal((2, false), (pastedResult.Match?.HeaderRowNo, pastedResult.Match?.Headerless));
+        var pastedParsed = StatementParser.Parse(pasted, pastedResult.Match!);
+        Assert.Equal([3], pastedParsed.Rows.Select(r => r.RowNo));
+        var above = Assert.Single(pastedParsed.Problems, p => p.Code == ImportProblem.AboveHeader);
+        Assert.Equal(1, above.RowNo);
     }
 
     [Fact]

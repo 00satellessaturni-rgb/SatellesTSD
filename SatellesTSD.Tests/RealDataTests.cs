@@ -104,6 +104,33 @@ public class RealDataTests
     }
 
     [Fact]
+    public void Every_paysera_export_reads_as_a_statement_whatever_sits_above_its_header()
+    {
+        if (Folder is not { } folder)
+        {
+            return;
+        }
+
+        // the exports of September 2026 start with the header row; those of October carry a logo, a title block and
+        // the account above it (the header on row 6) — both read as the same layout, with every row below the header
+        var files = Directory.GetFiles(folder, "EVP*.xlsx", SearchOption.AllDirectories).ToList();
+        Assert.True(files.Count >= 20, $"only {files.Count} Paysera exports found");
+        var headerRows = new HashSet<int>();
+        foreach (var file in files)
+        {
+            var sheet = Assert.Single(Read(file).Sheets);
+            Assert.True(sheet.Kind == SheetKind.Statement, $"{file}: {sheet.Message}");
+            Assert.Equal("paysera-ru", sheet.Statement!.Layout.Id);
+            Assert.All(sheet.Statement.Rows, r => Assert.True(r.RowNo > sheet.Statement.HeaderRowNo, $"{file}: row {r.RowNo} above the header"));
+            Assert.All(sheet.Statement.Payments, r => Assert.True(r.Problem is null, $"{file} row {r.RowNo}: {r.Problem}"));
+            headerRows.Add(sheet.Statement.HeaderRowNo);
+        }
+
+        Assert.Contains(1, headerRows);
+        Assert.Contains(6, headerRows);
+    }
+
+    [Fact]
     public void Every_tor_export_reads_with_its_employer_and_no_row_problems()
     {
         if (Folder is not { } folder)
