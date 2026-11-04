@@ -52,6 +52,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _newStoreButton = new(UiText.NewStore);
     private readonly ToolStripMenuItem _closeButton = new(UiText.Close);
     private readonly ToolStripMenuItem _newCompanyButton = new(UiText.NewCompany);
+    private readonly ToolStripMenuItem _closeCompanyButton = new(UiText.CloseCompany);
     private readonly ToolStripMenuItem _importButton = new(UiText.ImportFiles);
     private readonly ToolStripMenuItem _filesButton = new(UiText.Files);
     private readonly ToolStripMenuItem _matchButton = new(UiText.RunMatch);
@@ -105,7 +106,7 @@ public sealed class MainForm : Form
         var storeMenu = new ToolStripMenuItem(UiText.MenuStore);
         storeMenu.DropDownItems.AddRange([_openStoreButton, _newStoreButton, _updateSeparator, _updateButton, new ToolStripSeparator(), _closeButton]);
         var companyMenu = new ToolStripMenuItem(UiText.MenuCompany);
-        companyMenu.DropDownItems.AddRange([_newCompanyButton, _filesButton]);
+        companyMenu.DropDownItems.AddRange([_newCompanyButton, _filesButton, new ToolStripSeparator(), _closeCompanyButton]);
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
         periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
@@ -174,6 +175,7 @@ public sealed class MainForm : Form
         _addLineButton.Click += (_, _) => AddLine();
         _removeLineButton.Click += (_, _) => RemoveLine();
         _newPersonButton.Click += (_, _) => NewPerson();
+        _closeCompanyButton.Click += (_, _) => CloseCompany();
         _personsGrid.SelectionChanged += (_, _) => { if (!_filling) { ShowSelectedPerson(); } };
         _paymentsGrid.SelectionChanged += (_, _) => { if (!_filling) { _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true }; } };
         // a tick or a pick is a decision at once; a note is one when its editing ends
@@ -207,6 +209,10 @@ public sealed class MainForm : Form
 
     internal bool IsBusy => _busy;
     internal ToolStripItem ImportButton => _importButton;
+
+    internal ToolStripItem CloseCompanyButton => _closeCompanyButton;
+
+    internal ToolStripComboBox CompanyBox => _companyBox;
     internal MenuStrip Menus => _menu;
     internal TextBox PersonsSearch => _personsSearch;
     internal TextBox PaymentsSearch => _paymentsSearch;
@@ -240,6 +246,8 @@ public sealed class MainForm : Form
     }
 
     internal void Reload() => ReloadView();
+
+    internal void RefillCompanies() => FillCompanies();
 
     /// <summary>Whether the window looks for updates in the release folder: only the published program does.</summary>
     internal bool UpdatesEnabled;
@@ -874,12 +882,17 @@ public sealed class MainForm : Form
             }
         }
 
+        // the company last shown, else the first; none when the accountant closed the company (an empty setting)
         var wanted = Choice.IndexOf(_companyBox.Items.Cast<Choice>(), _settings.LastCompany);
-        _companyBox.SelectedIndex = _companyBox.Items.Count == 0 ? -1 : Math.Max(0, wanted);
+        _companyBox.SelectedIndex = _companyBox.Items.Count == 0 || _settings.LastCompany is "" ? -1 : Math.Max(0, wanted);
         _filling = false;
         if (_companyBox.Items.Count == 0 && _services is not null)
         {
             Log(UiText.NoCompany);
+        }
+        else if (_companyBox.SelectedIndex < 0 && _services is not null)
+        {
+            Log(UiText.CompanyClosedHint); // closed earlier (also in another store): said, so that the empty window is no riddle
         }
 
         FillPeriods();
@@ -934,6 +947,30 @@ public sealed class MainForm : Form
 
         _period = _services.Store.GetOrCreatePeriod(company.Id, key.Year, key.Month);
         return _period;
+    }
+
+    /// <summary>"Sulge ettevõte": no company shown, so that the next import goes to the employer the files' TÖR export
+    /// names (found or created) without the question of switching. The choice stands until a company is chosen.</summary>
+    private void CloseCompany()
+    {
+        if (!HasCompany)
+        {
+            return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel();
+        }
+
+        _settings.LastCompany = "";
+        SaveSettings();
+        _filling = true;
+        _companyBox.SelectedIndex = -1;
+        _filling = false;
+        Log(UiText.CompanyClosed);
+        FillPeriods();
+        ReloadView();
     }
 
     private void NewCompany()
@@ -1109,7 +1146,7 @@ public sealed class MainForm : Form
         ShowSelectedPerson();
         if (_view.RowsLeftOut > 0)
         {
-            Log($"{_view.RowsLeftOut} {UiText.RowsLeftOut}");
+            Log(UiText.RowsLeftOut(_view.RowsLeftOut));
         }
     }
 
@@ -1271,7 +1308,7 @@ public sealed class MainForm : Form
                 payment.Date is { } d ? d.ToDateTime(TimeOnly.MinValue) : null,
                 payment.Payee,
                 payment.Description ?? "",
-                payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal) ? null : payment.Amount,
+                payment.AmountText is not null || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal) ? null : payment.Amount,
                 verdict,
                 payment.Category ?? None,
                 payment.TypeCode ?? "",
@@ -1282,9 +1319,10 @@ public sealed class MainForm : Form
             var row = _paymentsGrid.Rows[index];
             row.Tag = payment;
             row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}"));
-            if (payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
+            if (payment.AmountText is not null || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
             {
-                row.Cells["amount"].Style.NullValue = UiText.BadAmountMark; // an amount that could not be read, shown as such, sorted as none
+                // an amount that could not be read: its text, else "?", shown in its place and sorted as none
+                row.Cells["amount"].Style.NullValue = payment.AmountText ?? UiText.BadAmountMark;
             }
             if (!payment.Declare)
             {
@@ -1395,6 +1433,7 @@ public sealed class MainForm : Form
         _addLineButton.Enabled = !_busy && hasCompany && editable;
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
+        _closeCompanyButton.Enabled = !_busy && hasCompany;
         _openStoreButton.Enabled = !_busy;
         _newStoreButton.Enabled = !_busy;
         _companyBox.Enabled = !_busy;

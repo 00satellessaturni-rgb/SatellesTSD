@@ -136,7 +136,10 @@ internal static class UiText
     public const string CompanyTaken = "Ettevõte valiti TÖR väljavõtte järgi";
     public const string Locked = "lukus";
     public const string Editable = "muudetav";
-    public const string RowsLeftOut = "rida ilma saajata jäeti kõrvale";
+    public static string RowsLeftOut(int count) => count == 1 ? "1 tühi rida jäeti kõrvale" : $"{count} tühja rida jäeti kõrvale";
+    public const string CloseCompany = "Sulge ettevõte";
+    public const string CompanyClosed = "Ettevõte suleti: järgmised failid imporditakse nende TÖR väljavõttes nimetatud tööandjale";
+    public const string CompanyClosedHint = "Ettevõte on suletud: vali see loendist või impordi failid";
     public const string Problem = "Viga";
 
     // the menus (with their Alt keys) and the grids' tools

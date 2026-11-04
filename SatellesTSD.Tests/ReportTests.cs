@@ -175,8 +175,9 @@ public class ReportTests
         Assert.Equal(["48712219406", "MAASIKAS", "MARI", "LHV pank *1757 [2]", "2026-10-05", "Mari Maasikas", "", "D", "-905.92", "palk", "[Palgad]", "kontrollitud"], Texts(search, 2));
         Assert.Equal(["48712219406", "MAASIKAS", "MARI", "käsitsi", "2026-10-20", "Mari Maasikas", "", "", "120", "haigusleht", "", "MAASIKAS MARI; [Haigusleht]"], Texts(search, 3)); // a hand line is the accountant's word through and through
         Assert.Equal(["38810140309", "TAMM", "JAAN", "LHV pank *1757 [4]", "2026-11-02", "Jaan Tamm", "", "D", "-300", "töövõtt", "kuupaev ei kuulu perioodi [2026-10]", ""], Texts(search, 4));
-        Assert.Equal(["", "", "", "LHV pank *1757 [5]", "2026-10-12", "Kinnisvara OÜ", "", "D", "-450", "ruumide kasutamine oktoober", "", "[Üür]"], Texts(search, 5));
-        Assert.Equal(5, search.Rows.Count); // the fee row without a payee is no payment of the review
+        Assert.Equal(["", "", "", "LHV pank *1757 [3]", "2026-10-06", "", "", "D", "-0.38", "Teenustasu", "", ""], Texts(search, 5)); // the fee row without a payee, listed as the macro listed it
+        Assert.Equal(["", "", "", "LHV pank *1757 [5]", "2026-10-12", "Kinnisvara OÜ", "", "D", "-450", "ruumide kasutamine oktoober", "", "[Üür]"], Texts(search, 6));
+        Assert.Equal(6, search.Rows.Count);
 
         Assert.Equal(["LHV pank *1757 [2]"], book.Sheet("Palgad")!.Rows.Skip(1).Select(r => r.Cells[3].Text));
         Assert.Equal(["käsitsi"], book.Sheet("Haigusleht")!.Rows.Skip(1).Select(r => r.Cells[3].Text));

@@ -196,8 +196,11 @@ public class ImportStoreTests
             var foreignRow = store.StatementRows(store.Sheets(otherFile.Id)[1].Id)[0];
             Assert.Contains("another company", Assert.Throws<InvalidOperationException>(() => store.AddPayment(Draft(store, period, person, LineAction.R, foreignRow.Id))).Message);
 
-            // a balance or fee line is no source for a declared line
-            Assert.Contains("not a payment row", Assert.Throws<InvalidOperationException>(() => store.AddPayment(Draft(store, period, person, LineAction.R, rows[1].Id))).Message);
+            // a fee line without a payee is a source for a declared line once the accountant has named the person it went to
+            Assert.Equal(SkipReason.NoName, rows[1].Row.SkipReason);
+            var onFee = store.AddPayment(Draft(store, period, person, LineAction.R, rows[1].Id));
+            Assert.Equal(rows[1].Id, onFee.SourceRowId);
+            store.DeleteDraft(onFee.Id);
 
             // R sent and accepted, then an M without a row inherits it; an M with another row is refused, and so is re-pointing the M draft
             var r = store.AddPayment(Draft(store, period, person, LineAction.R, rows[0].Id));

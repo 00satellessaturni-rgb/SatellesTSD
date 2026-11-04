@@ -89,7 +89,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             var rowOrder = new List<Guid>();
             for (var i = 0; i < run.Hits.Count; i++)
             {
-                if (!run.Hits[i].Row.IsPayment)
+                // a row without a payee is listed too (the accountant sees every transaction, as the workbook showed
+                // them); only a blank row inside the data is left out
+                if (run.Hits[i].Row.SkipReason is not (null or SkipReason.NoName))
                 {
                     leftOut++;
                     continue;
@@ -348,6 +350,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Payee = hit.Row.Counterparty ?? "",
             Description = hit.Row.Description,
             Amount = hit.Amount,
+            AmountText = hit.Row.Amount is null ? hit.Row.AmountText ?? "" : null, // no amount read: its text, else nothing — never a 0 that looks read
             AmountOk = amountOk,
             RunPersonKey = hit.PersonKey,
             DefaultPersonId = defaultPersonId,

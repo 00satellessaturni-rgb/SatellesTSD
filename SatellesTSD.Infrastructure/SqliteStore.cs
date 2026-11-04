@@ -382,8 +382,8 @@ public sealed partial class SqliteStore : IStore
         return stored;
     }
 
-    /// <summary>The statement row exists, is a payment row (not a balance line or a pasted header) and belongs to
-    /// the company — domain errors, not a foreign-key failure.</summary>
+    /// <summary>The statement row exists, is a payment row or a row without a payee (not a blank row or a pasted
+    /// header) and belongs to the company — domain errors, not a foreign-key failure.</summary>
     private void RequireRowOf(Guid rowId, Guid companyId)
     {
         var row = Query(
@@ -399,7 +399,8 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException("The bank row belongs to another company's file.");
         }
 
-        if (row.Skip is not null)
+        // a row without a payee may be declared once the accountant has named the person it went to
+        if (row.Skip is not (null or SatellesTSD.Core.Import.SkipReason.NoName))
         {
             throw new InvalidOperationException($"The bank row is not a payment row ({row.Skip}); a declared line cannot come from it.");
         }
@@ -602,7 +603,15 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException($"The report names lines this file did not carry ({string.Join(", ", foreign)}); it belongs to another submission.");
         }
 
+        // a report read within the millisecond of the one before (two reads of the same file in a row) gets the next
+        // millisecond: the feedback of a submission is a sequence, and its stamps are its order
         var recordedAt = Now();
+        var lastStamp = Scalar<string?>("SELECT MAX(recorded_at) FROM line_feedback WHERE submission_id = $submission", ("$submission", G(submissionId)));
+        if (lastStamp is not null && DateTime.ParseExact(lastStamp, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal) is { } last && last >= recordedAt)
+        {
+            recordedAt = last.AddMilliseconds(1);
+        }
+
         Exec("UPDATE submission SET result = $result, feedback_source = $source, general_json = $general WHERE id = $id",
             ("$id", G(submissionId)), ("$result", report.Result.ToString()), ("$source", report.Source), ("$general", JsonSerializer.Serialize(report.GeneralValidations, Json)));
 

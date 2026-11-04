@@ -1,3 +1,4 @@
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
@@ -84,9 +85,25 @@ public class ReviewWorkspaceTests
 
             var unmatched = view.Unmatched;
             Assert.True(unmatched.IsUnmatched);
-            var stranger = Assert.Single(unmatched.Payments);
+            Assert.Equal(2, unmatched.Payments.Count);
+            // the fee line without a payee is listed as the workbook listed it: nobody's, no category, the amount and the date read
+            var fee = unmatched.Payments[0];
+            Assert.Equal(("", (DateOnly?)new DateOnly(2026, 10, 6), 0.38m, (string?)null, "", (string?)null, false, true), (fee.Payee, fee.Date, fee.Amount, fee.AmountText, fee.VerdictText, fee.Category, fee.Declare, fee.InPeriod));
+            var stranger = unmatched.Payments[1];
             Assert.Equal(("Kinnisvara OÜ", (Guid?)null, false), (stranger.Payee, stranger.PersonId, stranger.Declare));
-            Assert.Equal(1, view.RowsLeftOut); // the fee line without a payee
+            Assert.Equal(0, view.RowsLeftOut); // only a blank row inside the data is left out
+
+            // a decision on a payee-less row stands like any other: a category, then the person it went to — and then
+            // it is declared and built into a line from that row
+            workspace.SetCategory(fee, "Üür");
+            Assert.Equal("Üür", workspace.Load(period.Id).Unmatched.Payments[0].Category);
+            workspace.SavePerson(mari.Person! with { FundedPensionMember = false }, confirmResidency: true);
+            workspace.SetPerson(fee, mari.PersonId);
+            var named = workspace.Load(period.Id).Persons[0].Payments.Single(p => p.RowId == fee.RowId);
+            Assert.Equal(("Üür", "57", true), (named.Category, named.TypeCode, named.Declare));
+            Assert.Empty(named.Checks);
+            new PeriodDeclarer(store).Build(period.Id);
+            Assert.Contains(store.Payments(period.Id), p => p.SourceRowId == fee.RowId && p.Line.TypeCode == "57" && p.NetPaid == 0.38m);
         }
     }
 
@@ -157,7 +174,7 @@ public class ReviewWorkspaceTests
             workspace.SetPerson(Stranger(view), mariId);
 
             view = workspace.Load(period.Id);
-            Assert.Empty(view.Unmatched.Payments);
+            Assert.DoesNotContain(view.Unmatched.Payments, p => p.Payee == "Kinnisvara OÜ");
             var moved = view.Persons[0].Payments.Single(p => p.Payee == "Kinnisvara OÜ");
             Assert.Equal((mariId, (Guid?)null), (moved.PersonId, moved.DefaultPersonId));
 
@@ -168,7 +185,7 @@ public class ReviewWorkspaceTests
             // given back to nobody: the category stands, the person is the run's again (nobody), and so it is not declared
             workspace.SetPerson(moved, null);
             view = workspace.Load(period.Id);
-            var back = Assert.Single(view.Unmatched.Payments);
+            var back = Assert.Single(view.Unmatched.Payments, p => p.Payee == "Kinnisvara OÜ");
             Assert.Equal(("Haigusleht", (Guid?)null, false, true), (back.Category, back.PersonId, back.Declare, back.HasOverride));
         }
     }
@@ -322,7 +339,7 @@ public class ReviewWorkspaceTests
 
             var view = workspace.Load(period.Id);
             Assert.False(Salary(view).Declare);
-            Assert.Empty(view.Unmatched.Payments);
+            Assert.DoesNotContain(view.Unmatched.Payments, p => p.Payee == "Kinnisvara OÜ");
             Assert.Contains(view.Persons[1].Payments, p => p.Payee == "Kinnisvara OÜ");
         }
     }

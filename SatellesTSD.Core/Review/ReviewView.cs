@@ -34,6 +34,10 @@ public sealed class ReviewPayment
     /// <summary>The amount as the sums take it: its absolute value, 0 when unreadable.</summary>
     public decimal Amount { get; init; }
 
+    /// <summary>The text the statement had where no amount was read from it (shown in its place; empty when the
+    /// statement had none); null when the amount was read.</summary>
+    public string? AmountText { get; init; }
+
     /// <summary>The amount was read and the row is not shared between two persons: it counts.</summary>
     public bool AmountOk { get; init; }
 

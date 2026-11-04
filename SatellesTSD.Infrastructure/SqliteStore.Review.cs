@@ -26,12 +26,12 @@ public sealed partial class SqliteStore
                 SELECT COUNT(*) FROM statement_row r
                   JOIN import_sheet s ON s.id = r.sheet_id
                   JOIN period_import pi ON pi.file_id = s.file_id
-                WHERE r.id = $row AND pi.period_id = $period AND r.skip_reason IS NULL
+                WHERE r.id = $row AND pi.period_id = $period AND (r.skip_reason IS NULL OR r.skip_reason = $noName)
                 """,
-                ("$row", G(rowId)), ("$period", G(line.PeriodId)));
+                ("$row", G(rowId)), ("$period", G(line.PeriodId)), ("$noName", SatellesTSD.Core.Import.SkipReason.NoName));
             if (linked == 0)
             {
-                throw new InvalidOperationException("The statement row is not a payment row of a file linked to the period.");
+                throw new InvalidOperationException("The statement row is not a payment or payee-less row of a file linked to the period.");
             }
         }
         else

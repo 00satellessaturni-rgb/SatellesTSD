@@ -184,9 +184,14 @@ public class StatementParserTests
         Assert.Equal("2026092863975588", onninen.Cells[8]); // the archive id stays in the cells, whole
         Assert.Equal(15, onninen.Cells.Count);
 
-        var fee = parsed.Rows[1];
+        var fee = parsed.Rows[1]; // no payee: read like any row, never a payment, and nothing missing from it is a problem
         Assert.Equal("Teenustasu", fee.Description);
         Assert.Equal("-0.38", fee.AmountText);
+        Assert.Equal(((DateOnly?)new DateOnly(2026, 10, 2), (decimal?)-0.38m, Direction.Debit, "EE497700771001131757"), (fee.Date, fee.Amount, fee.Direction, fee.Account));
+        Assert.DoesNotContain(parsed.Problems, p => p.RowNo == 3);
+        var balance = parsed.Rows[5];
+        Assert.Equal(((DateOnly?)null, (decimal?)1234.56m, SkipReason.NoName), (balance.Date, balance.Amount, balance.SkipReason));
+        Assert.DoesNotContain(parsed.Problems, p => p.RowNo == 7);
 
         var bad = parsed.Rows[3];
         Assert.Null(bad.Date);

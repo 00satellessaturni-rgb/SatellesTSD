@@ -426,7 +426,16 @@ public class SqliteStoreTests
             store.RecordFeedback(file.Id, Coloured("EE0201001", line.LineNumber, "ERROR_BLACK", FeedbackReport.RuleNewOnExistingKey));
 
             Assert.Equal(PaymentStatus.Accepted, Assert.Single(store.Payments(period.Id)).Status);
-            Assert.Equal([Severity.None, Severity.Black], store.Feedback(line.Id).Select(f => f.Severity));
+            var records = store.Feedback(line.Id);
+            Assert.Equal([Severity.None, Severity.Black], records.Select(f => f.Severity));
+            Assert.True(records[1].RecordedAt > records[0].RecordedAt);
+
+            // a report read within the millisecond of the one before (the last stamp pushed ahead of the clock here) gets the next millisecond
+            var ahead = DateTime.UtcNow.AddSeconds(5);
+            ahead = new DateTime(ahead.Ticks - ahead.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+            store.ExecuteRaw("UPDATE line_feedback SET recorded_at = $at WHERE recorded_at = (SELECT MAX(recorded_at) FROM line_feedback)", ("$at", ahead.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture)));
+            store.RecordFeedback(file.Id, Coloured("EE0201001", line.LineNumber, "ERROR_BLACK", FeedbackReport.RuleNewOnExistingKey));
+            Assert.Equal(ahead.AddMilliseconds(1), store.Feedback(line.Id)[^1].RecordedAt);
             Assert.Equal(LineKeyRules.KeyExists, Assert.Throws<LineKeyException>(() => store.AddPayment(SalaryDraft(store, period, person, LineAction.R, line.LineNumber))).Code);
             Assert.Equal(2, store.AddPayment(SalaryDraft(store, period, person, LineAction.M, line.LineNumber)).Version);
         }

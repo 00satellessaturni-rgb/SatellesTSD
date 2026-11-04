@@ -33,7 +33,8 @@ public static class SkipReason
 {
     /// <summary>Nothing in the row.</summary>
     public const string Blank = "Blank";
-    /// <summary>No counterparty: a balance, total or fee line.</summary>
+    /// <summary>No counterparty: a balance, total, fee or card line. Read like any other row (date, amount, direction)
+    /// and listed for the accountant, never searched for a person by the run.</summary>
     public const string NoName = "NoName";
     /// <summary>A copy of the header row inside the data (exports pasted together).</summary>
     public const string Header = "Header";
@@ -320,15 +321,9 @@ public static class StatementParser
             var amountText = Text(amountCell);
             var dateText = Text(dateCell);
 
-            if (counterparty is null)
-            {
-                rows.Add(Skipped(rowNo, SkipReason.NoName, cells) with
-                {
-                    Account = account, DateText = dateText, AmountText = amountText, Description = description, TransactionId = transactionId, DcText = dcText,
-                });
-                continue;
-            }
-
+            // a row without a counterparty (a fee, a card payment, a balance) is read like any other — the accountant
+            // sees every transaction — but is never a payment row, and what cannot be read of it is no problem of the sheet
+            var named = counterparty is not null;
             var problem = new List<string>();
             // a layout in another zone must not lose a time to the bare-date fallback: the hour decides the day
             var dateTime = DateText.Parse(dateCell, layout.DateFormats, dateOnlyFallback: zone is null);
@@ -337,7 +332,7 @@ public static class StatementParser
                 dateTime = DateText.ToEstonian(parsed, zone);
             }
 
-            if (dateTime is null)
+            if (dateTime is null && named)
             {
                 problem.Add(dateText is null ? "no date" : $"date '{dateText}' not understood");
                 problems.Add(new ImportProblem(rowNo, ImportProblem.BadDate, dateText is null ? "The row has no date." : $"Date '{dateText}' is not understood."));
@@ -349,7 +344,7 @@ public static class StatementParser
                 CellKind.Date => null, // Excel turned "12.05" into 12 May: never read the year as money
                 _ => AmountText.Parse(amountText, layout.DecimalSeparator),
             };
-            if (amount is null)
+            if (amount is null && named)
             {
                 problem.Add(amountText is null ? "no amount" : $"amount '{amountText}' not understood");
                 problems.Add(amountText is null
@@ -362,7 +357,7 @@ public static class StatementParser
                 DirectionRule.Sign => amount switch { < 0 => Direction.Debit, > 0 => Direction.Credit, _ => Direction.Unknown },
                 _ => Marker(dcText, layout),
             };
-            if (direction == Direction.Unknown && layout.Direction == DirectionRule.Markers && dcText is not null
+            if (named && direction == Direction.Unknown && layout.Direction == DirectionRule.Markers && dcText is not null
                 && !string.IsNullOrEmpty(layout.DebitMarker) && !string.IsNullOrEmpty(layout.CreditMarker))
             {
                 // a bank's D/C column holds something else: say so (a one-marker layout such as Kassa has rows that are simply not payouts)
@@ -371,6 +366,25 @@ public static class StatementParser
             }
 
             var currency = Text(sheet.At(rowNo, currencyCol)) ?? (layout.AmountHasCurrency ? AmountText.CurrencyOf(amountText) : null);
+            if (!named)
+            {
+                rows.Add(Skipped(rowNo, SkipReason.NoName, cells) with
+                {
+                    Date = dateTime is null ? null : DateOnly.FromDateTime(dateTime.Value),
+                    DateText = dateText,
+                    Account = account,
+                    Amount = amount,
+                    AmountText = amountText,
+                    Currency = currency,
+                    Description = description,
+                    Reference = Text(sheet.At(rowNo, referenceCol)),
+                    TransactionId = transactionId,
+                    Direction = direction,
+                    DcText = dcText,
+                });
+                continue;
+            }
+
             var row = new StatementRow(
                 rowNo,
                 dateTime is null ? null : DateOnly.FromDateTime(dateTime.Value),

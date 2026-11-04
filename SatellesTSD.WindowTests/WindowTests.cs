@@ -85,13 +85,13 @@ public class WindowTests
             Assert.Equal(["Valitud isik", "Kõik", "Palgad", "Dividendid", "Üür", "Kommunaalkulud", "Kompensatsioon", "Haigusleht", "Laenud", "TÖR-väline palgad", "Trahvid", "Tundmatu kategooria"], tabs.TabPages.Cast<TabPage>().Select(p => p.Text));
             tabs.SelectedIndex = 1;
             Ui.Pump();
-            Assert.Equal(4, form.PaymentsGrid.Rows.Count); // the salary, the hand line, the second person's row, the stranger's
+            Assert.Equal(5, form.PaymentsGrid.Rows.Count); // the salary, the hand line, the second person's row, the fee without a payee, the stranger's
             // the amounts sort by value (typed cells), the dates likewise
             form.PaymentsGrid.Sort(form.PaymentsGrid.Columns["amount"]!, System.ComponentModel.ListSortDirection.Ascending);
             Ui.Pump();
             var amounts = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => Assert.IsType<decimal>(r.Cells["amount"].Value)).ToList();
             Assert.Equal(amounts.OrderBy(a => a), amounts);
-            Assert.Equal(120m, amounts[0]);
+            Assert.Equal(0.38m, amounts[0]); // the fee without a payee
             Assert.IsType<DateTime>(form.PaymentsGrid.Rows[0].Cells["date"].Value);
             Assert.Equal(SortOrder.Ascending, form.PaymentsGrid.SortOrder);
             form.PaymentsSearch.Text = "kinnisvara";
@@ -104,7 +104,7 @@ public class WindowTests
             Assert.Equal("Kinnisvara OÜ", Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>()).Cells["payee"].Value?.ToString());
             tabs.SelectedIndex = tabs.TabPages.Count - 1;
             Ui.Pump();
-            Assert.Equal("Jaan Tamm", Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>()).Cells["payee"].Value?.ToString()); // outside the month, no category
+            Assert.Equal(["", "Jaan Tamm"], form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["payee"].Value?.ToString())); // the fee without a payee (sorted by amount still), the row outside the month
             form.PaymentsSearch.Text = "nobody-here";
             Ui.Pump();
             Assert.Equal(0, form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Count(r => r.Visible));
@@ -113,6 +113,22 @@ public class WindowTests
             Ui.Pump();
             Assert.Equal(2, form.PaymentsGrid.Rows.Count); // the person picked: the salary and the hand line
             Assert.Equal(typeof(DateTime), form.PaymentsGrid.Columns["date"]!.ValueType);
+
+            // the company closed: nothing shown, the import still open for the files' employer; chosen again, the view is back
+            Assert.True(form.CloseCompanyButton.Enabled);
+            form.CloseCompanyButton.PerformClick();
+            Ui.Pump();
+            Assert.Null(form.View);
+            Assert.Equal(-1, form.CompanyBox.SelectedIndex);
+            Assert.False(form.CloseCompanyButton.Enabled);
+            Assert.True(form.ImportButton.Enabled);
+            Assert.Equal(0, form.PersonsGrid.Rows.Count);
+            Assert.Equal(0, form.PaymentsGrid.Rows.Count);
+            Assert.Equal(["Valitud isik", "Kõik"], form.ScopeTabs.TabPages.Cast<TabPage>().Select(p => p.Text));
+            form.CompanyBox.SelectedIndex = 0;
+            Ui.Pump();
+            Assert.NotNull(form.View);
+            Assert.Equal(3, form.PersonsGrid.Rows.Count);
         }));
     }
 
@@ -215,6 +231,19 @@ public class WindowTests
             Run(form, form.ImportFilesAsync([palgad]), () => form.View is { Company.RegistryCode: "10235688" }, "the switch back");
             Assert.Contains("Vahetada ettevõte selle vastu", questions[^1], StringComparison.Ordinal);
             Assert.Equal(2, form.Services!.Store.Companies().Count);
+
+            // the company closed: the other employer's files go to their company without a question
+            var asked = questions.Count;
+            form.CloseCompanyButton.PerformClick();
+            Ui.Pump();
+            Assert.Null(form.View);
+            Assert.Equal("", AppSettings.Load(fixture.SettingsPath).LastCompany); // closed by the accountant, remembered
+            form.RefillCompanies();
+            Ui.Pump();
+            Assert.Equal(-1, form.CompanyBox.SelectedIndex); // and kept closed when the companies are listed afresh
+            Run(form, form.ImportFilesAsync([other]), () => form.View is { Company.RegistryCode: "12345678" }, "the import after the close");
+            Assert.Equal(asked, questions.Count);
+            Assert.Equal("12345678", AppSettings.Load(fixture.SettingsPath).LastCompany);
         }, confirm: (question, _) => { questions.Add(question); return answer; }));
     }
 

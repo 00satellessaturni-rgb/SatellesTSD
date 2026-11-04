@@ -59,8 +59,11 @@ public class ReviewStoreTests
             var rows = ReviewFixtures.StatementRows(store, file);
             var mari = store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", ReviewFixtures.MariCode));
 
-            // the fee line has no payee: a skipped row cannot carry a decision
-            Assert.Contains("not a payment row", Assert.Throws<InvalidOperationException>(() => store.SaveReviewLine(ReviewLine.ForRow(period.Id, rows[1].Id))).Message);
+            // the fee line has no payee: listed for the accountant all the same, so a decision on it stands
+            Assert.Equal(SkipReason.NoName, rows[1].Row.SkipReason);
+            var onFee = store.SaveReviewLine(ReviewLine.ForRow(period.Id, rows[1].Id) with { Category = "Kommunaalkulud" });
+            Assert.Equal("Kommunaalkulud", store.ReviewLines(period.Id).Single(l => l.Id == onFee.Id).Category);
+            store.DeleteReviewLine(onFee.Id);
 
             // a row of a file the period does not list
             var otherBytes = ReviewFixtures.Workbook(1000m);

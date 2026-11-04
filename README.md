@@ -52,13 +52,18 @@ person picked, every payment of the month, one per category, and the payments wi
 
 1. **Periood**: pick the payment month (the previous month is offered). The company need not be picked
    when the files hold the TÖR export: it names the employer, and the program takes the company up or
-   creates it. **Ettevõte** and **Uus ettevõte…** are for a month without a TÖR export.
+   creates it. **Ettevõte** and **Uus ettevõte…** are for a month without a TÖR export. **Sulge
+   ettevõte** puts the company shown away, so that the next files go to their own employer without a
+   question; the choice holds until a company is picked again.
 2. **Impordi failid…**: the TÖR export (`search-export…`) and every bank statement of the month
    (CSV or the bank's Excel; a file imported before is found again, never stored twice). When the export
    names another employer than the company shown, the program asks before switching to it. **Failid…**
    lists what the period uses.
 3. **Otsi maksed**: the search over the statements — the persons grid (the Vahearuanne) and, per person,
    the payments found (the Otsingu kontroll) with the category, the payment type and whether it is declared.
+   A statement row without a payee name (a fee, a card payment, a balance line) is listed too, under
+   "— leidmata read —" with no category, so that every transaction is in front of you; it is never
+   searched for a person, but you can name one.
 4. **Kontrolli registrid**: residency from EMTA, II-pillar membership and rate from Pensionikeskus, one
    person at a time; the person panel shows what was found and lets you confirm or set the facts by hand.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
