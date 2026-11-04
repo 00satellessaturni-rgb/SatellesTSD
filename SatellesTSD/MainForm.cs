@@ -1,5 +1,6 @@
 using System.Globalization;
 using SatellesTSD.Core.Declare;
+using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Report;
@@ -160,6 +161,7 @@ public sealed class MainForm : Form
     // ---------------------------------------------------------------- the window tests' seams
 
     internal bool IsBusy => _busy;
+    internal ToolStripButton ImportButton => _importButton;
     internal DataGridView PersonsGrid => _personsGrid;
     internal DataGridView PaymentsGrid => _paymentsGrid;
     internal TabControl Tabs => _tabs;
@@ -173,6 +175,20 @@ public sealed class MainForm : Form
 
     /// <summary>Takes a failure in place of the message box (the window tests set it).</summary>
     internal Action<Exception>? Failing;
+
+    /// <summary>Takes a plain notice in place of the message box (the window tests set it).</summary>
+    internal Action<string>? Informing;
+
+    private void Inform(string text, string title)
+    {
+        if (Informing is { } take)
+        {
+            take(text);
+            return;
+        }
+
+        MessageBox.Show(this, text, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
 
     internal void Reload() => ReloadView();
 
@@ -827,9 +843,11 @@ public sealed class MainForm : Form
         var today = DateTime.Today;
         var previous = today.AddMonths(-1);
         var periods = SelectedCompany is { } company && _services is not null ? _services.Store.Periods(company.Id) : [];
-        var firstYear = Math.Min(periods.Count == 0 ? today.Year - 2 : periods.Min(p => p.Year), today.Year - 2);
         var year = _settings.LastYear ?? previous.Year;
         var month = _settings.LastMonth ?? previous.Month;
+        // the years go back to the company's oldest period, two years back, or the month last chosen — whichever is
+        // earliest — so the month chosen before a switch of company is still there after it
+        var firstYear = Math.Min(Math.Min(periods.Count == 0 ? today.Year - 2 : periods.Min(p => p.Year), today.Year - 2), year);
         _yearBox.Items.Clear();
         for (var y = firstYear; y <= today.Year + 1; y++)
         {
@@ -1234,7 +1252,8 @@ public sealed class MainForm : Form
         _stateLabel.Text = _view is null
             ? hasCompany ? UiText.NoPeriodYet : ""
             : $"{UiText.PeriodState(_view.Period.State)} — {(_view.Editable ? UiText.Editable : UiText.Locked)}{StateDates(_view.Period)}";
-        _importButton.Enabled = !_busy && hasCompany && editable;
+        // without a company the files' TÖR export may name one (found or created); with one shown, its month must be open
+        _importButton.Enabled = !_busy && _services is not null && (hasCompany ? editable : SelectedPeriod is not null);
         _filesButton.Enabled = !_busy && _view is not null;
         _matchButton.Enabled = !_busy && Editable;
         _lookupButton.Enabled = !_busy && _view is not null && _services?.Pipeline.HasLookups == true;
@@ -1261,7 +1280,7 @@ public sealed class MainForm : Form
 
     private async Task ImportAsync()
     {
-        if (_services is null || !HasCompany || !(_view?.Editable ?? true))
+        if (_services is null || _busy || !(_view?.Editable ?? true))
         {
             return;
         }
@@ -1272,29 +1291,118 @@ public sealed class MainForm : Form
             return;
         }
 
+        _settings.LastFolder = Path.GetDirectoryName(dialog.FileNames[0]);
+        SaveSettings();
+        await ImportFilesAsync(dialog.FileNames);
+    }
+
+    /// <summary>Imports the files into the month shown. The company is the one the files' TÖR export names: taken up
+    /// (or created from the export's name and registry code) when none is shown, asked about when another is shown;
+    /// without a TÖR export the files go to the company shown, and nowhere when there is none.</summary>
+    internal async Task ImportFilesAsync(IReadOnlyList<string> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        if (_services is null || _busy || files.Count == 0 || SelectedPeriod is not { } month)
+        {
+            return;
+        }
+
+        // the files are read once, off the UI thread and under the busy state (no second import, no combo change
+        // meanwhile); a file that cannot be read gets its own line below and never stops the others
+        var services = _services;
+        var shownCode = SelectedCompany?.RegistryCode;
+        List<(string Name, byte[]? Bytes, string? Error)> read = [];
+        Employer? employer = null;
+        Exception? refused = null;
+        await RunBusyAsync(async () =>
+        {
+            await Task.Run(() =>
+            {
+                foreach (var file in files)
+                {
+                    try
+                    {
+                        read.Add((Path.GetFileName(file), File.ReadAllBytes(file), null));
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        read.Add((Path.GetFileName(file), null, e.Message));
+                    }
+                }
+
+                try
+                {
+                    employer = services.Pipeline.EmployerOf(read.Where(r => r.Bytes is not null).Select(r => (r.Name, r.Bytes!)), shownCode);
+                }
+                catch (Exception e)
+                {
+                    refused = e;
+                }
+            });
+        });
+        if (refused is not null)
+        {
+            Fail(refused);
+            return;
+        }
+
+        if (employer is null && !HasCompany)
+        {
+            Inform(UiText.ImportNeedsEmployer, UiText.ImportFiles);
+            return;
+        }
+
+        if (employer is not null && shownCode != employer.RegistryCode)
+        {
+            var exists = services.Store.FindCompany(employer.RegistryCode) is not null;
+            if (HasCompany && !Confirm($"{UiText.ImportOtherEmployer}\n{employer.Name} ({employer.RegistryCode})\n\n{(exists ? UiText.ImportSwitchToExisting : UiText.ImportSwitchToNew)}", UiText.ImportFiles))
+            {
+                return;
+            }
+
+            if (_personPanel.IsDirty)
+            {
+                ResolveDirtyPanel();
+            }
+
+            var (company, created) = services.Pipeline.EnsureCompany(employer);
+            Log($"{(created ? UiText.CompanyCreated : UiText.CompanyTaken)}: {company.Name} ({company.RegistryCode})");
+            // the combos are filled afresh from the settings: the company found and the month chosen stay what they are
+            _settings.LastCompany = company.RegistryCode;
+            _settings.LastYear = month.Year;
+            _settings.LastMonth = month.Month;
+            FillCompanies();
+        }
+
+        if (!(_view?.Editable ?? true))
+        {
+            // the month the files would go to is past its draft for this company: said, not silently skipped
+            Log($"{UiText.ImportFiles}: {UiText.ImportLockedMonth}");
+            Inform(UiText.ImportLockedMonth, UiText.ImportFiles);
+            return;
+        }
+
         var period = EnsurePeriod();
         if (period is null)
         {
             return;
         }
 
-        _settings.LastFolder = Path.GetDirectoryName(dialog.FileNames[0]);
-        SaveSettings();
-        var services = _services;
         var periodId = period.Id;
-        var files = dialog.FileNames;
         await RunBusyAsync(async () =>
         {
             // every file gets its line, whatever happened to the one before it
-            var outcomes = await Task.Run(() => files.Select(f =>
+            var outcomes = await Task.Run(() => read.Select(f =>
             {
                 try
                 {
-                    return services.Pipeline.ImportFile(periodId, Path.GetFileName(f), File.ReadAllBytes(f));
+                    return f.Bytes is null
+                        ? new ImportOutcome { FileName = f.Name, Error = f.Error }
+                        : services.Pipeline.ImportFile(periodId, f.Name, f.Bytes);
                 }
                 catch (Exception e)
                 {
-                    return new ImportOutcome { FileName = Path.GetFileName(f), Error = e.Message };
+                    return new ImportOutcome { FileName = f.Name, Error = e.Message };
                 }
             }).ToList());
             foreach (var outcome in outcomes)

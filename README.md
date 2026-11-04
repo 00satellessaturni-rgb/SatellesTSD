@@ -44,10 +44,13 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 
 ## A month, step by step
 
-1. **Ettevõte** and **Periood**: pick the company (or **Uus ettevõte…**) and the payment month.
+1. **Periood**: pick the payment month (the previous month is offered). The company need not be picked
+   when the files hold the TÖR export: it names the employer, and the program takes the company up or
+   creates it. **Ettevõte** and **Uus ettevõte…** are for a month without a TÖR export.
 2. **Impordi failid…**: the TÖR export (`search-export…`) and every bank statement of the month
-   (CSV or the bank's Excel; a file imported before is found again, never stored twice). **Failid…** lists
-   what the period uses.
+   (CSV or the bank's Excel; a file imported before is found again, never stored twice). When the export
+   names another employer than the company shown, the program asks before switching to it. **Failid…**
+   lists what the period uses.
 3. **Otsi maksed**: the search over the statements — the persons grid (the Vahearuanne) and, per person,
    the payments found (the Otsingu kontroll) with the category, the payment type and whether it is declared.
 4. **Kontrolli registrid**: residency from EMTA, II-pillar membership and rate from Pensionikeskus, one

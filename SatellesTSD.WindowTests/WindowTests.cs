@@ -83,6 +83,68 @@ public class WindowTests
     }
 
     [Fact]
+    public void Files_import_without_a_company_when_their_TOR_names_the_employer_and_switch_to_another_employer_when_asked()
+    {
+        using var fixture = new WindowFixture(empty: true);
+        var palgad = Path.Combine(fixture.Folder, "palgad.xlsx");
+        File.WriteAllBytes(palgad, SatellesTSD.Tests.ReviewFixtures.Workbook());
+        var other = Path.Combine(fixture.Folder, "teine.xlsx");
+        File.WriteAllBytes(other, SatellesTSD.Tests.Tables.Xlsx("Töötajate loend", [Core.Import.TorHeaders.All.ToArray<object?>(),
+            ["1", 47001010000d, "KASK", "KATI", new DateTime(2024, 2, 15), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 12345678, "Teine OÜ"]]));
+        var statementOnly = Path.Combine(fixture.Folder, "lhv.xlsx");
+        File.WriteAllBytes(statementOnly, SatellesTSD.Tests.Tables.Xlsx("LHV", [Core.Import.LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
+            ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR", 48712219406d]]));
+        var questions = new List<string>();
+        var notices = new List<string>();
+        var answer = true;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Informing = notices.Add;
+            Assert.Null(form.View); // an empty store: no company to show
+            Assert.True(form.ImportButton.Enabled); // the month is chosen, so the files' TÖR may name the company
+
+            // a statement alone names nobody: told, nothing imported
+            Run(form, form.ImportFilesAsync([statementOnly]), () => notices.Count == 1, "the notice");
+            Assert.Null(form.View);
+            Assert.Empty(form.Services!.Store.Companies());
+
+            // the company comes from the files: created, shown, and the files land in the month chosen
+            Run(form, form.ImportFilesAsync([palgad]), () => form.View is { Files.Count: 1 }, "the import without a company");
+            var view = form.View!;
+            Assert.Equal(("10235688", "Näidis OÜ", 2026, 10), (view.Company.RegistryCode, view.Company.Name, view.Period.Year, view.Period.Month));
+            Assert.Null(view.Run); // the files are in; the search is the accountant's next step
+            Assert.Single(form.Services!.Store.Companies());
+            Assert.Empty(questions);
+
+            // another employer's files while this company is shown: asked; "no" changes nothing
+            answer = false;
+            Run(form, form.ImportFilesAsync([other]), () => questions.Count == 1, "the question");
+            Assert.Contains("Teine OÜ (12345678)", questions[0], StringComparison.Ordinal);
+            Assert.Contains("Luua see ettevõte", questions[0], StringComparison.Ordinal);
+            Assert.Single(form.Services!.Store.Companies());
+            Assert.Equal("10235688", form.View!.Company.RegistryCode);
+
+            // "yes" creates the company and switches to it, the month kept
+            answer = true;
+            Run(form, form.ImportFilesAsync([other]), () => form.View is { Company.RegistryCode: "12345678", Files.Count: 1 }, "the switch to the other employer");
+            Assert.Equal(("Teine OÜ", 2026, 10), (form.View!.Company.Name, form.View.Period.Year, form.View.Period.Month));
+            Assert.Equal(2, form.Services!.Store.Companies().Count);
+
+            // back to the first company's files: the company exists, so the question says so, and it is taken up
+            Run(form, form.ImportFilesAsync([palgad]), () => form.View is { Company.RegistryCode: "10235688" }, "the switch back");
+            Assert.Contains("Vahetada ettevõte selle vastu", questions[^1], StringComparison.Ordinal);
+            Assert.Equal(2, form.Services!.Store.Companies().Count);
+        }, confirm: (question, _) => { questions.Add(question); return answer; }));
+    }
+
+    /// <summary>Pumps until the window's work is done and the condition holds, then surfaces what the work threw.</summary>
+    private static void Run(MainForm form, Task work, Func<bool> condition, string what)
+    {
+        Ui.Until(() => work.IsCompleted && !form.IsBusy && condition(), what: what);
+        work.GetAwaiter().GetResult();
+    }
+
+    [Fact]
     public void The_update_dialog_closes_on_a_hand_over_and_only_then_while_it_works()
     {
         Ui.Run(() =>

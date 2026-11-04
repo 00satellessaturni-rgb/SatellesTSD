@@ -18,13 +18,25 @@ internal sealed class WindowFixture : IDisposable
 
     /// <param name="prepare">More to do in the store before the window opens: the store, the company, the period, and
     /// a folder inside the fixture's for files that go out.</param>
-    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null)
+    /// <param name="empty">A store with nothing in it: no company, no period — the window opens on it with no company shown.</param>
+    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null, bool empty = false)
     {
         Folder = Path.Combine(Path.GetTempPath(), $"satellestsd-window-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Folder);
         StorePath = Path.Combine(Folder, "smoke.db");
         SettingsPath = Path.Combine(Folder, "settings.json");
         ExportFolder = Path.Combine(Folder, "export");
+        Empty = empty;
+        if (empty)
+        {
+            using (SqliteStore.Open(StorePath))
+            {
+            }
+
+            new AppSettings { StorePath = StorePath, LastYear = 2026, LastMonth = 10 }.Save(SettingsPath);
+            return;
+        }
+
         using (var store = SqliteStore.Open(StorePath))
         {
             var company = store.AddCompany(RegistryCode, "Näidis OÜ");
@@ -49,6 +61,8 @@ internal sealed class WindowFixture : IDisposable
     public string SettingsPath { get; }
 
     public string ExportFolder { get; }
+
+    public bool Empty { get; }
 
     /// <summary>What the window would have shown as a failure message box.</summary>
     public List<Exception> Failures { get; } = [];
@@ -96,7 +110,7 @@ internal sealed class WindowFixture : IDisposable
         };
         form.Failing = e => Failures.Add(e);
         form.Show();
-        if (Failures.Count > 0 || form.View is null)
+        if (Failures.Count > 0 || form.Services is null || (!Empty && form.View is null))
         {
             var why = Failures.Count > 0 ? string.Join(" | ", Failures.Select(e => e.Message)) : "no view after the store was opened";
             form.Close();

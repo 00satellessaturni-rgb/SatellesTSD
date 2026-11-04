@@ -126,6 +126,13 @@ internal static class UiText
     public const string Cancelled = "katkestatud";
     public const string Done = "valmis";
     public const string NoCompany = "Vali või lisa ettevõte.";
+    public const string ImportNeedsEmployer = "Failide hulgas ei ole TÖR väljavõtet, mis nimetaks tööandja (registrikood ja nimi). Vali ettevõte või lisa failide hulka TÖR väljavõte.";
+    public const string ImportOtherEmployer = "Failide TÖR väljavõte nimetab teise tööandja:";
+    public const string ImportSwitchToExisting = "Vahetada ettevõte selle vastu ja importida failid sinna?";
+    public const string ImportSwitchToNew = "Luua see ettevõte, vahetada selle vastu ja importida failid sinna?";
+    public const string ImportLockedMonth = "Faile ei imporditud: selle ettevõtte valitud kuu ei ole enam mustand.";
+    public const string CompanyCreated = "Ettevõte loodi TÖR väljavõtte järgi";
+    public const string CompanyTaken = "Ettevõte valiti TÖR väljavõtte järgi";
     public const string Locked = "lukus";
     public const string Editable = "muudetav";
     public const string RowsLeftOut = "rida ilma saajata jäeti kõrvale";

@@ -29,6 +29,9 @@ public sealed class ImportOutcome
     public bool Succeeded => File is not null && Error is null;
 }
 
+/// <summary>The employer a TÖR export names: its registry code and name.</summary>
+public sealed record Employer(string RegistryCode, string Name);
+
 /// <summary>The period's pipeline as the window runs it — the workbook's "Run main" in three steps: the files imported
 /// and linked (the same bytes once per company; a register of another employer said), the match run, the lookups —
 /// each refused once the period is past Draft, the lookups reported person by person.</summary>
@@ -40,6 +43,55 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     private readonly Importer _importer = importer ?? throw new ArgumentNullException(nameof(importer));
 
     public bool HasLookups => residency is not null && pension is not null;
+
+    /// <summary>The employer the files name: the one registry code every TÖR sheet among them carries, with its name (the
+    /// code itself when the export has no name column). Null when no file holds a TÖR sheet; among several employers
+    /// the company shown, else refused.</summary>
+    public Employer? EmployerOf(IEnumerable<(string FileName, byte[] Content)> files, string? shownRegistryCode = null)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        var codes = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (fileName, content) in files)
+        {
+            ParsedImport parsed;
+            try
+            {
+                parsed = _importer.Read(fileName, content);
+            }
+            catch (ImportException)
+            {
+                continue; // the import itself says what is wrong with the file
+            }
+
+            foreach (var tor in parsed.Sheets.Select(s => s.Tor).OfType<ParsedTor>())
+            {
+                foreach (var code in tor.EmployerCodes)
+                {
+                    var name = tor.Entries.FirstOrDefault(e => string.Equals(e.EmployerCode, code, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(e.EmployerName))?.EmployerName?.Trim();
+                    codes[code.Trim()] = codes.GetValueOrDefault(code.Trim()) ?? name;
+                }
+            }
+        }
+
+        if (codes.Count == 0)
+        {
+            return null;
+        }
+
+        // several employers: the company shown among them takes the files (the import then says what the stray rows
+        // are, as it always did); none shown among them is a selection to split
+        var chosen = codes.Count == 1 ? codes.Keys.Single()
+            : shownRegistryCode is { } shown && codes.ContainsKey(shown.Trim()) ? shown.Trim()
+            : throw new ImportException($"The TÖR sheets name several employers ({string.Join(", ", codes.Keys)}); import one employer's files at a time.");
+        return new Employer(chosen, codes[chosen] ?? chosen);
+    }
+
+    /// <summary>The company of a registry code, created from the employer's name when the store has none.</summary>
+    public (Company Company, bool Created) EnsureCompany(Employer employer)
+    {
+        ArgumentNullException.ThrowIfNull(employer);
+        return _store.FindCompany(employer.RegistryCode) is { } found ? (found, false) : (_store.AddCompany(employer.RegistryCode, employer.Name), true);
+    }
 
     /// <summary>Reads, stores and links one file. A file that cannot be read, or holds nothing the app knows, is
     /// reported, not stored.</summary>
