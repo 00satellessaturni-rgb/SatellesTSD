@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.9.1" />
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
     <PackageReference Include="ExcelDataReader" Version="3.9.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
   </ItemGroup>

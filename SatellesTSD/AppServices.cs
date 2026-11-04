@@ -1,5 +1,6 @@
 using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Report;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Infrastructure;
 using SatellesTSD.Infrastructure.Lookups;
@@ -28,6 +29,7 @@ public sealed class AppServices : IDisposable
             Workspace = new ReviewWorkspace(Store);
             Declarer = new PeriodDeclarer(Store);
             Submitter = new PeriodSubmitter(Store, Path.Combine(AppContext.BaseDirectory, "schemas", "apa-tsd"));
+            Reports = new ReportBuilder(Store, Workspace, Declarer);
         }
         catch
         {
@@ -49,6 +51,8 @@ public sealed class AppServices : IDisposable
     public PeriodDeclarer Declarer { get; }
 
     public PeriodSubmitter Submitter { get; }
+
+    public ReportBuilder Reports { get; }
 
     public void Dispose()
     {

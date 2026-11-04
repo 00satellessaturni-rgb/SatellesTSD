@@ -60,13 +60,13 @@ internal static class UiText
     public const string NoCategory = "(puudub)";
     public const string Nobody = "(keegi)";
 
-    // the person's facts as the workbook wrote them
-    public const string Resident = "EE";
-    public const string NonResident = "mitteresident";
-    public const string NotChecked = "kontrollimata";
-    public const string PensionMember = "II sammas";
-    public const string PensionNotMember = "ei ole liitunud";
-    public const string Unknown = "teadmata";
+    // the person's facts as the workbook wrote them (one set of words with the report workbook)
+    public const string Resident = Core.Report.ReportText.Resident;
+    public const string NonResident = Core.Report.ReportText.NonResident;
+    public const string NotChecked = Core.Report.ReportText.NotChecked;
+    public const string PensionMember = Core.Report.ReportText.PensionMember;
+    public const string PensionNotMember = Core.Report.ReportText.PensionNotMember;
+    public const string Unknown = Core.Report.ReportText.Unknown;
     public const string Yes = "jah";
     public const string No = "ei";
 
@@ -203,25 +203,15 @@ internal static class UiText
     public const string EmployerCost = "Tööandja kulu";
     public const string MinimumShare = "Kuu osa (päevad/30)";
 
-    public static string PaymentStatusText(PaymentStatus status) => status switch
-    {
-        Core.Store.PaymentStatus.Draft => "mustand",
-        Core.Store.PaymentStatus.Sent => "saadetud",
-        Core.Store.PaymentStatus.Accepted => "vastu võetud",
-        Core.Store.PaymentStatus.NeedsChange => "vajab parandust",
-        Core.Store.PaymentStatus.Review => "ootab otsust",
-        Core.Store.PaymentStatus.Rejected => "tagasi lükatud",
-        Core.Store.PaymentStatus.Cancelled => "tühistatud",
-        _ => status.ToString(),
-    };
+    public static string PaymentStatusText(PaymentStatus status) => Core.Report.ReportText.PaymentStatusText(status);
 
-    public static string ActionText(LineAction action) => action switch
-    {
-        LineAction.R => "R uus",
-        LineAction.M => "M muudatus",
-        LineAction.T => "T tühistus",
-        _ => action.ToString(),
-    };
+    public static string ActionText(LineAction action) => Core.Report.ReportText.ActionText(action);
+
+    // the report workbook
+    public const string ExportReport = "Ekspordi aruanne…";
+    public const string ReportFolder = "Vali kaust, kuhu aruanne salvestada";
+    public const string ReportSaved = "Aruanne on salvestatud:";
+    public const string OpenFolderQuestion = "Avada kaust?";
 
     public static string ReasonText(string code) => code switch
     {
@@ -241,17 +231,12 @@ internal static class UiText
         _ => state.ToString(),
     };
 
-    public static string ResidencyText(Person person) =>
-        person.ResidencyCheckedOn is null ? NotChecked : person.Residency == Core.Model.Residency.Resident ? Resident : NonResident;
+    // the grid and the report workbook say the same words (ReportText holds them)
+    public static string ResidencyText(Person person) => Core.Report.ReportText.ResidencyText(person);
 
-    public static string PensionText(Person person) => person.FundedPensionMember switch
-    {
-        null => NotChecked,
-        true => $"{PensionMember} {Percent(person.PensionRate)}",
-        false => PensionNotMember,
-    };
+    public static string PensionText(Person person) => Core.Report.ReportText.PensionText(person);
 
-    public static string Percent(decimal? rate) => rate is { } r ? (r * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " %" : Unknown;
+    public static string Percent(decimal? rate) => Core.Report.ReportText.Percent(rate);
 
     public static string Source(LookupSource source) => source switch
     {

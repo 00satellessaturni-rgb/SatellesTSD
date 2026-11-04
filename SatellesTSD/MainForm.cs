@@ -2,9 +2,11 @@ using System.Globalization;
 using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
+using SatellesTSD.Core.Report;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
+using SatellesTSD.Infrastructure;
 
 namespace SatellesTSD;
 
@@ -51,6 +53,7 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripButton _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripButton _calculatorButton = new(UiText.Calculator);
+    private readonly ToolStripButton _reportButton = new(UiText.ExportReport);
     private readonly ToolStripLabel _stateLabel = new("") { Font = new Font(Control.DefaultFont, FontStyle.Bold) };
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly DeclarationPanel _declaration = new() { Dock = DockStyle.Fill };
@@ -76,7 +79,7 @@ public sealed class MainForm : Form
             new ToolStripLabel(UiText.Company), _companyBox, _newCompanyButton, new ToolStripSeparator(),
             new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(),
             _importButton, _filesButton, _matchButton, _lookupButton, _cancelButton, new ToolStripSeparator(),
-            _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _calculatorButton, new ToolStripSeparator(), _stateLabel,
+            _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _reportButton, _calculatorButton, new ToolStripSeparator(), _stateLabel,
         ]);
 
         _grids.Panel1.Controls.Add(_personsGrid);
@@ -127,6 +130,7 @@ public sealed class MainForm : Form
         _personPanel.SaveRequested += SavePerson;
         _personPanel.LookUpRequested += async person => await LookUpOneAsync(person);
         _calculatorButton.Click += (_, _) => { using var dialog = new CalculatorDialog(); dialog.ShowDialog(this); };
+        _reportButton.Click += async (_, _) => await ExportReportAsync();
         _declaration.BuildRequested += async () => await BuildLinesAsync();
         _declaration.ExportRequested += async () => await ExportAsync();
         _declaration.WithdrawRequested += Withdraw;
@@ -275,6 +279,61 @@ public sealed class MainForm : Form
         {
             using var checklist = new ChecklistDialog(result);
             checklist.ShowDialog(this);
+        }
+    }
+
+    /// <summary>The report-details workbook into a folder of the accountant's choosing (the XML's folder is offered),
+    /// built off the UI thread under the busy state like the other store runs; the panel's edits saved first so the
+    /// workbook shows what the grid shows.</summary>
+    private async Task ExportReportAsync()
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel();
+            ReloadView(); // whichever way it went, the grid shows what the store holds before the folder is asked
+            if (_services is null || _view is null)
+            {
+                return;
+            }
+        }
+
+        using var folders = new FolderBrowserDialog { Description = UiText.ReportFolder, UseDescriptionForTitle = true, SelectedPath = _settings.ExportFolder ?? "" };
+        if (folders.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        _settings.ExportFolder = folders.SelectedPath;
+        SaveSettings();
+        var services = _services;
+        var periodId = _view.Period.Id;
+        var folder = folders.SelectedPath;
+        ReportExportResult? result = null;
+        await RunBusyAsync(async () =>
+        {
+            result = await Task.Run(() =>
+            {
+                var book = services.Reports.Build(periodId);
+                return ReportWriter.Write(book, folder);
+            });
+            Log($"{UiText.ExportReport}: {result.Path} ({result.Sheets} lehte)");
+        });
+        ReloadView();
+        if (result is not null && MessageBox.Show(this, $"{UiText.ReportSaved}\n{result.Path}\n\n{UiText.OpenFolderQuestion}", UiText.ExportReport, MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{result.Path}\"") { UseShellExecute = true });
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+            {
+                Fail(e);
+            }
         }
     }
 
@@ -911,6 +970,7 @@ public sealed class MainForm : Form
         _personPanel.Enabled = !_busy;
         _declaration.Enabled = !_busy;
         _calculatorButton.Enabled = !_busy;
+        _reportButton.Enabled = !_busy && _view is not null;
         UseWaitCursor = _busy;
     }
 
