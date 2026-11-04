@@ -5,6 +5,11 @@
     <ProjectReference Include="..\SatellesTSD.Infrastructure\SatellesTSD.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- MTA's schema set, so the window validates the file it writes exactly as the tests do -->
+    <None Include="..\schemas\apa-tsd\**" Link="schemas\apa-tsd\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>

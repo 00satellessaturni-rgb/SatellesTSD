@@ -17,12 +17,14 @@ internal static class ReviewFixtures
     public const string TwinCode = "60001010008";
     public const string Source = "LHV pank *1757";
 
-    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false)
+    /// <param name="mariType">Mari's employment type id in the register (1 = Tööleping, 501 = Tasuta töötamine …).</param>
+    /// <param name="mariEnded">Mari's employment ended on 30 September 2026 (state 4), so no entry covers October.</param>
+    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false)
     {
         List<object?[]> register =
         [
             TorHeaders.All.ToArray<object?>(),
-            ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
+            ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : 2, mariEnded ? "Lõpetatud" : "Kehtiv", mariEnded ? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
             ["2", jaanCodeless ? null : 38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 600, "VÕS leping", 4, "Lõpetatud", new DateTime(2026, 9, 30), null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
         ];
         if (twin)
@@ -39,12 +41,12 @@ internal static class ReviewFixtures
                 ["EE497700771001131757", 4, new DateTime(2026, 10, 12), "EE14", "Kinnisvara OÜ", "D", -450d, null, "2026101200000003", "ruumide kasutamine oktoober", "EUR"]], false));
     }
 
-    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false)
+    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false)
     {
         var store = SqliteStore.InMemory();
         var company = store.AddCompany(registryCode, "Näidis OÜ");
         var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-        var bytes = Workbook(twin: twin, jaanCodeless: jaanCodeless);
+        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded);
         var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
         store.LinkImport(period.Id, file.Id);
         return (store, company, period, file);

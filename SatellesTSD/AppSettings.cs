@@ -17,6 +17,9 @@ public sealed class AppSettings
 
     public string? LastFolder { get; set; }
 
+    /// <summary>Where the XML files go.</summary>
+    public string? ExportFolder { get; set; }
+
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SatellesTSD", "settings.json");
 
     public static AppSettings Load(string path)

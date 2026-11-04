@@ -315,7 +315,8 @@ public sealed partial class SqliteStore : IStore
     private static partial Regex CounterKey();
 
     /// <summary>A bank row feeds one line: a second key pointing at the same row is refused (the versions of one key
-    /// share it). A dead key — one whose T was accepted — holds nothing any more: the payment's new key takes the row.</summary>
+    /// share it). A dead key — one whose T was accepted — holds nothing any more, nor does a key every version of which
+    /// was refused black (it never reached the server): the payment's new key takes the row.</summary>
     private void RequireRowFree(Guid rowId, Guid periodId, Section section, string lineNumber)
     {
         var other = Scalar<string?>(
@@ -323,9 +324,11 @@ public sealed partial class SqliteStore : IStore
             SELECT p.section || ' ' || p.line_number FROM payment p
             WHERE p.source_row_id = $row AND NOT (p.period_id = $period AND p.section = $section AND p.line_number = $line)
               AND NOT EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.action = $t AND d.status = $cancelled)
+              AND EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.status <> $rejected)
             LIMIT 1
             """,
-            ("$row", G(rowId)), ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$t", LineAction.T.ToString()), ("$cancelled", PaymentStatus.Cancelled.ToString()));
+            ("$row", G(rowId)), ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$t", LineAction.T.ToString()), ("$cancelled", PaymentStatus.Cancelled.ToString()),
+            ("$rejected", PaymentStatus.Rejected.ToString()));
         if (other is not null)
         {
             throw new InvalidOperationException($"The bank row already feeds line {other}; a row is declared once.");
@@ -355,6 +358,13 @@ public sealed partial class SqliteStore : IStore
             RequireRowFree(row, payment.PeriodId, payment.Section, payment.LineNumber);
         }
 
+        // and its hand line, the same way
+        var linkedLine = history.Select(v => v.ReviewLineId).LastOrDefault(id => id is not null);
+        if (payment.ReviewLineId is { } givenLine && linkedLine is { } hadLine && givenLine != hadLine)
+        {
+            throw new InvalidOperationException("The key already points at another hand line; every version of a key keeps its line.");
+        }
+
         ReserveSuppliedKey(period, payment.Section, payment.LineNumber); // after every refusal, so a refused line never moves the counter
         var stored = payment with
         {
@@ -364,6 +374,7 @@ public sealed partial class SqliteStore : IStore
             SubmissionId = null,
             CreatedAt = Now(),
             SourceRowId = sourceRowId,
+            ReviewLineId = payment.ReviewLineId ?? linkedLine,
         };
         InsertPayment(stored);
         tx.Commit();
@@ -425,7 +436,7 @@ public sealed partial class SqliteStore : IStore
             RequireRowFree(fresh, current.PeriodId, current.Section, current.LineNumber);
         }
 
-        var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now(), SourceRowId = sourceRowId };
+        var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now(), SourceRowId = sourceRowId, ReviewLineId = replacement.ReviewLineId ?? current.ReviewLineId };
         Exec("DELETE FROM payment WHERE id = $id", ("$id", G(paymentId)));
         InsertPayment(stored);
         tx.Commit();
@@ -454,9 +465,9 @@ public sealed partial class SqliteStore : IStore
         Exec(
             """
             INSERT INTO payment (id, period_id, person_id, section, line_number, version, action, status, type_code, payment_date, gross, net_paid, source_ref,
-                                 payee_code, payee_description, facts_json, result_json, line_json, submission_id, created_at, source_row_id)
+                                 payee_code, payee_description, facts_json, result_json, line_json, submission_id, created_at, source_row_id, review_line_id)
             VALUES ($id, $period, $person, $section, $line, $version, $action, $status, $type, $date, $gross, $net, $source,
-                    $payee, $payeeType, $facts, $result, $lineJson, NULL, $created, $sourceRow)
+                    $payee, $payeeType, $facts, $result, $lineJson, NULL, $created, $sourceRow, $reviewLine)
             """,
             ("$id", G(stored.Id)), ("$period", G(stored.PeriodId)), ("$person", stored.PersonId is { } p ? G(p) : null), ("$section", stored.Section.ToString()),
             ("$line", stored.LineNumber), ("$version", stored.Version), ("$action", stored.Action.ToString()), ("$status", stored.Status.ToString()),
@@ -464,7 +475,8 @@ public sealed partial class SqliteStore : IStore
             ("$payee", stored.Line.Payee?.Code), ("$payeeType", stored.Line.Payee?.Description),
             ("$facts", stored.Facts is null ? null : JsonSerializer.Serialize(stored.Facts, Json)),
             ("$result", stored.Result is null ? null : JsonSerializer.Serialize(stored.Result, Json)),
-            ("$lineJson", JsonSerializer.Serialize(stored.Line, Json)), ("$created", T(stored.CreatedAt)), ("$sourceRow", stored.SourceRowId is { } row ? G(row) : null));
+            ("$lineJson", JsonSerializer.Serialize(stored.Line, Json)), ("$created", T(stored.CreatedAt)), ("$sourceRow", stored.SourceRowId is { } row ? G(row) : null),
+            ("$reviewLine", stored.ReviewLineId is { } reviewLine ? G(reviewLine) : null));
 
     public IReadOnlyList<StoredPayment> Payments(Guid periodId)
     {
@@ -493,7 +505,7 @@ public sealed partial class SqliteStore : IStore
 
     private const string PaymentSelect =
         """
-        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at, source_row_id
+        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at, source_row_id, review_line_id
         FROM payment
         """;
 
@@ -504,7 +516,7 @@ public sealed partial class SqliteStore : IStore
         r.IsDBNull(8) ? null : JsonSerializer.Deserialize<PayeeTaxFacts>(r.GetString(8), Json),
         r.IsDBNull(9) ? null : JsonSerializer.Deserialize<TaxResult>(r.GetString(9), Json),
         Dec(r, 11), Str(r, 12), r.IsDBNull(13) ? null : Guid.Parse(r.GetString(13)), Time(r, 14) ?? default,
-        r.IsDBNull(15) ? null : Guid.Parse(r.GetString(15)));
+        r.IsDBNull(15) ? null : Guid.Parse(r.GetString(15)), r.IsDBNull(16) ? null : Guid.Parse(r.GetString(16)));
 
     // ---------------------------------------------------------------- submissions and feedback
 
@@ -1022,6 +1034,11 @@ public sealed partial class SqliteStore : IStore
         CREATE UNIQUE INDEX review_line_by_row ON review_line (period_id, row_id) WHERE row_id IS NOT NULL;
         CREATE INDEX review_line_by_period ON review_line (period_id);
         CREATE INDEX review_line_by_row_id ON review_line (row_id);
+        """,
+
+        // v6 — the declared lines know their hand line (no foreign key: a hand line removed later is the review's business).
+        """
+        ALTER TABLE payment ADD COLUMN review_line_id TEXT;
         """,
     ];
 

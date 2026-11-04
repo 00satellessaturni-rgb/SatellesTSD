@@ -131,6 +131,107 @@ internal static class UiText
     public const string RowsLeftOut = "rida ilma saajata jäeti kõrvale";
     public const string Problem = "Viga";
 
+    // the declaration tab
+    public const string ReviewTab = "Ülevaatus";
+    public const string DeclarationTab = "Deklaratsioon";
+    public const string BuildLines = "Koosta read";
+    public const string Export = "Ekspordi XML…";
+    public const string Withdraw = "Tühista eksport";
+    public const string MarkUploaded = "Märgi üles laaditud";
+    public const string ReadFeedback = "Loe tagasiside…";
+    public const string MarkConfirmed = "Märgi kinnitatuks";
+    public const string Reopen = "Ava parandamiseks";
+    public const string ResolveAccepted = "Kinnita rida käsitsi";
+    public const string ResolveRejected = "Lükka rida tagasi";
+    public const string Calculator = "Kalkulaator…";
+    public const string Key = "Võti";
+    public const string Action = "Toiming";
+    public const string Status = "Olek";
+    public const string Type = "Liik";
+    public const string Net = "Neto";
+    public const string Gross = "Bruto";
+    public const string SocialTax = "SM";
+    public const string MinimumIncrease = "SM suurendus";
+    public const string FundedPension = "KP";
+    public const string UnemploymentEmployee = "TK";
+    public const string UnemploymentEmployer = "TTK";
+    public const string IncomeTax = "TM";
+    public const string ExemptionUsed = "Maksuvaba";
+    public const string SourceColumn = "Allikas";
+    public const string Feedback = "Tagasiside";
+    public const string Version = "Versioon";
+    public const string File = "Fail";
+    public const string Time = "Aeg";
+    public const string UniqueId = "uniqueID";
+    public const string Result = "Tulemus";
+    public const string Minimum = "miinimum";
+    public const string ExportFolder = "Vali kaust, kuhu XML-fail salvestada";
+    public const string FeedbackFilter = "Tagasisideraport (*.xml;*.zip)|*.xml;*.zip|Kõik failid (*.*)|*.*";
+    public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Ainult faili puhul, mida e-MTA-sse ei laaditud.";
+    public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või on mustand. Märkida periood siiski kinnitatuks?";
+    public const string ReopenConfirm = "Avada periood parandamiseks? Ülevaatus muutub taas muudetavaks; järgmine eksport kannab muudatused (M) ja tühistused (T) võtmetele, mida e-MTA juba teab. e-MTA-s tuleb deklaratsioon samuti muudatusteks avada. (Kui faili ei laaditudki üles, kasuta „Tühista eksport“.)";
+    public const string ApplyReportTo = "Rakendada raport failile";
+    public const string ResolveAcceptedConfirm = "Märkida rida e-MTA-s vastu võetuks (sinu sõna, tagasisideraportita)?";
+    public const string ResolveRejectedConfirm = "Märkida rida e-MTA-s tagasi lükatuks (sinu sõna)?";
+    public const string CorrectionReasonTitle = "Paranduse põhjus";
+    public const string CorrectionReasonPrompt = "Deklaratsioon on kinnitatud; muutev fail nimetab põhjuse (PARANDUSPOHJUS).";
+    public const string ChecklistTitle = "Fail on valmis — üleslaadimine e-MTA-s";
+    public const string OpenFolder = "Ava kaust";
+    public const string ChecklistSteps =
+        "1. Logi e-MTA-sse isikuna, kellel on kliendi esindusõigus (pakett I või õigus „Väljamakseandmete esitamine“).\n" +
+        "2. Ava väljamaksete vaade ja vali SAMA maksustamisperiood, mis failil (KR_VALIDATE_XBRL_FILE_8).\n" +
+        "3. Kui deklaratsioon on juba kinnitatud, ava see e-MTA-s enne muudatusteks (muidu lükatakse fail tagasi).\n" +
+        "4. Laadi XBRL GL fail üles; e-MTA arvutab maksud ja näitab vead pärast töötlemist.\n" +
+        "5. Siin: „Märgi üles laaditud“. Kui raport on allalaaditav, „Loe tagasiside…“; muidu iga rea kohta „Kinnita rida käsitsi“ / „Lükka rida tagasi“.\n" +
+        "6. Kinnita deklaratsioon e-MTA-s tervikuna koos lisadega (selleks on vaja paketti I või õigust „TSD esitamine“), siis siin „Märgi kinnitatuks“.\n" +
+        "Tähtaeg: väljamaksekuule järgneva kuu 10. kuupäev.";
+
+    public static string ChangeText(Core.Declare.LineChange change) => change switch
+    {
+        Core.Declare.LineChange.New => "uus",
+        Core.Declare.LineChange.Replaced => "asendatud",
+        Core.Declare.LineChange.Changed => "muudatus",
+        Core.Declare.LineChange.Cancelled => "tühistus",
+        Core.Declare.LineChange.Kept => "jäi",
+        Core.Declare.LineChange.Deleted => "kustutatud",
+        _ => change.ToString(),
+    };
+    public const string CalculatorTitle = "Kalkulaator";
+    public const string AmountIsNet = "neto (väljamakstud)";
+    public const string AmountIsGross = "bruto";
+    public const string Compute = "Arvuta";
+    public const string EmployerCost = "Tööandja kulu";
+    public const string MinimumShare = "Kuu osa (päevad/30)";
+
+    public static string PaymentStatusText(PaymentStatus status) => status switch
+    {
+        Core.Store.PaymentStatus.Draft => "mustand",
+        Core.Store.PaymentStatus.Sent => "saadetud",
+        Core.Store.PaymentStatus.Accepted => "vastu võetud",
+        Core.Store.PaymentStatus.NeedsChange => "vajab parandust",
+        Core.Store.PaymentStatus.Review => "ootab otsust",
+        Core.Store.PaymentStatus.Rejected => "tagasi lükatud",
+        Core.Store.PaymentStatus.Cancelled => "tühistatud",
+        _ => status.ToString(),
+    };
+
+    public static string ActionText(LineAction action) => action switch
+    {
+        LineAction.R => "R uus",
+        LineAction.M => "M muudatus",
+        LineAction.T => "T tühistus",
+        _ => action.ToString(),
+    };
+
+    public static string ReasonText(string code) => code switch
+    {
+        "PARANDUSPOHJUS_1" => "1 — vead väljamaksete või maksude arvestamisel",
+        "PARANDUSPOHJUS_2" => "2 — maksukontrolli tulemusel",
+        "PARANDUSPOHJUS_3" => "3 — maksukohustus teises riigis (ainult töötasud)",
+        "PARANDUSPOHJUS_4" => "4 — tagasiulatuv hüvitis (ainult hüvitised)",
+        _ => code,
+    };
+
     public static string PeriodState(PeriodState state) => state switch
     {
         Core.Store.PeriodState.Draft => "Mustand",

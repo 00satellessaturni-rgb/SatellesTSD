@@ -1,3 +1,4 @@
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Infrastructure;
@@ -25,9 +26,13 @@ public sealed class AppServices : IDisposable
             _pensionikeskus = PensionikeskusClient.Create();
             Pipeline = new PeriodPipeline(Store, importer, _emta, _pensionikeskus);
             Workspace = new ReviewWorkspace(Store);
+            Declarer = new PeriodDeclarer(Store);
+            Submitter = new PeriodSubmitter(Store, Path.Combine(AppContext.BaseDirectory, "schemas", "apa-tsd"));
         }
         catch
         {
+            _emta?.Dispose();
+            _pensionikeskus?.Dispose();
             Store.Dispose();
             throw;
         }
@@ -40,6 +45,10 @@ public sealed class AppServices : IDisposable
     public PeriodPipeline Pipeline { get; }
 
     public ReviewWorkspace Workspace { get; }
+
+    public PeriodDeclarer Declarer { get; }
+
+    public PeriodSubmitter Submitter { get; }
 
     public void Dispose()
     {

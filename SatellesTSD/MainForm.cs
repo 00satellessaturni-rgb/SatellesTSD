@@ -1,4 +1,5 @@
 using System.Globalization;
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Review;
@@ -49,7 +50,10 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _addLineButton = new(UiText.AddLine);
     private readonly ToolStripButton _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripButton _newPersonButton = new(UiText.NewPerson);
+    private readonly ToolStripButton _calculatorButton = new(UiText.Calculator);
     private readonly ToolStripLabel _stateLabel = new("") { Font = new Font(Control.DefaultFont, FontStyle.Bold) };
+    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
+    private readonly DeclarationPanel _declaration = new() { Dock = DockStyle.Fill };
     private readonly DataGridView _personsGrid = Grid();
     private readonly DataGridView _paymentsGrid = Grid();
     private readonly PersonPanel _personPanel = new() { Dock = DockStyle.Fill };
@@ -72,12 +76,18 @@ public sealed class MainForm : Form
             new ToolStripLabel(UiText.Company), _companyBox, _newCompanyButton, new ToolStripSeparator(),
             new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(),
             _importButton, _filesButton, _matchButton, _lookupButton, _cancelButton, new ToolStripSeparator(),
-            _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _stateLabel,
+            _addLineButton, _removeLineButton, _newPersonButton, new ToolStripSeparator(), _calculatorButton, new ToolStripSeparator(), _stateLabel,
         ]);
 
         _grids.Panel1.Controls.Add(_personsGrid);
         _grids.Panel2.Controls.Add(_paymentsGrid);
-        _outer.Panel1.Controls.Add(_grids);
+        var reviewTab = new TabPage(UiText.ReviewTab);
+        reviewTab.Controls.Add(_grids);
+        var declarationTab = new TabPage(UiText.DeclarationTab);
+        declarationTab.Controls.Add(_declaration);
+        _tabs.TabPages.Add(reviewTab);
+        _tabs.TabPages.Add(declarationTab);
+        _outer.Panel1.Controls.Add(_tabs);
         _outer.Panel2.Controls.Add(_personPanel);
         var logPanel = new Panel { Dock = DockStyle.Bottom, Height = 150 };
         logPanel.Controls.Add(_log);
@@ -116,7 +126,233 @@ public sealed class MainForm : Form
         _personsGrid.DataError += (_, e) => { e.ThrowException = false; };
         _personPanel.SaveRequested += SavePerson;
         _personPanel.LookUpRequested += async person => await LookUpOneAsync(person);
+        _calculatorButton.Click += (_, _) => { using var dialog = new CalculatorDialog(); dialog.ShowDialog(this); };
+        _declaration.BuildRequested += async () => await BuildLinesAsync();
+        _declaration.ExportRequested += async () => await ExportAsync();
+        _declaration.WithdrawRequested += Withdraw;
+        _declaration.UploadedRequested += () => Declare(s => s.Submitter.MarkUploaded(_view!.Period.Id), UiText.MarkUploaded);
+        _declaration.FeedbackRequested += async submission => await ReadFeedbackAsync(submission);
+        _declaration.ConfirmedRequested += MarkConfirmed;
+        _declaration.ReopenRequested += () => { if (Confirm(UiText.ReopenConfirm, UiText.Reopen)) { Declare(s => s.Submitter.Reopen(_view!.Period.Id), UiText.Reopen); } };
+        _declaration.ResolveRequested += (payment, onServer) =>
+        {
+            if (Confirm(onServer ? UiText.ResolveAcceptedConfirm : UiText.ResolveRejectedConfirm, onServer ? UiText.ResolveAccepted : UiText.ResolveRejected))
+            {
+                Declare(s => s.Submitter.Resolve(payment.Id, onServer), $"{payment.LineNumber}: {(onServer ? UiText.ResolveAccepted : UiText.ResolveRejected)}");
+            }
+        };
         FormClosing += OnClosing;
+    }
+
+    // ---------------------------------------------------------------- the declaration
+
+    private void PresentDeclaration()
+    {
+        if (_services is null || _view is null)
+        {
+            _declaration.Present(null, [], []);
+            return;
+        }
+
+        try
+        {
+            _declaration.Present(_view, _services.Declarer.Lines(_view.Period.Id), _services.Store.Submissions(_view.Period.Id));
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            _declaration.Present(_view, [], []);
+        }
+    }
+
+    private bool Confirm(string question, string title) =>
+        MessageBox.Show(this, question, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
+
+    /// <summary>A short store action on the declaration side, logged under its name, the view reloaded.</summary>
+    private void Declare(Action<AppServices> action, string name)
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        try
+        {
+            action(_services);
+            Log(name);
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+
+        ReloadView();
+    }
+
+    private async Task BuildLinesAsync()
+    {
+        if (_services is null || _view is null || !Editable)
+        {
+            return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel();
+        }
+
+        var services = _services;
+        var periodId = _view.Period.Id;
+        await RunBusyAsync(async () =>
+        {
+            var report = await Task.Run(() => services.Declarer.Build(periodId));
+            Log($"{UiText.BuildLines}: {report.Count(LineChange.New)} uut, {report.Count(LineChange.Replaced)} asendatud, {report.Count(LineChange.Changed)} muudatust (M), {report.Count(LineChange.Cancelled)} tühistust (T), {report.Count(LineChange.Kept)} jäi, {report.Count(LineChange.Deleted)} kustutatud");
+            foreach (var person in report.Persons)
+            {
+                if (person.Lines.Count > 0 || person.Problems.Count > 0)
+                {
+                    var month = person.MinimumDue > 0 ? $"; SM miinimum {UiText.Money(person.MinimumDue)} (osa {person.MinimumShare:0.##}), puudujääk {UiText.Money(person.MinimumShortfall)}" : "";
+                    Log($"   {person.Name}: maksuvaba {UiText.Money(person.ExemptionOffered)} → üle {UiText.Money(person.ExemptionLeft)}{month}");
+                }
+
+                foreach (var line in person.Lines)
+                {
+                    Log($"      {line.Key} {UiText.ActionText(line.Action)} {UiText.ChangeText(line.Change)} — {line.Source}{(line.Note is null ? "" : $" ({line.Note})")}");
+                }
+
+                foreach (var problem in person.Problems)
+                {
+                    Log("      " + problem);
+                }
+            }
+
+            foreach (var problem in report.Problems)
+            {
+                Log("   " + problem);
+            }
+        });
+        ReloadView();
+    }
+
+    private async Task ExportAsync()
+    {
+        if (_services is null || _view is null)
+        {
+            return;
+        }
+
+        using var folders = new FolderBrowserDialog { Description = UiText.ExportFolder, UseDescriptionForTitle = true, SelectedPath = _settings.ExportFolder ?? "" };
+        if (folders.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        _settings.ExportFolder = folders.SelectedPath;
+        SaveSettings();
+        string? reason = null;
+        if (_services.Submitter.NeedsCorrectionReason(_view.Period.Id))
+        {
+            using var dialog = new CorrectionReasonDialog();
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            reason = dialog.Reason;
+        }
+
+        var services = _services;
+        var periodId = _view.Period.Id;
+        var folder = folders.SelectedPath;
+        ExportResult? result = null;
+        await RunBusyAsync(async () =>
+        {
+            result = await Task.Run(() => services.Submitter.Export(periodId, folder, reason));
+            Log($"{UiText.Export}: {result.Path} ({result.Lines} rida, uniqueID {result.Submission.UniqueId})");
+        });
+        ReloadView();
+        if (result is not null)
+        {
+            using var checklist = new ChecklistDialog(result);
+            checklist.ShowDialog(this);
+        }
+    }
+
+    private void Withdraw(Submission submission)
+    {
+        if (Confirm(UiText.WithdrawConfirm, UiText.Withdraw))
+        {
+            Declare(s => s.Submitter.Withdraw(submission.Id), $"{UiText.Withdraw}: {submission.FileName}");
+        }
+    }
+
+    private void MarkConfirmed()
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        try
+        {
+            _services.Submitter.MarkConfirmed(_view.Period.Id);
+            Log(UiText.MarkConfirmed);
+        }
+        catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
+        {
+            if (MessageBox.Show(this, e.Message + Environment.NewLine + Environment.NewLine + UiText.ConfirmForce, UiText.MarkConfirmed, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                try
+                {
+                    _services.Submitter.MarkConfirmed(_view.Period.Id, force: true);
+                    Log(UiText.MarkConfirmed);
+                }
+                catch (Exception inner)
+                {
+                    Fail(inner);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+
+        ReloadView();
+    }
+
+    private async Task ReadFeedbackAsync(Submission submission)
+    {
+        if (_services is null || _view is null)
+        {
+            return;
+        }
+
+        // a report carries no uniqueID: the accountant names the file it answers
+        if (!Confirm($"{UiText.ApplyReportTo} {submission.FileName} ({submission.CreatedAt.ToLocalTime():dd.MM.yyyy HH:mm})?", UiText.ReadFeedback))
+        {
+            return;
+        }
+
+        using var dialog = new OpenFileDialog { Filter = UiText.FeedbackFilter, InitialDirectory = _settings.ExportFolder ?? "" };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var services = _services;
+        var path = dialog.FileName;
+        await RunBusyAsync(async () =>
+        {
+            var outcomes = await Task.Run(() => services.Submitter.ReadFeedback(submission.Id, path));
+            foreach (var outcome in outcomes)
+            {
+                Log(outcome.Confirmation is { } confirmation
+                    ? $"{UiText.ReadFeedback} {outcome.Source}: kinnitamise raport — {confirmation}"
+                    : $"{UiText.ReadFeedback} {outcome.Source}: {outcome.Recorded} rida; {string.Join(", ", outcome.Statuses.Select(kv => $"{UiText.PaymentStatusText(kv.Key)} {kv.Value}"))}");
+            }
+        });
+        ReloadView();
     }
 
     private bool Editable => _view?.Editable == true;
@@ -360,6 +596,7 @@ public sealed class MainForm : Form
         }
 
         FillPersons(keepPerson, keepUnmatched);
+        PresentDeclaration();
         UpdateState();
         SelectPayment(keepPayment);
     }
@@ -656,7 +893,7 @@ public sealed class MainForm : Form
         var editable = _view?.Editable ?? hasCompany;
         _stateLabel.Text = _view is null
             ? hasCompany ? UiText.NoPeriodYet : ""
-            : $"{UiText.PeriodState(_view.Period.State)} — {(_view.Editable ? UiText.Editable : UiText.Locked)}";
+            : $"{UiText.PeriodState(_view.Period.State)} — {(_view.Editable ? UiText.Editable : UiText.Locked)}{StateDates(_view.Period)}";
         _importButton.Enabled = !_busy && hasCompany && editable;
         _filesButton.Enabled = !_busy && _view is not null;
         _matchButton.Enabled = !_busy && Editable;
@@ -672,6 +909,8 @@ public sealed class MainForm : Form
         _paymentsGrid.ReadOnly = _busy || !Editable;
         _removeLineButton.Enabled = !_busy && Editable && SelectedPayment is { IsByHand: true };
         _personPanel.Enabled = !_busy;
+        _declaration.Enabled = !_busy;
+        _calculatorButton.Enabled = !_busy;
         UseWaitCursor = _busy;
     }
 
@@ -1002,6 +1241,17 @@ public sealed class MainForm : Form
         SortMode = DataGridViewColumnSortMode.NotSortable,
         DefaultCellStyle = { Alignment = right ? DataGridViewContentAlignment.MiddleRight : DataGridViewContentAlignment.MiddleLeft },
     };
+
+    /// <summary>The dates the state has come through (the store never clears a stamp, so a Draft shows none and an
+    /// Exported period its export only).</summary>
+    private static string StateDates(Period period)
+    {
+        var parts = new List<string>();
+        if (period.ExportedAt is { } e && period.State >= PeriodState.Exported) { parts.Add($"{UiText.PeriodState(PeriodState.Exported)} {e.ToLocalTime():dd.MM.yyyy HH:mm}"); }
+        if (period.UploadedAt is { } u && period.State >= PeriodState.Uploaded) { parts.Add($"{UiText.PeriodState(PeriodState.Uploaded)} {u.ToLocalTime():dd.MM.yyyy HH:mm}"); }
+        if (period.ConfirmedAt is { } c && period.State == PeriodState.Confirmed) { parts.Add($"{UiText.PeriodState(PeriodState.Confirmed)} {c.ToLocalTime():dd.MM.yyyy HH:mm}"); }
+        return parts.Count == 0 ? "" : " (" + string.Join(", ", parts) + ")";
+    }
 
     private static string ExemptionText(Person? person) =>
         person is null ? "" : !person.BasicExemptionApplied ? UiText.No : person.BasicExemptionMonthly is { } amount ? UiText.Money(amount) : UiText.Yes;

@@ -17,11 +17,13 @@ public class LookupStoreTests
         var control = new DateOnly(2026, 10, 31);
 
         var first = store.AddLookup(new LookupRecord(Guid.Empty, person.Id, LookupKind.Residency, LookupSource.Emta, default, control, null, "request timeout or access denied: HTTP 503", null, null));
-        var second = store.AddLookup(new LookupRecord(Guid.Empty, person.Id, LookupKind.Residency, LookupSource.Emta, new DateTime(2026, 11, 4, 9, 30, 0, DateTimeKind.Utc), control, """{"AsOf":"2026-11-04"}""", null, "Otsingutulemustele vastavaid isikuid ei leitud.", " ", " 48712219406 "));
+        // the second answer's time lies ahead of any clock this test runs under, so it sorts after the first
+        var later = new DateTime(2099, 1, 1, 9, 30, 0, DateTimeKind.Utc);
+        var second = store.AddLookup(new LookupRecord(Guid.Empty, person.Id, LookupKind.Residency, LookupSource.Emta, later, control, """{"AsOf":"2026-11-04"}""", null, "Otsingutulemustele vastavaid isikuid ei leitud.", " ", " 48712219406 "));
 
         Assert.NotEqual(Guid.Empty, first.Id);
         Assert.NotEqual(default, first.CheckedAt);
-        Assert.Equal(new DateTime(2026, 11, 4, 9, 30, 0, DateTimeKind.Utc), second.CheckedAt);
+        Assert.Equal(later, second.CheckedAt);
         Assert.Null(second.Note); // blank text is no text
         Assert.Equal("48712219406", second.PersonalCode); // the code as asked, trimmed
         Assert.Null(first.PersonalCode);
