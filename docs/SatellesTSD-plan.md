@@ -419,7 +419,7 @@ The owner's word after S10: "versions and update from network path S:\2. DOKUMEN
 67. Versions compare as numbers (System.Version); the running version is the csproj's, in the title; the exe's identity is its version resource.
 68. Before this build's schema upgrades an older file store, a copy of the store is left beside it (`<store>.before-v<N>`, made afresh at every upgrade to that version, written whole or not at all), so that an older program put back after a failed update can still open its data: such a program, finding the store upgraded past its build, offers to put the copy back and sets the upgraded file aside (`<store>.newer-v<N>`); the copies are the owner's to delete.
 
-### S12 — what landed (2026-11-04, 585 + 5 tests green, not yet committed)
+### S12 — what landed (2026-11-04, 585 + 5 tests green, committed `db085f9`)
 
 The owner's word after S11: importing files should not need a company chosen first — when the files hold a TÖR export naming the employer (name and registry code) and the month is chosen (the previous month offered), the company is found in the store or created, shown, and the files imported.
 

@@ -17,7 +17,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- the release version: shown in the window title, named in the release folder by tools\Publish-Release.ps1 -->
-    <Version>0.10.0</Version>
+    <Version>0.11.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
