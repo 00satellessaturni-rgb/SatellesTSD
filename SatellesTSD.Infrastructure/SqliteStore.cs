@@ -129,11 +129,11 @@ public sealed partial class SqliteStore : IStore
             INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                                 funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                                 exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-                                residency_source, pension_source)
+                                residency_source, pension_source, register_key)
             VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
                     $member, $rate, $pchecked, $onpension, $pensionyear,
                     $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes,
-                    $rsource, $psource)
+                    $rsource, $psource, $rkey)
             """,
             PersonParameters(stored));
         tx.Commit();
@@ -151,7 +151,7 @@ public sealed partial class SqliteStore : IStore
                 funded_pension_member = $member, pension_rate = $rate, pension_checked_on = $pchecked, on_pension = $onpension, pension_age_year = $pensionyear,
                 exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
                 a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes,
-                residency_source = $rsource, pension_source = $psource
+                residency_source = $rsource, pension_source = $psource, register_key = $rkey
             WHERE id = $id
             """,
             PersonParameters(Normalize(person)));
@@ -181,6 +181,7 @@ public sealed partial class SqliteStore : IStore
         WorkCountry = Clean(p.WorkCountry),
         TorEmploymentTypeId = Clean(p.TorEmploymentTypeId),
         Notes = Clean(p.Notes),
+        RegisterKey = Clean(p.RegisterKey),
     };
 
     private const string PersonSelect =
@@ -188,7 +189,7 @@ public sealed partial class SqliteStore : IStore
         SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-               residency_source, pension_source
+               residency_source, pension_source, register_key
         FROM person
         """;
 
@@ -200,7 +201,7 @@ public sealed partial class SqliteStore : IStore
         ("$onpension", p.OnOldAgeOrFlexiblePension ? 1 : 0), ("$pensionyear", p.PensionAgeYear),
         ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
         ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
-        ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()),
+        ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()), ("$rkey", p.RegisterKey),
     ];
 
     private static Person ReadPerson(SqliteDataReader r) => new(
@@ -208,7 +209,7 @@ public sealed partial class SqliteStore : IStore
         Enum.Parse<Residency>(r.GetString(6)), Str(r, 7), Date(r, 8),
         r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
         r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22),
-        Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)));
+        Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)), Str(r, 25));
 
     // ---------------------------------------------------------------- periods
 
@@ -994,6 +995,33 @@ public sealed partial class SqliteStore : IStore
             page TEXT,
             note TEXT);
         CREATE INDEX lookup_by_person ON lookup (person_id, kind, control_date);
+        """,
+
+        // v5 — the review: the register key a person was created from or bound to (a code or a name corrected by hand
+        // never splits the person from their register row); the accountant's decisions about a period's payments, an
+        // overlay per statement row (so a re-run over the same files keeps them; "nobody" and "no category" said
+        // apart from "as the run has it") and the lines added by hand with their own figures.
+        """
+        ALTER TABLE person ADD COLUMN register_key TEXT;
+        CREATE TABLE review_line (
+            id TEXT PRIMARY KEY,
+            period_id TEXT NOT NULL REFERENCES period(id),
+            row_id TEXT REFERENCES statement_row(id),
+            person_id TEXT REFERENCES person(id),
+            no_person INTEGER NOT NULL DEFAULT 0,
+            category TEXT,
+            no_category INTEGER NOT NULL DEFAULT 0,
+            type_code TEXT,
+            declare INTEGER,
+            note TEXT,
+            date TEXT,
+            amount TEXT,
+            payee TEXT,
+            description TEXT,
+            updated_at TEXT NOT NULL);
+        CREATE UNIQUE INDEX review_line_by_row ON review_line (period_id, row_id) WHERE row_id IS NOT NULL;
+        CREATE INDEX review_line_by_period ON review_line (period_id);
+        CREATE INDEX review_line_by_row_id ON review_line (row_id);
         """,
     ];
 

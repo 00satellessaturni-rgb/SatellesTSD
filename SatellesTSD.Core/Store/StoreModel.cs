@@ -16,6 +16,8 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <param name="TorEmploymentTypeId">The TÖR töötamise liigi ID (1, 600, 601, 507, 602, 501) when the person is in the register.</param>
 /// <param name="ResidencySource">Where the residency came from: a lookup, or the accountant's hand (which a later lookup never overwrites).</param>
 /// <param name="PensionSource">Where the funded-pension facts came from, likewise.</param>
+/// <param name="RegisterKey">The register key (the personal code as the register wrote it, else the names) the person was
+/// created from or bound to, so a code or a name corrected by hand never splits the person from their register row.</param>
 public sealed record Person(
     Guid Id,
     Guid CompanyId,
@@ -41,7 +43,8 @@ public sealed record Person(
     string? TorEmploymentTypeId,
     string? Notes,
     LookupSource ResidencySource = LookupSource.Unknown,
-    LookupSource PensionSource = LookupSource.Unknown)
+    LookupSource PensionSource = LookupSource.Unknown,
+    string? RegisterKey = null)
 {
     public static Person New(Guid companyId, string firstName, string lastName, string? personalCode, Residency residency = Residency.Resident) =>
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,

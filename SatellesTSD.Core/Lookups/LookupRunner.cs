@@ -63,7 +63,8 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
     /// <summary>Runs the lookups for every person of the period's match run; without a run, for every person of the
     /// company. A register person without a store row gets one, named as the register names them.</summary>
-    public async Task<LookupRunReport> RunAsync(Guid periodId, CancellationToken cancellationToken = default)
+    /// <param name="progress">Told each person's outcome as it comes, for a window that shows the run going.</param>
+    public async Task<LookupRunReport> RunAsync(Guid periodId, CancellationToken cancellationToken = default, IProgress<PersonLookupOutcome>? progress = null)
     {
         var period = _store.Companies().SelectMany(c => _store.Periods(c.Id)).FirstOrDefault(p => p.Id == periodId)
             ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
@@ -74,7 +75,9 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         foreach (var person in persons)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            outcomes.Add(await LookUpAsync(person, controlDate, cancellationToken).ConfigureAwait(false));
+            var outcome = await LookUpAsync(person, controlDate, cancellationToken).ConfigureAwait(false);
+            outcomes.Add(outcome);
+            progress?.Report(outcome);
         }
 
         return new LookupRunReport(controlDate, outcomes, problems);
@@ -257,21 +260,13 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
         foreach (var matchPerson in run.Persons)
         {
-            var code = matchPerson.Person.PersonalCode;
-            if (code is null)
+            if (matchPerson.Person.PersonalCode is null)
             {
                 problems.Add($"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register; nothing to ask.");
                 continue;
             }
 
-            var person = _store.FindPerson(period.CompanyId, code);
-            if (person is null)
-            {
-                var entry = matchPerson.Entry;
-                person = _store.AddPerson(Person.New(period.CompanyId, entry.FirstName.Trim(), entry.LastName.Trim(), code) with { TorEmploymentTypeId = entry.TypeId });
-            }
-
-            persons.Add(person);
+            persons.Add(Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson));
         }
 
         return persons;

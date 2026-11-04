@@ -171,6 +171,13 @@ public sealed partial class SqliteStore
             throw new InvalidOperationException("The period's match run took this file; clear the run (or run again without the file) first.");
         }
 
+        // the period's decisions about this file's rows go with the link: they were about rows the period no longer reads
+        Exec(
+            """
+            DELETE FROM review_line WHERE period_id = $period AND row_id IN (
+                SELECT r.id FROM statement_row r JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file)
+            """,
+            ("$period", G(periodId)), ("$file", G(fileId)));
         Exec("DELETE FROM period_import WHERE period_id = $period AND file_id = $file", ("$period", G(periodId)), ("$file", G(fileId)));
         tx.Commit();
     }
@@ -206,6 +213,12 @@ public sealed partial class SqliteStore
         if (runs > 0)
         {
             throw new InvalidOperationException($"{runs} match run(s) took this file; clear them (or run again without the file) first.");
+        }
+
+        var decisions = DecisionsOn(fileId);
+        if (decisions > 0)
+        {
+            throw new InvalidOperationException($"{decisions} review decision(s) point at this file's rows; unlink the file from its periods first.");
         }
 
         Exec("DELETE FROM period_import WHERE file_id = $file", ("$file", G(fileId)));
