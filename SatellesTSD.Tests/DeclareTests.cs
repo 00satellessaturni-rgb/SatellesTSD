@@ -974,6 +974,83 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_non_resident_without_the_country_of_residence_is_declared_and_the_build_notes_it()
+    {
+        using var box = Ready();
+        box.Workspace.SavePerson(box.Mari with { Residency = Residency.NonResident, ResidenceCountry = null }, confirmResidency: true);
+        Assert.Empty(box.Salary.Checks); // the country is no refusal
+
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoResidenceCountry, StringComparison.Ordinal));
+        Assert.Single(box.Lines);
+
+        box.Workspace.SavePerson(box.Mari with { ResidenceCountry = "LV" });
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoResidenceCountry, StringComparison.Ordinal));
+        Assert.Single(box.Lines); // the draft built again in place
+    }
+
+    [Fact]
+    public void Income_the_month_does_not_declare_is_listed_on_the_person_with_why_and_whether_it_was_chosen()
+    {
+        using var box = Ready();
+        ReviewPerson Person(int i) => box.Workspace.Load(box.Period.Id).Persons[i];
+        Assert.Empty(Person(0).Undeclared); // Mari's salary is declared
+        Assert.Empty(Person(1).Undeclared); // Jaan's payment is of another month: not this month's income
+
+        // ticked by the accountant all the same: the build refuses it, and the person says so
+        box.Workspace.SetDeclare(Person(1).Payments.Single(), true);
+        var refused = Assert.Single(Person(1).Undeclared);
+        Assert.Equal((Undeclared.Refused, false), (refused.Reason, refused.ByChoice));
+        Assert.Contains(ReviewChecks.NotInPeriod, refused.Codes);
+
+        // unticked, or the person left out on the card: the accountant's own choice
+        box.Workspace.SetDeclare(box.Salary, false);
+        var unticked = Assert.Single(Person(0).Undeclared);
+        Assert.Equal((Undeclared.Unticked, true, box.Salary.Amount), (unticked.Reason, unticked.ByChoice, unticked.Payment.Amount));
+        box.Workspace.SetDeclare(box.Salary, null);
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Exclude });
+        Assert.Equal((Undeclared.Excluded, true), (Person(0).Undeclared.Single().Reason, Person(0).Undeclared.Single().ByChoice));
+
+        // the residency not checked: declared by default, refused, not chosen
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Auto });
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Unknown, ResidencyCheckedOn = null });
+        var notChecked = Assert.Single(Person(0).Undeclared);
+        Assert.False(notChecked.ByChoice);
+        Assert.Contains(ReviewChecks.ResidencyNotChecked, notChecked.Codes);
+    }
+
+    [Fact]
+    public void Under_the_totals_cut_a_refused_payment_holds_its_types_other_payments_and_the_person_lists_them()
+    {
+        using var box = Ready();
+        // a salary of November added by hand and ticked: refused (another month), of the salary's own type 10
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 11, 2), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Workspace.SetDeclare(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), true);
+
+        // payment by payment the bank salary goes on its own
+        Assert.Equal([Undeclared.Refused], box.Workspace.Load(box.Period.Id).Persons[0].Undeclared.Select(u => u.Reason));
+
+        // the totals cut holds the type: the bank salary is listed as held, and the build declares nothing of type 10
+        box.Workspace.TotalsPerType = true;
+        var undeclared = box.Workspace.Load(box.Period.Id).Persons[0].Undeclared;
+        var held = Assert.Single(undeclared, u => u.Reason == Undeclared.Held);
+        Assert.Equal((box.Salary.RowId, false, Undeclared.TypeHeld), (held.Payment.RowId, held.ByChoice, Assert.Single(held.Codes)));
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Empty(box.Lines);
+    }
+
+    [Fact]
+    public void A_non_resident_added_by_hand_counts_as_checked()
+    {
+        using var box = Ready();
+        var added = box.Workspace.AddPerson(box.Company.Id, "Anna", "Kask", null, null, Residency.NonResident);
+        Assert.Equal((LookupSource.Manual, (DateOnly?)new DateOnly(2026, 11, 4)), (added.ResidencySource, added.ResidencyCheckedOn));
+        var resident = box.Workspace.AddPerson(box.Company.Id, "Peeter", "Kask", "50001010006", null);
+        Assert.Equal((LookupSource.Unknown, (DateOnly?)null), (resident.ResidencySource, resident.ResidencyCheckedOn)); // a resident is asked of EMTA
+    }
+
+    [Fact]
     public void A_v8_store_upgrades_to_v9_and_a_persons_facts_have_no_control_date_until_the_registers_are_asked()
     {
         var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");

@@ -42,8 +42,11 @@ internal static class UiText
     public const string CheckedOn = "Kontrollitud";
     public const string EmploymentType = "Töötamise liik";
     public const string EntryState = "Kande olek";
+    public const string EmploymentStart = Core.Report.ReportText.EmploymentStart;
     public const string EmploymentEnd = "Töötamise lõpu aeg";
     public const string PauseStart = "Peatamise algus";
+    public const string PauseEnd = "Peatamise lõpu aeg";
+    public const string Undeclared = "Deklareerimata";
     public const string Problems = "Probleemid";
     public const string UnmatchedRow = "— leidmata read —";
 
@@ -119,6 +122,24 @@ internal static class UiText
     public static string PauseTip(string? reason, DateOnly? end) => string.Join(Environment.NewLine,
         new[] { reason is null ? null : "Peatamise alus: " + reason, end is null ? null : "Peatamise lõpu aeg: " + Day(end) }.Where(t => t is not null));
 
+    /// <summary>The "Deklareerimata" cell's tooltip: each payment the month does not declare, and why.</summary>
+    public static string? UndeclaredTip(IReadOnlyList<Core.Review.Undeclared> undeclared) => undeclared.Count == 0 ? null :
+        "Deklareerimata tulu:" + Environment.NewLine + string.Join(Environment.NewLine, undeclared.Select(u =>
+            $"{(u.Payment.Date is { } day ? Day(day) : u.Payment.DateText)} {u.Payment.Payee}  {AmountOf(u.Payment)} — {UndeclaredReason(u)}"));
+
+    /// <summary>The amount as the statement gave it: its text when none was read, the currency beside a foreign one.</summary>
+    private static string AmountOf(Core.Review.ReviewPayment p) =>
+        p.AmountText is { } text ? (text.Length > 0 ? text : "?") : Money(p.Amount) + (Core.Review.ReviewChecks.IsEuro(p.Currency) ? "" : " " + p.Currency);
+
+    public static string UndeclaredReason(Core.Review.Undeclared u) => u.Reason switch
+    {
+        Core.Review.Undeclared.Excluded => "isik on deklaratsioonist välja jäetud",
+        Core.Review.Undeclared.Unticked => "märge \"Deklareeri\" on maha võetud",
+        Core.Review.Undeclared.Refused => "rida ei saa koostada: " + string.Join(", ", u.Codes),
+        Core.Review.Undeclared.Held => "liigi kokkuvõte ootab sama liigi keeldutud makset",
+        _ => "ei lähe deklaratsiooni: " + string.Join(", ", u.Codes),
+    };
+
     public const string A1 = "A1 tõend";
     public const string A1None = "puudub";
     public const string A1Estonian = "Eesti A1, töö välismaal";
@@ -155,6 +176,10 @@ internal static class UiText
     public const string UnlinkConfirm = "Eemaldada fail perioodi failide hulgast? Selle faili ridade otsused kustuvad.";
     public const string UnlinkClearsRun = "Perioodi otsingu tulemus kasutab seda faili. Otsingu tulemus kustutatakse ja fail eemaldatakse. Jätkata?";
     public const string RemoveLineConfirm = "Eemaldada käsitsi lisatud rida?";
+    public static string LookupProgress(int done, int total) => $"Päringud: {done} / {total}";
+
+    public static string LookupOne(string name) => $"Päring: {name}";
+
     public const string LookupsLive = "Päringud lähevad EMTA ja Pensionikeskuse avalikele lehtedele, üks isik korraga. Jätkata?";
     public const string UnsavedPerson = "Isiku andmetes on salvestamata muudatused. Salvestada need?";
     public const string BusyClosing = "Töö käib. Oota, kuni see lõpeb, või katkesta see enne sulgemist.";

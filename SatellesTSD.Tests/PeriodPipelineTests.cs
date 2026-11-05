@@ -132,10 +132,13 @@ public class PeriodPipelineTests
             pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook());
             pipeline.RunMatch(period.Id);
 
-            var progress = new Collected<PersonLookupOutcome>();
+            var progress = new Collected<LookupProgress>();
             var report = await pipeline.RunLookupsAsync(period.Id, progress);
             Assert.Equal(2, report.Persons.Count);
-            Assert.Equal(report.Persons, progress.Items);
+            Assert.Equal(new LookupProgress(0, 2, null), progress.Items[0]); // how many are asked, before the first
+            Assert.Equal(report.Persons, progress.Items.Skip(1).Select(p => p.Outcome));
+            Assert.Equal([1, 2], progress.Items.Skip(1).Select(p => p.Done));
+            Assert.All(progress.Items, p => Assert.Equal(2, p.Total));
             Assert.Equal(2, report.Queries + report.Persons.Count(p => p.Steps.Contains("pension not asked: a non-resident")) - report.Persons.Count); // residency asked for both, the pension for both residents
             var mari = store.FindPerson(period.CompanyId, ReviewFixtures.MariCode)!;
             Assert.Equal((Residency.Resident, LookupSource.Emta, false, LookupSource.Pensionikeskus), (mari.Residency, mari.ResidencySource, mari.FundedPensionMember, mari.PensionSource));

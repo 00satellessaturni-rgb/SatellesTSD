@@ -14,7 +14,6 @@ public static class PaymentChecks
     public const string NegativeAmount = "NEGATIVE_AMOUNT";
     public const string ZeroNotAllowed = "ZERO_NOT_ALLOWED";
     public const string TypePayeeMismatch = "TYPE_PAYEE_MISMATCH";
-    public const string ResidenceCountryMissing = "RESIDENCE_COUNTRY_MISSING";
     public const string A1CountriesMissing = "A1_COUNTRIES_MISSING";
     public const string PensionNotChecked = "PENSION_NOT_CHECKED";
     public const string PensionRateUnknown = "PENSION_RATE_UNKNOWN";
@@ -45,10 +44,8 @@ public static class PaymentChecks
             refusals.Add(new Refusal(TypePayeeMismatch, $"Payment type {type.Code} is for a {type.Payee} payee; this payee is a {facts.Residency}."));
         }
 
-        if (facts.Residency == Residency.NonResident && string.IsNullOrWhiteSpace(facts.ResidenceCountry))
-        {
-            refusals.Add(new Refusal(ResidenceCountryMissing, "A non-resident payee needs a residence country (RR_MAKSURESIDENTSUSE_RIIK)."));
-        }
+        // a non-resident without the residence country is declared: the country is expected by MTA, not required by the
+        // schema; the build notes it (PeriodDeclarer.NoResidenceCountry) and MTA's register check (KR_ISIK_6) is the net
 
         var a1 = type.EffectiveA1(facts.A1);
         if (a1 != A1Case.None && (string.IsNullOrWhiteSpace(facts.A1Country) || string.IsNullOrWhiteSpace(facts.WorkCountry)))

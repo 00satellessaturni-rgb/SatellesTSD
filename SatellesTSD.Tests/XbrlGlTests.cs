@@ -278,14 +278,18 @@ public class XbrlGlTests
     }
 
     [Fact]
-    public void The_factory_refuses_a_non_resident_without_a_residence_country()
+    public void A_non_resident_without_a_residence_country_has_a_line_without_the_country_entry()
     {
         var type = PaymentTypes.Get("120");
         var facts = new PayeeTaxFacts(Residency.NonResident);
         var result = new TaxEngine(TaxRates.Year2026).Calculate(new TaxInput(type, 1000m, false, 0m), facts);
 
-        Assert.Throws<InvalidOperationException>(() => DeclarationLineFactory.Create("L1", 1, LineAction.R, type, facts,
-            PayeeId.Mrr("A0003689779"), new DateOnly(2026, 10, 10), result));
+        var line = DeclarationLineFactory.Create("L1", 1, LineAction.R, type, facts, PayeeId.Mrr("A0003689779"), new DateOnly(2026, 10, 10), result);
+
+        Assert.DoesNotContain(line.ExtraAccountSubs, e => e.ParentCode == AccountSubEntry.RoleTaxResidence); // optional in the schema; MTA checks it (KR_ISIK_6)
+
+        var withCountry = DeclarationLineFactory.Create("L1", 1, LineAction.R, type, facts with { ResidenceCountry = " LV " }, PayeeId.Mrr("A0003689779"), new DateOnly(2026, 10, 10), result);
+        Assert.Contains(withCountry.ExtraAccountSubs, e => e.ParentCode == AccountSubEntry.RoleTaxResidence && e.Id == "LV");
     }
 
     [Fact]

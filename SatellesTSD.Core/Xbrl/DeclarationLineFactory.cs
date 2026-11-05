@@ -33,11 +33,6 @@ public static class DeclarationLineFactory
             throw new ArgumentException("A cancellation carries no payment data; use PaymentLine.Cancellation.", nameof(action));
         }
 
-        if (facts.Residency == Residency.NonResident && string.IsNullOrWhiteSpace(facts.ResidenceCountry))
-        {
-            throw new InvalidOperationException("A non-resident payee needs a residence country (RR_MAKSURESIDENTSUSE_RIIK).");
-        }
-
         if (result.EffectiveA1 != A1Case.None && (string.IsNullOrWhiteSpace(facts.A1Country) || string.IsNullOrWhiteSpace(facts.WorkCountry)))
         {
             throw new InvalidOperationException("An A1 case needs both the A1 country and the work country.");
@@ -56,9 +51,10 @@ public static class DeclarationLineFactory
             extras.Add(AccountSubEntry.WorkCountry(facts.WorkCountry!));
         }
 
-        if (facts.Residency == Residency.NonResident)
+        if (facts.Residency == Residency.NonResident && !string.IsNullOrWhiteSpace(facts.ResidenceCountry))
         {
-            extras.Add(AccountSubEntry.ResidenceCountry(facts.ResidenceCountry!));
+            // the country when known; without it the line goes out without RR_MAKSURESIDENTSUSE_RIIK (optional in the schema)
+            extras.Add(AccountSubEntry.ResidenceCountry(facts.ResidenceCountry.Trim()));
         }
 
         var amounts = new List<MeasurableAmount>();

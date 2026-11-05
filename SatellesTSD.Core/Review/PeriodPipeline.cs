@@ -195,7 +195,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
     /// <summary>The lookups for the period's persons, reported one by one as they finish. Only for a Draft: a locked month's
     /// lookups would write its control date's answer over the facts every other month is built with.</summary>
-    public Task<LookupRunReport> RunLookupsAsync(Guid periodId, IProgress<PersonLookupOutcome>? progress = null, CancellationToken cancellationToken = default)
+    public Task<LookupRunReport> RunLookupsAsync(Guid periodId, IProgress<LookupProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         RequireDraft(FindPeriod(periodId), LookupsLocked);
         return Runner().RunAsync(periodId, cancellationToken, progress);

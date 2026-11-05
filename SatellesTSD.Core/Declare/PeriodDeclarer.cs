@@ -30,6 +30,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string Excluded = "EXCLUDED";
     public const string Included = "INCLUDED";
     public const string FactsOfAnotherMonth = "FACTS_OF_ANOTHER_MONTH";
+    public const string NoResidenceCountry = "NO_RESIDENCE_COUNTRY";
 
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
@@ -424,6 +425,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             // a note, not a refusal: the facts stand as the registers said them for that day; this month may say otherwise
             problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.");
+        }
+
+        if (facts.Residency == Residency.NonResident && string.IsNullOrWhiteSpace(facts.ResidenceCountry))
+        {
+            // a note, not a refusal: the schema lets the line go without the country, MTA expects it and checks it
+            problems.Add($"{NoResidenceCountry}: a non-resident declared without the country of tax residence (RR_MAKSURESIDENTSUSE_RIIK); MTA compares it with its register (KR_ISIK_6, red) — enter it on the person card when known.");
         }
 
         if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)

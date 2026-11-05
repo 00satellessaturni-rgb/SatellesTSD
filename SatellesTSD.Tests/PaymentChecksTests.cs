@@ -15,7 +15,6 @@ public class PaymentChecksTests
         yield return Case(PaymentChecks.NegativeAmount, Salary, PayeeTaxFacts.ResidentEmployee(), -1m);
         yield return Case(PaymentChecks.ZeroNotAllowed, PaymentTypes.Get("21"), PayeeTaxFacts.ResidentEmployee(), 0m);
         yield return Case(PaymentChecks.TypePayeeMismatch, PaymentTypes.Get("120"), PayeeTaxFacts.ResidentEmployee(), 100m);
-        yield return Case(PaymentChecks.ResidenceCountryMissing, PaymentTypes.Get("120"), new PayeeTaxFacts(Residency.NonResident), 100m);
         yield return Case(PaymentChecks.A1CountriesMissing, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.EstonianA1WorkAbroad }, 100m);
         yield return Case(PaymentChecks.PensionNotChecked, Salary, new PayeeTaxFacts(Residency.Resident), 100m);
         yield return Case(PaymentChecks.PensionRateUnknown, Salary, new PayeeTaxFacts(Residency.Resident, FundedPensionMember: true), 100m);
@@ -43,13 +42,21 @@ public class PaymentChecksTests
             var type = (PaymentType)caseData[1];
             var facts = (PayeeTaxFacts)caseData[2];
             var amount = (decimal)caseData[3];
-            if (code is PaymentChecks.ZeroNotAllowed or PaymentChecks.ResidenceCountryMissing or PaymentChecks.A1CountriesMissing or PaymentChecks.MinimumShareInvalid)
+            if (code is PaymentChecks.ZeroNotAllowed or PaymentChecks.A1CountriesMissing or PaymentChecks.MinimumShareInvalid)
             {
                 continue; // refused by the line factory, the zero-line helper or the allocator rather than the engine
             }
 
             Assert.ThrowsAny<Exception>(() => Engine.Calculate(new TaxInput(type, amount, false, 0m), facts));
         }
+    }
+
+    [Fact]
+    public void A_non_resident_without_the_country_of_residence_is_not_refused()
+    {
+        var refusals = PaymentChecks.Check(PaymentTypes.Get("120"), new PayeeTaxFacts(Residency.NonResident), 100m, Rates);
+
+        Assert.Empty(refusals); // the country is optional in the schema; the build notes it (NO_RESIDENCE_COUNTRY)
     }
 
     [Fact]

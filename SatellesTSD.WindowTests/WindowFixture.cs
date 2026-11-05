@@ -65,6 +65,9 @@ internal sealed class WindowFixture : IDisposable
 
     public bool Empty { get; }
 
+    /// <summary>The window's services of the test's own making (the registers faked, never the live sites), or the real ones.</summary>
+    public Func<string, AppServices>? Services { get; init; }
+
     /// <summary>What the window would have shown as a failure message box.</summary>
     public List<Exception> Failures { get; } = [];
 
@@ -108,6 +111,7 @@ internal sealed class WindowFixture : IDisposable
             StartPosition = FormStartPosition.Manual,
             Location = new Point(-4000, -4000),
             Confirming = confirm ?? ((_, _) => true),
+            ServicesFactory = Services,
         };
         form.Failing = e => Failures.Add(e);
         form.Show();

@@ -93,6 +93,10 @@ public sealed class ReviewPayment
     /// <summary>What would be refused if the payment were declared as it stands; empty when nothing, or when it is not declared.</summary>
     public IReadOnlyList<Refusal> Checks { get; init; } = [];
 
+    /// <summary>What would be refused if the payment were declared, whether it is declared or not: why a payment the
+    /// review leaves undeclared by default stays out (no type, another currency, an unreadable amount).</summary>
+    public IReadOnlyList<Refusal> Blockers { get; init; } = [];
+
     public string? Note { get; init; }
 
     public bool HasOverride { get; init; }
@@ -126,11 +130,33 @@ public sealed class ReviewPerson
 
     public required IReadOnlyList<MatchProblem> Problems { get; init; }
 
+    /// <summary>The person's income of the month that will not be declared as the review stands, and why — for the
+    /// persons grid, so a refusal is seen without opening the person's payments. On the rows nobody matched, only the
+    /// payments ticked to be declared (no one would carry them).</summary>
+    public IReadOnlyList<Undeclared> Undeclared { get; init; } = [];
+
     public string LastName => Person?.LastName ?? Register?.Person.LastName ?? "";
 
     public string FirstName => Person?.FirstName ?? Register?.Person.FirstName ?? "";
 
     public string? PersonalCode => Person?.PersonalCode ?? Register?.Person.PersonalCode;
+}
+
+/// <summary>An income payment of the month left out of the declaration: <see cref="Reason"/> says how (the person excluded
+/// on the card, the payment refused when declared, unticked by the accountant, or not declared by default), <see
+/// cref="Codes"/> the refusals behind it. <see cref="ByChoice"/>: no error — the accountant's own word, or a row in another currency, which is declared in euros on a
+/// line added by hand (decision 87).</summary>
+public sealed record Undeclared(ReviewPayment Payment, string Reason, IReadOnlyList<string> Codes, bool ByChoice)
+{
+    public const string Excluded = "EXCLUDED";
+    public const string Refused = "REFUSED";
+    public const string Unticked = "UNTICKED";
+    public const string NotDeclared = "NOT_DECLARED";
+
+    /// <summary>Under the totals per type: a payment without fault held back with its type by another one refused (decision 79).</summary>
+    public const string Held = "HELD";
+
+    public const string TypeHeld = "TYPE_HELD";
 }
 
 /// <summary>A period as the window shows it: the run (or none yet), the catalog the run was made with, the persons in

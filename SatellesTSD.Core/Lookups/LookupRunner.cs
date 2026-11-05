@@ -14,6 +14,10 @@ public sealed record LookupOptions(TimeSpan MinInterval, bool Force = false)
     public static readonly LookupOptions Default = new(TimeSpan.FromMilliseconds(500));
 }
 
+/// <summary>How far a lookup run is: <see cref="Done"/> of <see cref="Total"/> persons asked, with the outcome of the one
+/// just done (none for the first report, which tells the total before any query).</summary>
+public sealed record LookupProgress(int Done, int Total, PersonLookupOutcome? Outcome);
+
 /// <summary>What happened to one person in a run.</summary>
 public sealed record PersonLookupOutcome(Guid PersonId, string PersonalCode, string Name, IReadOnlyList<string> Steps, IReadOnlyList<string> Problems)
 {
@@ -89,21 +93,23 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
     /// <summary>Runs the lookups for every person of the period's match run; without a run, for every person of the
     /// company. A register person without a store row gets one, named as the register names them.</summary>
-    /// <param name="progress">Told each person's outcome as it comes, for a window that shows the run going.</param>
-    public async Task<LookupRunReport> RunAsync(Guid periodId, CancellationToken cancellationToken = default, IProgress<PersonLookupOutcome>? progress = null)
+    /// <param name="progress">Told the number of persons to ask before the first query, then each person's outcome as it
+    /// comes with the count done, for a window that shows the run going.</param>
+    public async Task<LookupRunReport> RunAsync(Guid periodId, CancellationToken cancellationToken = default, IProgress<LookupProgress>? progress = null)
     {
         var period = _store.Companies().SelectMany(c => _store.Periods(c.Id)).FirstOrDefault(p => p.Id == periodId)
             ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
         var controlDate = ControlDateOf(period);
         var problems = new List<string>();
         var persons = PersonsOf(period, problems);
+        progress?.Report(new LookupProgress(0, persons.Count, null));
         var outcomes = new List<PersonLookupOutcome>();
         foreach (var (person, payoutDate) in persons)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var outcome = await LookUpAsync(person, payoutDate, cancellationToken).ConfigureAwait(false);
             outcomes.Add(outcome);
-            progress?.Report(outcome);
+            progress?.Report(new LookupProgress(outcomes.Count, persons.Count, outcome));
         }
 
         return new LookupRunReport(controlDate, outcomes, problems);

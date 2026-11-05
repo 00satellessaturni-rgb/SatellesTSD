@@ -7,7 +7,7 @@ namespace SatellesTSD.Core.Tax;
 /// the engine never looks them up. A fact that was never checked is null, and the engine refuses to compute a tax
 /// that depends on it (the workbook refused unchecked residents the same way).</summary>
 /// <param name="Residency">Resident or non-resident for tax purposes on the control date.</param>
-/// <param name="ResidenceCountry">ISO country code of tax residence; required for a non-resident (RR_MAKSURESIDENTSUSE_RIIK).</param>
+/// <param name="ResidenceCountry">ISO country code of tax residence of a non-resident (RR_MAKSURESIDENTSUSE_RIIK): expected by MTA and checked against its register (KR_ISIK_6), optional in the schema — a line without it is declared and the build notes it.</param>
 /// <param name="FundedPensionMember">II pillar contributions are being withheld (liitunud, maksed ei ole lõppenud); null = not checked.</param>
 /// <param name="PensionRate">The person's own II-pillar rate (0.02, 0.04 or 0.06); null = unknown, refused wherever the pension is withheld.</param>
 /// <param name="OnOldAgeOrFlexiblePension">On vanaduspension or paindlik vanaduspension as of the month before the payment: no TSD_TK (KR_TK_2).</param>

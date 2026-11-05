@@ -34,6 +34,10 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     private TaxRates RatesFor(int year) => _ratesGiven ? _rates : TaxRates.For(year) ?? _rates;
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
+    /// <summary>The declaration's cut the lines are built in (the window's Seaded choice): under the totals per type a
+    /// refused payment holds its whole type, and the persons say so (decision 79).</summary>
+    public bool TotalsPerType { get; set; }
+
     /// <summary>The catalog in force for a new run: the owner's saved document, else the embedded default.</summary>
     public MatchCatalog CatalogInForce() => new MatchRunner(_store).Catalog();
 
@@ -174,16 +178,16 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     continue; // two register rows bound to one store person show once
                 }
 
-                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).ToList(), catalog, false));
+                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).ToList(), catalog, false, TotalsPerType));
             }
         }
 
         foreach (var id in byPerson.Keys.OrderBy(id => byId[id].LastName, StringComparer.OrdinalIgnoreCase).ThenBy(id => byId[id].FirstName, StringComparer.OrdinalIgnoreCase).ToList())
         {
-            persons.Add(Make(null, byId[id], null, Take(id), [], catalog, false));
+            persons.Add(Make(null, byId[id], null, Take(id), [], catalog, false, TotalsPerType));
         }
 
-        persons.Add(Make(null, null, null, unmatched, [], catalog, true));
+        persons.Add(Make(null, null, null, unmatched, [], catalog, true, TotalsPerType));
 
         var sources = run?.Sources.Select(s => s.Name).ToList() ?? [];
         if (lines.Any(l => l.IsByHand))
@@ -361,7 +365,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var code = CheckedCode(companyId, personalCode, null);
         // a resident has the basic exemption applied at this payer unless the accountant says otherwise; a non-resident
         // only by the EEA application the accountant enters
-        return _store.AddPerson(Person.New(companyId, firstName.Trim(), lastName.Trim(), code, residency) with { TorEmploymentTypeId = Clean(torEmploymentTypeId), BasicExemptionApplied = residency == Residency.Resident });
+        // a person added as a non-resident is the accountant's word on the residency: checked by hand today, as a
+        // residency set on the card is (a resident added by hand is still asked of the register)
+        return _store.AddPerson(Person.New(companyId, firstName.Trim(), lastName.Trim(), code, residency) with { TorEmploymentTypeId = Clean(torEmploymentTypeId), BasicExemptionApplied = residency == Residency.Resident,
+            ResidencySource = residency == Residency.NonResident ? LookupSource.Manual : LookupSource.Unknown,
+            ResidencyCheckedOn = residency == Residency.NonResident ? Today() : null });
     }
 
     private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed)
@@ -377,6 +385,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var amountOk = hit.Row.Amount is not null && (!shared || person is not null) && !duplicate;
         var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null;
         var declare = overlay?.Declare ?? defaultDeclare;
+        var blockers = ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -413,7 +422,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Candidates = candidates,
             Note = overlay?.Note,
             HasOverride = overlay is not null,
-            Checks = declare ? ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate) : [],
+            Checks = declare ? blockers : [],
+            Blockers = blockers,
         };
     }
 
@@ -426,6 +436,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var amount = line.Amount ?? 0m;
         var defaultDeclare = typeCode is not null && inPeriod && person is not null;
         var declare = line.Declare ?? defaultDeclare;
+        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year));
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -455,11 +466,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Flags = [],
             Note = line.Note,
             HasOverride = true,
-            Checks = declare ? ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year)) : [],
+            Checks = declare ? blockers : [],
+            Blockers = blockers,
         };
     }
 
-    private static ReviewPerson Make(string? key, Person? person, MatchPerson? register, List<ReviewPayment> payments, IReadOnlyList<MatchProblem> problems, MatchCatalog catalog, bool isUnmatched)
+    private static ReviewPerson Make(string? key, Person? person, MatchPerson? register, List<ReviewPayment> payments, IReadOnlyList<MatchProblem> problems, MatchCatalog catalog, bool isUnmatched, bool totalsPerType)
     {
         var sums = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var payment in payments)
@@ -482,7 +494,73 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             SalaryTotal = Math.Round(rounded.Values.Sum(), 2, MidpointRounding.ToEven),
             Payments = payments,
             Problems = problems,
+            Undeclared = UndeclaredOf(person, payments, catalog, isUnmatched, totalsPerType),
         };
+    }
+
+    /// <summary>The income of the month that stays out of the declaration, in the build's order of reasons: the person
+    /// excluded on the card, a declared payment refused, a payment unticked by the accountant, one not declared by
+    /// default. Income is a payment of the month (not a copy of another source's row, decision 86) of a salary or coded
+    /// category, or given a type, and any payment ticked and refused; a codeless category's payment is found, never
+    /// declared, and is not counted (decision 40). Under the totals cut a refused payment holds its whole type (decision
+    /// 79): the type's other ticked payments are listed as held. A row in another currency is listed but is no error: it
+    /// is declared in euros on a line added by hand (decision 87). On the rows nobody matched only a payment ticked to be
+    /// declared counts: nobody carries it.</summary>
+    private static List<Undeclared> UndeclaredOf(Person? person, List<ReviewPayment> payments, MatchCatalog catalog, bool isUnmatched, bool totalsPerType)
+    {
+        var list = new List<Undeclared>();
+        foreach (var payment in payments)
+        {
+            if (isUnmatched)
+            {
+                if (payment.Declare && payment.Checks.Count > 0)
+                {
+                    list.Add(new Undeclared(payment, Undeclared.Refused, Codes(payment.Checks), false));
+                }
+
+                continue;
+            }
+
+            var category = payment.Category is { } name ? catalog.Find(name) : null;
+            var income = (category is { IsSalary: true } or { Code: not null } || payment.TypeCode is not null)
+                && payment.InPeriod && !payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal);
+            var refused = payment.Declare && payment.Checks.Count > 0; // ticked and refused: the build says so, whatever it is
+            if (!income && !refused)
+            {
+                continue;
+            }
+
+            if (person?.Declaration == DeclarationChoice.Exclude)
+            {
+                list.Add(new Undeclared(payment, Undeclared.Excluded, [], true));
+            }
+            else if (refused)
+            {
+                list.Add(new Undeclared(payment, Undeclared.Refused, Codes(payment.Checks), false));
+            }
+            else if (!payment.Declare && payment.DefaultDeclare)
+            {
+                list.Add(new Undeclared(payment, Undeclared.Unticked, [], true));
+            }
+            else if (!payment.Declare)
+            {
+                var foreign = !ReviewChecks.IsEuro(payment.Currency);
+                list.Add(new Undeclared(payment, Undeclared.NotDeclared, Codes(payment.Blockers), foreign));
+            }
+        }
+
+        if (totalsPerType && person?.Declaration != DeclarationChoice.Exclude)
+        {
+            var held = list.Where(u => u.Reason == Undeclared.Refused && u.Payment.TypeCode is not null).Select(u => u.Payment.TypeCode!).ToHashSet(StringComparer.Ordinal);
+            foreach (var payment in payments.Where(p => p.Declare && p.Checks.Count == 0 && p.TypeCode is { } type && held.Contains(type)))
+            {
+                list.Add(new Undeclared(payment, Undeclared.Held, [Undeclared.TypeHeld], false));
+            }
+        }
+
+        return list;
+
+        static List<string> Codes(IReadOnlyList<Refusal> refusals) => refusals.Select(r => r.Code).Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>Applies a change to the payment's stored decision: a row's overlay is found by the row (never by a

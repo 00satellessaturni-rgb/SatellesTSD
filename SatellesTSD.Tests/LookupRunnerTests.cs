@@ -408,6 +408,35 @@ public class LookupRunnerTests
     }
 
     [Fact]
+    public async Task A_run_reports_how_many_it_asks_before_the_first_and_a_cancelled_run_reports_no_more()
+    {
+        var (store, _, period, _) = ReviewFixtures.Setup();
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            using var cancel = new CancellationTokenSource();
+            var reports = new List<LookupProgress>();
+            var progress = new Reported(p =>
+            {
+                reports.Add(p);
+                if (p.Done == 1)
+                {
+                    cancel.Cancel(); // the stop pressed after the first person
+                }
+            });
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Runner(store, new FakeResidency(), new FakePension()).RunAsync(period.Id, cancel.Token, progress));
+            Assert.Equal([(0, 2, false), (1, 2, true)], reports.Select(r => (r.Done, r.Total, r.Outcome is not null)));
+        }
+    }
+
+    /// <summary>A progress reported at once, on the run's own thread (a Progress&lt;T&gt; would post it later).</summary>
+    private sealed class Reported(Action<LookupProgress> report) : IProgress<LookupProgress>
+    {
+        public void Report(LookupProgress value) => report(value);
+    }
+
+    [Fact]
     public async Task The_run_refuses_a_period_it_does_not_know()
     {
         var (store, _, _) = Setup();

@@ -83,6 +83,11 @@ public sealed class MainForm : Form
     private bool _checkingUpdates;
     private bool _handedOver;
     private readonly ToolStripLabel _stateLabel = new("") { Font = new Font(Control.DefaultFont, FontStyle.Bold) };
+    // a register run's progress on the toolbar: shown while it runs, with its own stop button beside the menu's
+    private readonly ToolStripSeparator _progressSeparator = new() { Visible = false };
+    private readonly ToolStripProgressBar _progressBar = new() { Visible = false, Minimum = 0, AutoSize = false, Width = 160 };
+    private readonly ToolStripLabel _progressLabel = new("") { Visible = false };
+    private readonly ToolStripButton _stopButton = new(UiText.Cancel) { Visible = false };
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly DeclarationPanel _declaration = new() { Dock = DockStyle.Fill };
     private readonly DataGridView _personsGrid = Grid();
@@ -137,7 +142,11 @@ public sealed class MainForm : Form
             new ToolStripLabel(UiText.Store), _storeLabel, new ToolStripSeparator(),
             new ToolStripLabel(UiText.Company), _companyBox, new ToolStripSeparator(),
             new ToolStripLabel(UiText.Period), _yearBox, _monthBox, new ToolStripSeparator(), _stateLabel,
+            _progressSeparator, _progressLabel, _progressBar, _stopButton,
         ]);
+        _stopButton.Click += (_, _) => _lookups?.Cancel();
+        _undeclaredTips = new GridTips(_personsGrid, "undeclared");
+        Disposed += (_, _) => _undeclaredTips.Dispose();
         _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
         _closeButton.Click += (_, _) => Close();
 
@@ -264,6 +273,23 @@ public sealed class MainForm : Form
 
     /// <summary>Takes a plain notice in place of the message box (the window tests set it).</summary>
     internal Action<string>? Informing;
+
+    /// <summary>Makes the services for a store path in place of the real ones — a test's registers, never the live
+    /// sites. Set before the window is shown: the store opens as it loads.</summary>
+    internal Func<string, AppServices>? ServicesFactory;
+
+    /// <summary>The persons grid's "Deklareerimata" tooltip: each payment left out and why.</summary>
+    private readonly GridTips _undeclaredTips;
+
+    internal GridTips UndeclaredTips => _undeclaredTips;
+
+    internal ToolStripProgressBar ProgressBar => _progressBar;
+
+    internal ToolStripLabel ProgressLabel => _progressLabel;
+
+    internal ToolStripButton StopButton => _stopButton;
+
+    internal ToolStripMenuItem LookupButton => _lookupButton;
 
     private void Inform(string text, string title)
     {
@@ -958,7 +984,8 @@ public sealed class MainForm : Form
         _period = null;
         try
         {
-            _services = new AppServices(path);
+            _services = ServicesFactory?.Invoke(path) ?? new AppServices(path);
+            _services.Workspace.TotalsPerType = _settings.DeclareTotalsPerType;
         }
         catch (Exception e) when (OfferStoreRestore(path, e))
         {
@@ -1074,6 +1101,12 @@ public sealed class MainForm : Form
         _settings.DeclareTotalsPerType = totals;
         SaveSettings();
         ShowDeclarationMode();
+        if (_services is not null)
+        {
+            _services.Workspace.TotalsPerType = totals;
+            ReloadView(); // the persons' undeclared income follows the cut (a refused payment holds its type)
+        }
+
         Log($"{UiText.DeclareModeChanged} {(totals ? UiText.ModeTotals : UiText.ModeEach)} ({UiText.BuildLines})");
     }
 
@@ -1211,6 +1244,7 @@ public sealed class MainForm : Form
     {
         _filling = true;
         var sort = SortOf(_personsGrid);
+        _undeclaredTips.Clear();
         _personsGrid.Rows.Clear();
         _personsGrid.Columns.Clear();
         if (_view is null)
@@ -1235,13 +1269,16 @@ public sealed class MainForm : Form
         }
 
         _personsGrid.Columns.Add(Column("total", UiText.SalaryTotal, money: true));
+        _personsGrid.Columns.Add(Column("undeclared", UiText.Undeclared, money: true));
         _personsGrid.Columns.Add(Column("residency", UiText.Residency));
         _personsGrid.Columns.Add(Column("pension", UiText.Pension));
         _personsGrid.Columns.Add(Column("checked", UiText.CheckedOn));
+        _personsGrid.Columns.Add(Column("start", UiText.EmploymentStart, date: true));
         _personsGrid.Columns.Add(Column("type", UiText.EmploymentType));
         _personsGrid.Columns.Add(Column("state", UiText.EntryState));
         _personsGrid.Columns.Add(Column("end", UiText.EmploymentEnd, date: true));
         _personsGrid.Columns.Add(Column("pause", UiText.PauseStart, date: true));
+        _personsGrid.Columns.Add(Column("pauseEnd", UiText.PauseEnd, date: true));
         _personsGrid.Columns.Add(Column("declaration", UiText.DeclarationLabel));
         _personsGrid.Columns.Add(Column("problems", UiText.Problems));
 
@@ -1253,7 +1290,7 @@ public sealed class MainForm : Form
             {
                 values.AddRange(["", UiText.UnmatchedRow, "", null]);
                 values.AddRange(_view.Sources.Select(_ => (object?)null));
-                values.AddRange([null, "", "", "", "", "", null, null, "", ""]);
+                values.AddRange([null, UndeclaredSum(person), "", "", "", null, "", "", null, null, null, "", ProblemCodes(person)]);
             }
             else
             {
@@ -1261,29 +1298,43 @@ public sealed class MainForm : Form
                 values.AddRange([person.PersonalCode ?? "", person.LastName, person.FirstName, ExemptionValue(p)]);
                 values.AddRange(_view.Sources.Select(s => MoneyOrBlank(person.SalaryBySource.TryGetValue(s, out var sum) ? sum : null)));
                 values.Add(person.SalaryTotal);
+                values.Add(UndeclaredSum(person));
                 values.Add(p is null ? "" : UiText.ResidencyText(p));
                 values.Add(p is null ? "" : UiText.PensionText(p));
                 values.Add(p is null ? "" : CheckedText(p));
+                values.Add(person.Register?.Entry.StartDate?.ToDateTime(TimeOnly.MinValue));
                 values.Add(p is { TypeFromCard: true } && EmploymentTypes.Find(p.TorEmploymentTypeId) is { } cardType ? cardType.Name : person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
                 values.Add(person.Register?.Entry.State ?? "");
                 values.Add(EmploymentEndValue(person.Register));
                 values.Add(PausedEntry(person.Register)?.PauseStart?.ToDateTime(TimeOnly.MinValue));
+                values.Add(PausedEntry(person.Register)?.PauseEnd?.ToDateTime(TimeOnly.MinValue));
                 values.Add(p is null ? "" : UiText.DeclarationShort(p.Declaration));
-                values.Add(string.Join(", ", person.Problems.Select(x => x.Code).Distinct()));
+                values.Add(ProblemCodes(person));
             }
 
             var index = _personsGrid.Rows.Add(values.ToArray());
             var row = _personsGrid.Rows[index];
             row.Tag = person;
+            _undeclaredTips.Set(row, UiText.UndeclaredTip(person.Undeclared));
             if (person.IsUnmatched)
             {
                 row.DefaultCellStyle.Font = new Font(_personsGrid.Font, FontStyle.Italic);
+                if (person.Undeclared.Count > 0)
+                {
+                    row.DefaultCellStyle.BackColor = Color.MistyRose;
+                }
+
                 row.Cells["exemption"].Style.NullValue = null; // an empty text would count as the default and inherit the column's "ei"
                 if (keepUnmatched)
                 {
                     keepRow = row;
                 }
             }
+            else if (person.Undeclared.Any(u => !u.ByChoice))
+            {
+                row.DefaultCellStyle.BackColor = Color.MistyRose; // income the month declares not, and no one chose so
+            }
+
             else if (person.Problems.Count > 0)
             {
                 row.DefaultCellStyle.BackColor = Color.LightYellow;
@@ -1646,6 +1697,7 @@ public sealed class MainForm : Form
         _updateButton.Visible = UpdatesEnabled;
         _updateSeparator.Visible = UpdatesEnabled;
         _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
+        _declareEachItem.Enabled = _declareTotalsItem.Enabled = !_busy; // the review follows the cut: never switched under a run
         UseWaitCursor = _busy;
     }
 
@@ -1835,7 +1887,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (MessageBox.Show(this, UiText.LookupsLive, UiText.RunLookups, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (!Confirm(UiText.LookupsLive, UiText.RunLookups))
         {
             return;
         }
@@ -1847,7 +1899,19 @@ public sealed class MainForm : Form
 
         var services = _services;
         var periodId = _view.Period.Id;
-        var progress = new Progress<PersonLookupOutcome>(LogOutcome);
+        var progress = new Progress<LookupProgress>(p =>
+        {
+            if (_lookups is null)
+            {
+                return; // the run is over; a report posted late changes nothing
+            }
+
+            ShowProgress(UiText.LookupProgress(p.Done, p.Total), p.Done, p.Total);
+            if (p.Outcome is { } outcome)
+            {
+                LogOutcome(outcome);
+            }
+        });
         await RunCancellableAsync(token => services.Pipeline.RunLookupsAsync(periodId, progress, token), report =>
         {
             foreach (var problem in report.Problems)
@@ -1875,6 +1939,7 @@ public sealed class MainForm : Form
         var services = _services;
         var period = _period;
         var fresh = services.Store.Persons(person.CompanyId).FirstOrDefault(p => p.Id == person.Id) ?? person;
+        ShowProgress(UiText.LookupOne($"{fresh.LastName} {fresh.FirstName}"), null, null);
         await RunCancellableAsync(token => services.Pipeline.LookUpAsync(fresh, period, token), LogOutcome);
         ReloadView(person.Id);
     }
@@ -1884,6 +1949,8 @@ public sealed class MainForm : Form
         _lookups = new CancellationTokenSource();
         var token = _lookups.Token;
         _cancelButton.Enabled = true;
+        _stopButton.Visible = true;
+        _progressSeparator.Visible = true;
         try
         {
             await RunBusyAsync(async () => report(await work(token)));
@@ -1893,7 +1960,36 @@ public sealed class MainForm : Form
             _cancelButton.Enabled = false;
             _lookups.Dispose();
             _lookups = null;
+            HideProgress(); // on every way out: done, cancelled between two persons or inside a query, failed
         }
+    }
+
+    /// <summary>The toolbar's progress: the text, and the bar when the run knows how many it asks.</summary>
+    private void ShowProgress(string text, int? done, int? total)
+    {
+        _progressSeparator.Visible = true;
+        _progressLabel.Text = text;
+        _progressLabel.Visible = true;
+        if (total is { } of && done is { } count)
+        {
+            _progressBar.Maximum = Math.Max(1, of);
+            _progressBar.Value = Math.Clamp(count, 0, _progressBar.Maximum);
+            _progressBar.Visible = true;
+        }
+        else
+        {
+            _progressBar.Visible = false;
+        }
+    }
+
+    private void HideProgress()
+    {
+        _progressSeparator.Visible = false;
+        _progressLabel.Visible = false;
+        _progressLabel.Text = "";
+        _progressBar.Visible = false;
+        _progressBar.Value = 0;
+        _stopButton.Visible = false;
     }
 
     private void LogOutcome(PersonLookupOutcome outcome)
@@ -1928,8 +2024,36 @@ public sealed class MainForm : Form
 
     private void SetBusy(bool busy)
     {
+        var wasBusy = _busy;
         _busy = busy;
         UpdateState();
+        if (wasBusy && !busy)
+        {
+            ResetGridCursors();
+        }
+    }
+
+    /// <summary>A grid keeps the wait cursor as its own: over a header's divider it saves its Cursor and writes back what
+    /// it saw, the form's wait cursor while the work ran, and keeps it after the work is over. Every grid is set back to
+    /// its default on the way out of the work.</summary>
+    private void ResetGridCursors()
+    {
+        foreach (var grid in Descendants(this).OfType<DataGridView>())
+        {
+            grid.ResetCursor();
+        }
+    }
+
+    private static IEnumerable<Control> Descendants(Control parent)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            yield return child;
+            foreach (var inner in Descendants(child))
+            {
+                yield return inner;
+            }
+        }
     }
 
     // ---------------------------------------------------------------- the edits
@@ -2207,6 +2331,18 @@ public sealed class MainForm : Form
 
         return entry.StateId == TorStates.Ended || end <= last ? end.ToDateTime(TimeOnly.MinValue) : null;
     }
+
+    /// <summary>The sum in euros of the person's income the month does not declare, or none: a row in another currency
+    /// or without an amount read is listed in the tooltip, never added (decision 87), nor a copy of another source's row
+    /// (decision 86); a shared row nobody was named for is added, its amount was read.</summary>
+    private static decimal? UndeclaredSum(ReviewPerson person) =>
+        person.Undeclared.Count == 0 ? null : person.Undeclared
+            .Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal))
+            .Sum(u => u.Payment.Amount);
+
+    /// <summary>The problems' codes, then why income goes undeclared, so the search finds both.</summary>
+    private static string ProblemCodes(ReviewPerson person) =>
+        string.Join(", ", person.Problems.Select(x => x.Code).Concat(person.Undeclared.SelectMany(u => u.Codes.Count > 0 ? u.Codes : [u.Reason])).Distinct());
 
     /// <summary>The register entry standing for the person (the one "Kande olek" shows) when it is paused (kande olek 3):
     /// "Peatamise algus" shows since when, the tooltip why and until when, as the register gives them.</summary>

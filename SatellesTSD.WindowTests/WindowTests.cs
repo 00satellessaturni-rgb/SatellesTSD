@@ -1,3 +1,4 @@
+using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
@@ -685,4 +686,132 @@ public class WindowTests
     }
 
     private static Person StoredMari(MainForm form) => form.Services!.Store.FindPerson(form.View!.Period.CompanyId, SatellesTSD.Tests.ReviewFixtures.MariCode)!;
+
+    [Fact]
+    public void The_grid_shows_when_the_employment_began_and_until_when_it_is_paused()
+    {
+        using var fixture = new WindowFixture(mariPaused: true);
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var persons = form.PersonsGrid;
+            Assert.Equal(persons.Columns["checked"]!.Index + 1, persons.Columns["start"]!.Index);
+            Assert.Equal(persons.Columns["start"]!.Index + 1, persons.Columns["type"]!.Index);
+            Assert.Equal(persons.Columns["pause"]!.Index + 1, persons.Columns["pauseEnd"]!.Index); // right after Peatamise algus
+            Assert.Equal(("Töötamise alguse aeg", "Peatamise lõpu aeg"), (persons.Columns["start"]!.HeaderText, persons.Columns["pauseEnd"]!.HeaderText));
+            Assert.Equal((typeof(DateTime), typeof(DateTime)), (persons.Columns["start"]!.ValueType, persons.Columns["pauseEnd"]!.ValueType));
+            var rows = persons.Rows.Cast<DataGridViewRow>().ToList();
+            Assert.All(rows.Take(2), r => Assert.IsType<DateTime>(r.Cells["start"].Value)); // the register's two persons
+            Assert.Null(rows[2].Cells["start"].Value); // the rows nobody matched
+            Assert.Equal(["30.06.2027", "", ""], rows.Select(r => r.Cells["pauseEnd"].FormattedValue?.ToString() ?? ""));
+        }));
+    }
+
+    [Fact]
+    public void Income_left_out_of_the_declaration_is_summed_on_the_person_with_why_and_coloured_only_when_nobody_chose_it()
+    {
+        using var fixture = new WindowFixture(prepare: (store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            workspace.SetDeclare(view.Persons[1].Payments.Single(), true); // Jaan's November payment: refused
+            workspace.SetDeclare(view.Persons[0].Payments.Single(p => !p.IsByHand), false); // Mari's salary: unticked
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var persons = form.PersonsGrid;
+            Assert.Equal(persons.Columns["total"]!.Index + 1, persons.Columns["undeclared"]!.Index);
+            Assert.Equal("Deklareerimata", persons.Columns["undeclared"]!.HeaderText);
+            var (mari, jaan, unmatched) = (persons.Rows[0], persons.Rows[1], persons.Rows[2]);
+            var mariPerson = (ReviewPerson)mari.Tag!;
+            var jaanPerson = (ReviewPerson)jaan.Tag!;
+            Assert.Equal(mariPerson.Payments.Single(p => !p.IsByHand).Amount, mari.Cells["undeclared"].Value);
+            Assert.Equal(jaanPerson.Payments.Single().Amount, jaan.Cells["undeclared"].Value);
+            Assert.Null(unmatched.Cells["undeclared"].Value);
+
+            Assert.Equal(Color.MistyRose, jaan.DefaultCellStyle.BackColor); // refused, and nobody chose it
+            Assert.NotEqual(Color.MistyRose, mari.DefaultCellStyle.BackColor); // the accountant's own choice
+            Assert.Matches("rida ei saa koostada: .*NOT_IN_PERIOD", form.UndeclaredTips.TextOf(jaan));
+            Assert.Contains("märge \"Deklareeri\" on maha võetud", form.UndeclaredTips.TextOf(mari), StringComparison.Ordinal);
+            Assert.Null(form.UndeclaredTips.TextOf(unmatched));
+            Assert.Contains("NOT_IN_PERIOD", jaan.Cells["problems"].Value?.ToString(), StringComparison.Ordinal);
+
+            form.PersonsSearch.Text = "NOT_IN_PERIOD"; // the search finds it
+            Ui.Pump();
+            Assert.Equal([jaan], persons.Rows.Cast<DataGridViewRow>().Where(r => r.Visible));
+            form.PersonsSearch.Text = "";
+        }));
+    }
+
+    [Fact]
+    public void A_lookup_run_shows_its_progress_and_leaves_no_wait_cursor_on_the_grids()
+    {
+        var residency = new GatedResidency();
+        using var fixture = new WindowFixture()
+        {
+            Services = path => new AppServices(path, residency, new NoPension(), new LookupOptions(TimeSpan.Zero)),
+        };
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Assert.False(form.ProgressBar.Visible || form.ProgressLabel.Visible || form.StopButton.Visible);
+            form.LookupButton.PerformClick();
+            Ui.Until(() => residency.Waiting, what: "the first query");
+            Assert.True(form.IsBusy);
+            Assert.True(form.StopButton.Visible);
+            Assert.False(form.DeclareTotalsItem.Enabled || form.DeclareEachItem.Enabled); // the cut is never switched under a run
+            Assert.Equal("Päringud: 0 / 2", form.ProgressLabel.Text);
+            Assert.Equal((0, 2), (form.ProgressBar.Value, form.ProgressBar.Maximum));
+
+            // the mouse over the headers' dividers while the window waits: a grid takes the wait cursor as its own
+            var persons = form.PersonsGrid;
+            var onMouseMove = typeof(Control).GetMethod("OnMouseMove", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            foreach (var grid in new[] { persons, form.PaymentsGrid })
+            {
+                for (var x = 0; x < grid.Width; x++)
+                {
+                    for (var y = 0; y < Math.Min(grid.Height, 80); y += 3)
+                    {
+                        onMouseMove.Invoke(grid, [new MouseEventArgs(MouseButtons.None, 0, x, y, 0)]);
+                    }
+                }
+            }
+
+            residency.Release();
+            Ui.Until(() => !form.IsBusy, what: "the run to end");
+            Assert.Equal(2, residency.Asked);
+            Assert.False(form.ProgressBar.Visible || form.ProgressLabel.Visible || form.StopButton.Visible);
+            Assert.Equal(0, form.ProgressBar.Value);
+            Assert.True(form.DeclareTotalsItem.Enabled && form.DeclareEachItem.Enabled);
+            Assert.False(form.UseWaitCursor);
+            Assert.Equal(Cursors.Default, persons.Cursor);
+            Assert.Equal(Cursors.Default, form.PaymentsGrid.Cursor);
+        }));
+    }
+
+    /// <summary>EMTA faked: every query waits until the test lets them go, so the window is seen mid-run.</summary>
+    private sealed class GatedResidency : IResidencyLookup
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _asked;
+        private volatile bool _waiting;
+
+        public bool Waiting => _waiting;
+
+        public int Asked => _asked;
+
+        public void Release() => _gate.TrySetResult();
+
+        public async Task<LookupResult<ResidencyFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _asked);
+            _waiting = true;
+            await _gate.Task.WaitAsync(cancellationToken);
+            return LookupResult<ResidencyFinding>.Found(new ResidencyFinding(new DateOnly(2026, 11, 4), [], []), null);
+        }
+    }
+
+    private sealed class NoPension : IPensionLookup
+    {
+        public Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default) =>
+            Task.FromResult(LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.NotJoined, null, null, []), null));
+    }
 }

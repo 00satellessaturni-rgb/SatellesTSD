@@ -463,6 +463,12 @@ public class ReviewWorkspaceTests
             var declared = workspace.Load(period.Id).Persons[0].Payments.Single(p => p.Payee == "Kinnisvara OÜ");
             Assert.Contains(declared.Checks, c => c.Code == ReviewChecks.ForeignCurrency);
             Assert.Equal(905.92m, workspace.Load(period.Id).Persons[0].SalaryTotal);
+
+            // left undeclared, it is listed on the person but no error: it goes in euros on a line added by hand (decision 87)
+            workspace.SetDeclare(declared, null);
+            var listed = Assert.Single(workspace.Load(period.Id).Persons[0].Undeclared, u => u.Payment.Payee.StartsWith("Kinnisvara", StringComparison.Ordinal));
+            Assert.Equal((Undeclared.NotDeclared, true, false), (listed.Reason, listed.ByChoice, listed.Payment.AmountOk));
+            Assert.Contains(ReviewChecks.ForeignCurrency, listed.Codes);
         }
     }
 
