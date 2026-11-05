@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false)
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false)
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -558,6 +558,138 @@ public class DeclareTests
         var line = Assert.Single(ended.Lines);
         Assert.Equal((0m, 0m, 0m), (line.Result!.SocialTaxMinimumIncrease, mari.MinimumDue, mari.MinimumShortfall));
         Assert.True(line.Result.Gross < 886m);
+    }
+
+    [Fact]
+    public void A_person_excluded_on_the_card_gets_no_line_and_what_stood_for_them_is_undone()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        Assert.Single(box.Lines);
+
+        // excluded while the line is a draft: the draft goes, and the build says why the salary is not declared
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Exclude });
+        Assert.Equal(DeclarationChoice.Exclude, box.Mari.Declaration); // kept in the store
+        var excluded = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(1, excluded.Count(LineChange.Deleted));
+        Assert.Empty(box.Lines);
+        Assert.Contains(excluded.Persons.Single(p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.Excluded, StringComparison.Ordinal) && p.Contains("1 payment", StringComparison.Ordinal));
+
+        // back to the rules, the line is declared and sent; excluded again, the line on the server gets its T
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Auto });
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Exclude });
+        var cancelled = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(1, cancelled.Count(LineChange.Cancelled));
+        Assert.Equal(LineAction.T, Assert.Single(box.Lines).Action);
+    }
+
+    [Fact]
+    public void A_person_included_on_the_card_owes_the_minimum_as_under_a_valid_employment_when_the_other_conditions_hold()
+    {
+        // a paused employment and no pay: by the rules nothing is declared; included, the zero line carries the minimum
+        using (var paused = Ready(minimum: true, mariPaused: true))
+        {
+            paused.Workspace.SetDeclare(paused.Salary, false);
+            paused.Declarer.Build(paused.Period.Id);
+            Assert.Empty(paused.Lines);
+
+            paused.Workspace.SavePerson(paused.Mari with { Declaration = DeclarationChoice.Include });
+            var report = paused.Declarer.Build(paused.Period.Id);
+            var zero = Assert.Single(paused.Lines);
+            Assert.Equal((PeriodDeclarer.MinimumSource, "10", 0m, new DateOnly(2026, 10, 31)), (zero.SourceRef, zero.Line.TypeCode, zero.Line.Amount, zero.Line.DocumentDate));
+            Assert.Equal(886m, zero.Result!.SocialTaxMinimumIncrease);
+            Assert.Contains(report.Persons.Single(p => p.PersonId == paused.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal) && p.Contains("as if employed", StringComparison.Ordinal));
+            Assert.Contains(report.Persons.Single(p => p.PersonId == paused.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+
+            // the other conditions still hold the line back: the minimum switched off on the card
+            paused.Workspace.SavePerson(paused.Mari with { SocialTaxMinimumApplies = false });
+            paused.Declarer.Build(paused.Period.Id);
+            Assert.Empty(paused.Lines);
+        }
+
+        // an employment ended before the month, no pay: included, the zero line comes from the ended employment's type
+        using (var ended = Ready(minimum: true, mariEnded: true))
+        {
+            ended.Workspace.SetDeclare(ended.Salary, false);
+            ended.Workspace.SavePerson(ended.Mari with { Declaration = DeclarationChoice.Include });
+            ended.Declarer.Build(ended.Period.Id);
+            Assert.Equal(886m, Assert.Single(ended.Lines).Result!.SocialTaxMinimumIncrease);
+        }
+
+        // pay after the employment ended: by the rules no minimum; included, the pay is topped up to it
+        using (var settled = Ready(minimum: true, salary: 300m, mariEnded: true))
+        {
+            settled.Workspace.SavePerson(settled.Mari with { Declaration = DeclarationChoice.Include });
+            var build = settled.Declarer.Build(settled.Period.Id);
+            Assert.DoesNotContain(build.Persons.Single(p => p.PersonId == settled.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal));
+            Assert.True(Assert.Single(settled.Lines).Result!.SocialTaxMinimumIncrease > 0m);
+        }
+
+        // an employment type that carries no minimum of its own (501) stays without a zero line, included or not, and the build says why
+        using var unpaid = Ready(minimum: true, mariType: 501, mariPaused: true);
+        unpaid.Workspace.SetDeclare(unpaid.Salary, false);
+        unpaid.Workspace.SavePerson(unpaid.Mari with { Declaration = DeclarationChoice.Include });
+        var said = unpaid.Declarer.Build(unpaid.Period.Id);
+        Assert.Empty(unpaid.Lines);
+        Assert.Contains(said.Persons.Single(p => p.PersonId == unpaid.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal) && p.Contains("carries no minimum", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_refused_salary_whose_sent_line_stands_gets_no_zero_line_beside_it_so_the_minimum_is_never_declared_twice()
+    {
+        using var box = Ready(minimum: true, salary: 300m);
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.True(box.Lines.Single().Result!.SocialTaxMinimumIncrease > 0m); // the sent salary carries the minimum
+
+        // the salary refused by the review (a type no table knows): its line stands, and no zero line comes beside it
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        var report = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(1, report.Count(LineChange.Kept));
+        Assert.DoesNotContain(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+        Assert.Single(box.Lines);
+    }
+
+    [Fact]
+    public void A_v6_store_upgrades_to_v7_and_every_person_is_declared_by_the_rules_until_the_card_says_otherwise()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");
+        try
+        {
+            Guid personId;
+            Guid companyId;
+            using (var v6 = SqliteStore.OpenAtVersion(path, 6))
+            {
+                var company = v6.AddCompany("10235688", "Näidis OÜ");
+                companyId = company.Id;
+                v6.ExecuteRaw($"INSERT INTO person (id, company_id, first_name, last_name, residency, on_pension, exemption_applied, minimum_applies, a1_case, residency_source, pension_source) VALUES ('{Guid.NewGuid():N}', '{company.Id:N}', 'Mari', 'Maasikas', 'Resident', 0, 1, 1, 'None', 'Unknown', 'Unknown')");
+                personId = Guid.Parse(v6.ScalarRaw<string>("SELECT id FROM person"));
+            }
+
+            using var v7 = SqliteStore.Open(path);
+            Assert.Equal((long)SqliteStore.SchemaVersion, v7.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+            var person = Assert.Single(v7.Persons(companyId));
+            Assert.Equal((personId, DeclarationChoice.Auto), (person.Id, person.Declaration));
+            v7.UpdatePerson(person with { Declaration = DeclarationChoice.Include });
+            Assert.Equal(DeclarationChoice.Include, Assert.Single(v7.Persons(companyId)).Declaration);
+            var added = v7.AddPerson(Person.New(companyId, "Jaan", "Tamm", null) with { Declaration = DeclarationChoice.Exclude });
+            Assert.Equal(DeclarationChoice.Exclude, v7.Persons(companyId).Single(p => p.Id == added.Id).Declaration);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(SqliteStore.BackupPathFor(path));
+        }
     }
 
     [Fact]

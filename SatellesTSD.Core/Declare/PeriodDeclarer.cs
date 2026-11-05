@@ -24,6 +24,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string NoPayee = "NO_PAYEE";
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
     public const string ModeChanged = "MODE_CHANGED";
+    public const string Excluded = "EXCLUDED";
+    public const string Included = "INCLUDED";
 
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
@@ -162,8 +164,20 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var name = $"{person.LastName} {person.FirstName}";
         var lines = new List<BuiltLine>();
         var problems = new List<string>();
+        if (person.Declaration == DeclarationChoice.Exclude)
+        {
+            // the accountant's word: nothing is built and nothing claimed, so what stands for the person is undone below
+            var left = reviewPerson.Payments.Count(p => p.Declare);
+            problems.Add(left == 0
+                ? $"{Excluded}: the person is excluded from the declaration."
+                : $"{Excluded}: the person is excluded from the declaration; {left} payment(s) marked to declare are left out.");
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+        }
+
+        var include = person.Declaration == DeclarationChoice.Include;
         var declared = new List<(ReviewPayment Payment, string Source)>();
         var refusedTypes = new HashSet<string>(StringComparer.Ordinal); // the totals cut: a type with a refused payment is not rebuilt
+        var keptMinimum = false; // a refused payment's line left standing carries the minimum: no zero line beside it
         foreach (var payment in reviewPerson.Payments.Where(p => p.Declare))
         {
             var source = SourceOf(payment);
@@ -183,6 +197,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 else if (bySource.TryGetValue(source, out var kept))
                 {
                     lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = payment.Reference, Note = Refused });
+                    keptMinimum |= CarriesMinimum(kept);
                 }
 
                 claimed.Add(source);
@@ -215,6 +230,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     else if (bySource.TryGetValue(source, out var kept))
                     {
                         lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = kept.SourceRef ?? "", Note = Refused });
+                        keptMinimum |= CarriesMinimum(kept);
                     }
 
                     continue;
@@ -240,14 +256,33 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // a month without pay of a minimum-carrying type under a valid employment whose own type carries it: the zero line (decision 3)
         var entry = reviewPerson.Register?.ActiveEntry;
         var inRegister = reviewPerson.Register is { Entries.Count: > 0 };
-        if (person.SocialTaxMinimumApplies && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && entry is { StateId: TorStates.Valid }
-            && EmploymentTypes.Find(entry.TypeId) is { SocialTaxMinimum: true }
-            && EmploymentTypes.DefaultCode(entry.TypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed)
+        // the employment the zero line's type comes from: the one covering the month; for a person declared as if employed
+        // (Include) also a paused one, else the latest begun by the month's end, else the type kept on the person
+        var lastDay = new DateOnly(period.Year, period.Month, DateTime.DaysInMonth(period.Year, period.Month));
+        var zeroTypeId = entry is { StateId: TorStates.Valid } ? entry.TypeId
+            : !include ? null
+            : (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
+        if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
+            && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
+            && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed)
         {
             var zeroSource = MinimumKey(person.Id);
-            monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, new DateOnly(period.Year, period.Month, DateTime.DaysInMonth(period.Year, period.Month))));
+            monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
             references[zeroSource] = (MinimumSource, null, null);
-            problems.Add($"{ZeroLine}: a valid employment of type {entry.TypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
+            problems.Add(entry is { StateId: TorStates.Valid }
+                ? $"{ZeroLine}: a valid employment of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
+                : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
+        }
+
+        if (include && entry is not { StateId: TorStates.Valid })
+        {
+            // the card's choice is said, and so is why it made no zero line where one was looked for
+            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
+                ? zeroTypeId is null ? " No zero line: no employment type is known (neither the register nor the card's TÖR type)."
+                : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? $" No zero line: employment type {zeroTypeId} carries no minimum."
+                : ""
+                : "";
+            problems.Add($"{Included}: declared as if employed (the person card's choice); the register has no valid employment for the month.{unmet}");
         }
 
         if (monthPayments.Count == 0)
@@ -268,7 +303,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var share = MonthShare(entry, period.Year, period.Month);
         var facts = person.FactsFor(period.Year, share);
-        if (inRegister && entry is null && facts.SocialTaxMinimumApplies)
+        if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)
         {
             // pay after the employment ended (a final settlement): the register covers no day of the month, so no minimum is owed on it
             facts = facts with { SocialTaxMinimumApplies = false };
@@ -472,6 +507,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     private static bool SameLine(PaymentLine a, PaymentLine b) =>
         JsonSerializer.Serialize(a with { Counter = 0, Action = LineAction.R }, Json) == JsonSerializer.Serialize(b with { Counter = 0, Action = LineAction.R }, Json);
+
+    /// <summary>Whether a standing line (not its cancellation) is of a type that carries the minimum — so that the
+    /// month's minimum is already on it, topped up there or owed through it.</summary>
+    private static bool CarriesMinimum(StoredPayment line) =>
+        line.Action != LineAction.T && line.Line.TypeCode is { } code && PaymentTypes.TryGet(code, out var type) && type!.SocialTaxMinimum;
 
     /// <summary>The source a standing line stands for: its bank row, its hand line, the month's minimum of its person,
     /// or the person's payments of one type added up.</summary>

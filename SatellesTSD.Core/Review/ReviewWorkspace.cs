@@ -305,6 +305,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             BasicExemptionApplied = edited.BasicExemptionApplied,
             BasicExemptionMonthly = edited.BasicExemptionMonthly,
             SocialTaxMinimumApplies = edited.SocialTaxMinimumApplies,
+            Declaration = edited.Declaration,
             A1 = edited.A1,
             A1Country = Clean(edited.A1Country),
             WorkCountry = Clean(edited.WorkCountry),

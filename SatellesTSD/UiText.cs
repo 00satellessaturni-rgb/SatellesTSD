@@ -42,6 +42,7 @@ internal static class UiText
     public const string CheckedOn = "Kontrollitud";
     public const string EmploymentType = "Töötamise liik";
     public const string EntryState = "Kande olek";
+    public const string EmploymentEnd = "Töötamise lõpu aeg";
     public const string Problems = "Probleemid";
     public const string UnmatchedRow = "— leidmata read —";
 
@@ -87,6 +88,18 @@ internal static class UiText
     public const string ExemptionMonthly = "Maksuvaba summa kuus";
     public const string ExemptionFull = "(tühi = seaduse summa)";
     public const string SocialTaxMinimum = "SM miinimumkohustus";
+    public const string DeclarationLabel = "Deklareerimine";
+    public const string DeclarationAuto = "reeglite järgi";
+    public const string DeclarationInclude = "kaasa (nagu kehtiv töötamine)";
+    public const string DeclarationExclude = "välja (ei deklareerita)";
+
+    /// <summary>The persons grid's word for the card's choice: nothing when by the rules, so the exceptions stand out.</summary>
+    public static string DeclarationShort(Core.Store.DeclarationChoice choice) => choice switch
+    {
+        Core.Store.DeclarationChoice.Include => "kaasa",
+        Core.Store.DeclarationChoice.Exclude => "välja",
+        _ => "",
+    };
     public const string A1 = "A1 tõend";
     public const string A1None = "puudub";
     public const string A1Estonian = "Eesti A1, töö välismaal";

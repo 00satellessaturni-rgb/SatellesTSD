@@ -6,6 +6,21 @@ using SatellesTSD.Core.Xbrl;
 
 namespace SatellesTSD.Core.Store;
 
+/// <summary>The accountant's word on declaring a person, kept with the person for every month until changed.</summary>
+public enum DeclarationChoice
+{
+    /// <summary>As the rules say: the declared payments, and the minimum's zero line under a valid (Kehtiv) employment.</summary>
+    Auto,
+
+    /// <summary>Declared as if the employment were valid: a paused or ended one (or none in the register) still gets the
+    /// minimum's zero line, and pay after the employment ended still owes the minimum, the other conditions holding.</summary>
+    Include,
+
+    /// <summary>Never declared: no line is built for the person, and what stands for them is undone (a draft goes, a
+    /// line on the server gets its T).</summary>
+    Exclude,
+}
+
 /// <summary>A client company the firm declares for.</summary>
 public sealed record Company(Guid Id, string RegistryCode, string Name, string? Notes = null);
 
@@ -18,6 +33,7 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <param name="PensionSource">Where the funded-pension facts came from, likewise.</param>
 /// <param name="RegisterKey">The register key (the personal code as the register wrote it, else the names) the person was
 /// created from or bound to, so a code or a name corrected by hand never splits the person from their register row.</param>
+/// <param name="Declaration">Whether the person is declared as the rules say, always, or never (the person card's "Deklareerimine"; see <see cref="DeclarationChoice"/>).</param>
 public sealed record Person(
     Guid Id,
     Guid CompanyId,
@@ -44,7 +60,8 @@ public sealed record Person(
     string? Notes,
     LookupSource ResidencySource = LookupSource.Unknown,
     LookupSource PensionSource = LookupSource.Unknown,
-    string? RegisterKey = null)
+    string? RegisterKey = null,
+    DeclarationChoice Declaration = DeclarationChoice.Auto)
 {
     public static Person New(Guid companyId, string firstName, string lastName, string? personalCode, Residency residency = Residency.Resident) =>
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,

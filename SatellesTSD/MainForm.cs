@@ -1131,6 +1131,8 @@ public sealed class MainForm : Form
         _personsGrid.Columns.Add(Column("checked", UiText.CheckedOn));
         _personsGrid.Columns.Add(Column("type", UiText.EmploymentType));
         _personsGrid.Columns.Add(Column("state", UiText.EntryState));
+        _personsGrid.Columns.Add(Column("end", UiText.EmploymentEnd, date: true));
+        _personsGrid.Columns.Add(Column("declaration", UiText.DeclarationLabel));
         _personsGrid.Columns.Add(Column("problems", UiText.Problems));
 
         DataGridViewRow? keepRow = null; // the row itself, since a sort moves the indexes
@@ -1141,7 +1143,7 @@ public sealed class MainForm : Form
             {
                 values.AddRange(["", UiText.UnmatchedRow, "", null]);
                 values.AddRange(_view.Sources.Select(_ => (object?)null));
-                values.AddRange([null, "", "", "", "", "", ""]);
+                values.AddRange([null, "", "", "", "", "", null, "", ""]);
             }
             else
             {
@@ -1154,6 +1156,8 @@ public sealed class MainForm : Form
                 values.Add(p is null ? "" : CheckedText(p));
                 values.Add(person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
                 values.Add(person.Register?.Entry.State ?? "");
+                values.Add(EmploymentEndValue(person.Register));
+                values.Add(p is null ? "" : UiText.DeclarationShort(p.Declaration));
                 values.Add(string.Join(", ", person.Problems.Select(x => x.Code).Distinct()));
             }
 
@@ -2016,6 +2020,28 @@ public sealed class MainForm : Form
     /// else the allowance in force — or none (shown as "ei") when none is applied.</summary>
     private decimal? ExemptionValue(Person? person) =>
         person is null || !person.BasicExemptionApplied ? null : person.ExemptionMonthInForce(_view!.Period.Year, _services?.Workspace.Rates ?? TaxRates.Year2026);
+
+    /// <summary>"Töötamise lõpu aeg": the day the register entry standing for the person ended — shown only for an
+    /// ended employment (kande olek 4, or an end on or before the month's last day), so a fixed-term contract still
+    /// running shows nothing; blank when the person has no register entry. The entry is the one covering the month,
+    /// else the latest begun by the month's end — not a later one, so a gap month between an ended contract and the
+    /// next one shows the ended contract's day.</summary>
+    private DateTime? EmploymentEndValue(MatchPerson? register)
+    {
+        if (register is null)
+        {
+            return null;
+        }
+
+        var last = new DateOnly(_view!.Period.Year, _view.Period.Month, 1).AddMonths(1).AddDays(-1);
+        var entry = register.ActiveEntry ?? register.Entries.Where(e => e.StartDate is null || e.StartDate <= last).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault();
+        if (entry is not { EndDate: { } end })
+        {
+            return null;
+        }
+
+        return entry.StateId == TorStates.Ended || end <= last ? end.ToDateTime(TimeOnly.MinValue) : null;
+    }
 
     private static string CheckedText(Person person)
     {

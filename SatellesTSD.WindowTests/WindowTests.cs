@@ -41,6 +41,20 @@ public class WindowTests
             Assert.Equal(("Üür", "Palgad", "57"), (stored.Category, stored.DefaultCategory, stored.TypeCode));
             Assert.Equal("Üür", form.PaymentsGrid.Rows[0].Cells["category"].Value?.ToString());
             Assert.DoesNotContain("905", form.PersonsGrid.Rows[0].Cells["src:LHV pank *1757"].Value?.ToString() ?? "", StringComparison.Ordinal); // rent is no salary: the Vahearuanne's cell follows the accountant's word
+
+            // the person card's "Deklareerimine": by the rules at first; "välja" saved is kept in the store and shown again
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];
+            Ui.Pump();
+            var card = form.PersonEditor;
+            Assert.Equal(["reeglite järgi", "kaasa (nagu kehtiv töötamine)", "välja (ei deklareerita)"], card.DeclarationBox.Items.Cast<object>().Select(i => i.ToString()));
+            Assert.Equal(0, card.DeclarationBox.SelectedIndex);
+            card.DeclarationBox.SelectedIndex = 2;
+            Assert.True(card.IsDirty);
+            card.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the reload after the save");
+            Assert.Equal(DeclarationChoice.Exclude, form.Services!.Store.FindPerson(form.View!.Period.CompanyId, SatellesTSD.Tests.ReviewFixtures.MariCode)!.Declaration);
+            Assert.Equal(2, form.PersonEditor.DeclarationBox.SelectedIndex);
+            Assert.Equal(["välja", "", ""], form.PersonsGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["declaration"].Value?.ToString() ?? "")); // the exception stands out in the grid; by the rules, nothing
         }));
     }
 
@@ -64,6 +78,11 @@ public class WindowTests
             // Maksuvaba: the amount when applied, "ei" when not, nothing on the unmatched row
             var persons = form.PersonsGrid;
             Assert.Equal(["700,00", "ei", ""], persons.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["exemption"].FormattedValue?.ToString()?.Replace('.', ',')));
+
+            // Töötamise lõpu aeg: the day an ended employment ended (the second person's VÕS ended in September), nothing
+            // for an employment still running or for the unmatched row; a date column, so it sorts as dates
+            Assert.Equal(["", "30.09.2026", ""], persons.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["end"].FormattedValue?.ToString() ?? ""));
+            Assert.Equal(typeof(DateTime), persons.Columns["end"]!.ValueType);
 
             // the persons sort by a header: the last names descending put the register's second person first
             persons.Sort(persons.Columns["last"]!, System.ComponentModel.ListSortDirection.Descending);

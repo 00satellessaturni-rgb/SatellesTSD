@@ -18,6 +18,7 @@ public sealed class PersonPanel : UserControl
     private static readonly Choice[] MemberChoices = [new("", UiText.Unknown), new("1", UiText.Yes), new("0", UiText.No)];
     private static readonly Choice[] RateChoices = [new("", UiText.Unknown), new("0.02", "2 %"), new("0.04", "4 %"), new("0.06", "6 %")];
     private static readonly Choice[] A1Choices = [new("0", UiText.A1None), new("1", UiText.A1Estonian), new("2", UiText.A1Foreign)];
+    private static readonly Choice[] DeclarationChoices = [new("Auto", UiText.DeclarationAuto), new("Include", UiText.DeclarationInclude), new("Exclude", UiText.DeclarationExclude)];
     private static readonly Choice[] TorTypeChoices = [new("", "—"), .. EmploymentTypes.All.Select(t => new Choice(t.TorTypeId, $"{t.TorTypeId} {t.Name}"))];
 
     private readonly TableLayoutPanel _table = new() { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Padding = new Padding(6) };
@@ -39,6 +40,7 @@ public sealed class PersonPanel : UserControl
     private readonly CheckBox _exemptionApplied = new() { Text = UiText.ExemptionApplied, AutoSize = true };
     private readonly TextBox _exemptionMonthly = new();
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true };
+    private readonly ComboBox _declaration = Combo(DeclarationChoices);
     private readonly ComboBox _a1 = Combo(A1Choices);
     private readonly TextBox _a1Country = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
     private readonly TextBox _workCountry = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
@@ -81,6 +83,7 @@ public sealed class PersonPanel : UserControl
         Row(UiText.ExemptionMonthly, _exemptionMonthly);
         Row(new Label { Text = UiText.ExemptionFull, AutoSize = true, ForeColor = Color.DimGray }, span: true);
         Row(_minimum, span: true);
+        Row(UiText.DeclarationLabel, _declaration);
         Row(UiText.A1, _a1);
         Row(UiText.A1Country, _a1Country);
         Row(UiText.WorkCountry, _workCountry);
@@ -96,7 +99,7 @@ public sealed class PersonPanel : UserControl
             box.TextChanged += (_, _) => Touched();
         }
 
-        foreach (var combo in new[] { _residency, _member, _rate, _a1, _torType })
+        foreach (var combo in new[] { _residency, _member, _rate, _a1, _torType, _declaration })
         {
             combo.SelectedIndexChanged += (_, _) => Touched();
         }
@@ -117,6 +120,11 @@ public sealed class PersonPanel : UserControl
 
     /// <summary>The person shown, for a caller to tell a reload of the same person from a move to another.</summary>
     public Guid? PresentedId => _person?.Id;
+
+    /// <summary>Seams for the window tests: the declaration choice and the save button.</summary>
+    internal ComboBox DeclarationBox => _declaration;
+
+    internal Button SaveButton => _save;
 
     public bool ConfirmResidency => _confirmResidency.Checked;
 
@@ -154,6 +162,7 @@ public sealed class PersonPanel : UserControl
         // the allowance in force stands in the box unless the person has one of their own (a smaller one by their application)
         _exemptionMonthly.Text = person is null ? "" : (person.BasicExemptionMonthly ?? TaxRates.Year2026.BasicExemptionMonth).ToString("0.00", CultureInfo.CurrentCulture);
         _minimum.Checked = person?.SocialTaxMinimumApplies ?? true;
+        _declaration.SelectedIndex = (int)(person?.Declaration ?? DeclarationChoice.Auto);
         _a1.SelectedIndex = (int)(person?.A1 ?? A1Case.None);
         _a1Country.Text = person?.A1Country ?? "";
         _workCountry.Text = person?.WorkCountry ?? "";
@@ -204,6 +213,7 @@ public sealed class PersonPanel : UserControl
             BasicExemptionApplied = _exemptionApplied.Checked,
             BasicExemptionMonthly = exemption == TaxRates.Year2026.BasicExemptionMonth ? null : exemption, // the allowance in force is the default, never a figure of the person's own
             SocialTaxMinimumApplies = _minimum.Checked,
+            Declaration = (DeclarationChoice)Math.Max(0, _declaration.SelectedIndex),
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),
             A1Country = Null(_a1Country.Text),
             WorkCountry = Null(_workCountry.Text),
