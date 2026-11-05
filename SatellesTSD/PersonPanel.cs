@@ -54,6 +54,9 @@ public sealed class PersonPanel : UserControl
     private readonly Button _lookUp = new() { Text = UiText.LookUp, AutoSize = true };
     private Person? _person;
     private bool _editable;
+    private int _year = DateTime.Today.Year;
+    private TaxRates _rates = TaxRates.Year2026;
+    private decimal? _shownExemption; // what the exemption box was filled with, so an untouched box keeps the stored figure
     private bool _filling;
 
     public event Action<Person, bool, bool>? SaveRequested;
@@ -136,6 +139,8 @@ public sealed class PersonPanel : UserControl
 
     internal Button SaveButton => _save;
 
+    internal TextBox ExemptionBox => _exemptionMonthly;
+
     public bool ConfirmResidency => _confirmResidency.Checked;
 
     public bool ConfirmPension => _confirmPension.Checked;
@@ -146,7 +151,15 @@ public sealed class PersonPanel : UserControl
 
     public void MarkClean() => IsDirty = false;
 
-    /// <summary>Shows a person's facts (a fresh copy: the panel edits what it was shown, nothing older).</summary>
+    /// <summary>Shows a person's facts for a month of <paramref name="year"/>, whose rates say the exemption in force.</summary>
+    public void Present(Person? person, bool editable, int year, TaxRates rates)
+    {
+        _year = year;
+        _rates = rates ?? throw new ArgumentNullException(nameof(rates));
+        Present(person, editable);
+    }
+
+    /// <summary>Shows a person's facts (a fresh copy: the panel edits what it was shown, nothing older), for the year last given.</summary>
     public void Present(Person? person, bool editable)
     {
         _filling = true;
@@ -169,8 +182,10 @@ public sealed class PersonPanel : UserControl
         _onPension.Checked = person?.OnOldAgeOrFlexiblePension == true;
         _pensionAgeYear.Text = person?.PensionAgeYear?.ToString(CultureInfo.InvariantCulture) ?? "";
         _exemptionApplied.Checked = person?.BasicExemptionApplied == true;
-        // the allowance in force stands in the box unless the person has one of their own (a smaller one by their application)
-        _exemptionMonthly.Text = person is null ? "" : (person.BasicExemptionMonthly ?? TaxRates.Year2026.BasicExemptionMonth).ToString("0.00", CultureInfo.CurrentCulture);
+        // the allowance in force for the month's year stands in the box (776 from the pension-age year), unless the person
+        // has one of their own (a smaller one by their application)
+        _shownExemption = person?.ExemptionMonthInForce(_year, _rates);
+        _exemptionMonthly.Text = _shownExemption is { } shown ? shown.ToString("0.00", CultureInfo.CurrentCulture) : "";
         _minimum.Checked = person?.SocialTaxMinimumApplies ?? true;
         _declaration.SelectedIndex = (int)(person?.Declaration ?? DeclarationChoice.Auto);
         _a1.SelectedIndex = (int)(person?.A1 ?? A1Case.None);
@@ -190,7 +205,7 @@ public sealed class PersonPanel : UserControl
 
         _save.Enabled = on && editable;
         _revert.Enabled = on && editable;
-        _lookUp.Enabled = on && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
+        _lookUp.Enabled = on && editable && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
         _filling = false;
         IsDirty = false;
     }
@@ -222,7 +237,7 @@ public sealed class PersonPanel : UserControl
             OnOldAgeOrFlexiblePension = _onPension.Checked,
             PensionAgeYear = pensionAgeYear,
             BasicExemptionApplied = _exemptionApplied.Checked,
-            BasicExemptionMonthly = exemption == TaxRates.Year2026.BasicExemptionMonth ? null : exemption, // the allowance in force is the default, never a figure of the person's own
+            BasicExemptionMonthly = ExemptionToStore(exemption, pensionAgeYear),
             SocialTaxMinimumApplies = _minimum.Checked,
             Declaration = (DeclarationChoice)Math.Max(0, _declaration.SelectedIndex),
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),
@@ -300,6 +315,20 @@ public sealed class PersonPanel : UserControl
     private static string? Null(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
     /// <summary>A number as the accountant types it: the Estonian comma, or the invariant dot; no thousands separators.</summary>
+    /// <summary>The person's own figure to store for the exemption box: unchanged from what was shown keeps what was
+    /// stored (a figure of the person's own stays theirs in every year); else nothing when the typed figure is the allowance
+    /// in force for the month's year by the pension-age year as typed (700, or 776 from that year), else the figure typed.</summary>
+    private decimal? ExemptionToStore(decimal? typed, int? pensionAgeYear)
+    {
+        if (typed == _shownExemption)
+        {
+            return _person?.BasicExemptionMonthly;
+        }
+
+        var inForce = pensionAgeYear is { } y && _year >= y ? _rates.PensionAgeExemptionMonth : _rates.BasicExemptionMonth;
+        return typed == inForce ? null : typed;
+    }
+
     private static bool TryDecimal(string text, out decimal? value)
     {
         value = null;

@@ -523,4 +523,166 @@ public class WindowTests
             Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 1 && panel.LinesGrid.Rows[0].Cells["action"].Value?.ToString() == "R uus", what: "the rebuild");
         }));
     }
+
+    [Fact]
+    public void The_cards_exemption_box_shows_the_years_figure_and_stores_only_a_figure_of_the_persons_own()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Mari(form);
+            var inForce = 700m.ToString("0.00", System.Globalization.CultureInfo.CurrentCulture);
+            Assert.Equal(inForce, form.PersonEditor.ExemptionBox.Text); // the 2026 figure in force, not the 2025 one
+
+            // saved with the box untouched: nothing of the person's own is stored, so another year's figure still follows the rates
+            form.PersonEditor.DeclarationBox.SelectedIndex = 1;
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the save with the box untouched");
+            Assert.Null(StoredMari(form).BasicExemptionMonthly);
+
+            Mari(form);
+            form.PersonEditor.ExemptionBox.Text = "500";
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the save of a figure of her own");
+            Assert.Equal(500m, StoredMari(form).BasicExemptionMonthly);
+
+            Mari(form);
+            form.PersonEditor.ExemptionBox.Text = inForce; // typed back to the figure in force: no figure of her own
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the save of the figure in force");
+            Assert.Null(StoredMari(form).BasicExemptionMonthly);
+        }));
+    }
+
+    [Fact]
+    public void The_export_asks_first_when_the_review_changed_after_the_lines_were_built()
+    {
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            new Core.Declare.PeriodDeclarer(store).Build(period.Id);
+            var workspace = new ReviewWorkspace(store);
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.SavePerson(mari with { FundedPensionMember = true, PensionRate = 0.02m }); // after "Koosta read"
+        });
+        var asked = new List<string>();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            Assert.True(panel.ExportButton.Enabled);
+            panel.ExportButton.PerformClick(); // answered "no": the folder dialog never opens
+            Ui.Until(() => !form.IsBusy && asked.Count > 0, what: "the export's question");
+            Assert.Equal([UiText.ReviewChangedSinceBuild], asked);
+            Assert.Empty(form.Services!.Store.Submissions(form.View!.Period.Id));
+            Assert.Equal(PaymentStatus.Draft, form.Services.Store.Payments(form.View.Period.Id).Single().Status);
+        }, confirm: (question, _) =>
+        {
+            asked.Add(question);
+            return false;
+        }));
+    }
+
+    [Fact]
+    public void The_feedback_cell_and_the_files_list_tell_the_reports_detail_in_their_tooltips()
+    {
+        using var fixture = new WindowFixture((store, _, period, folder) =>
+        {
+            WindowFixture.ExportAndUpload(store, period, folder);
+            var line = store.Payments(period.Id).Single();
+            var submission = store.Submissions(period.Id).Single();
+            var report = Path.Combine(folder, "tagasiside.xml");
+            File.WriteAllText(report, $"""
+                <processing result="OK">
+                  <entryHeader>
+                    <entryNumber>EE0201001</entryNumber>
+                    <validations><validation><errorLevel>WARNING</errorLevel><errorCode>KR_JAOTIS_TEST</errorCode><errorDescription>jaotuse märkus</errorDescription></validation></validations>
+                    <responseData>
+                      <entryDetail>
+                        <lineReferences><lineReference><lineInternalId>{line.LineNumber}</lineInternalId><lineNumberCounter>1</lineNumberCounter></lineReference></lineReferences>
+                        <data><code>TSD_SM</code><description>Sotsiaalmaks</description><info>330,00</info></data>
+                        <data><code>KR_TEST_HOIATUS</code><description>WARNING</description><info>vaata üle</info></data>
+                      </entryDetail>
+                    </responseData>
+                  </entryHeader>
+                </processing>
+                """);
+            WindowFixture.Submitter(store).ReadFeedback(submission.Id, report);
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            var cell = panel.LinesGrid.Rows[0].Cells["feedback"];
+            Assert.StartsWith("Warning: KR_TEST_HOIATUS", cell.Value?.ToString(), StringComparison.Ordinal); // the cell keeps its short text
+            var tip = panel.FeedbackTips.TextOf(panel.LinesGrid.Rows[0]) ?? "";
+            Assert.Contains("KR_TEST_HOIATUS (Warning): vaata üle", tip, StringComparison.Ordinal);
+            Assert.Contains("sotsiaalmaks", tip, StringComparison.Ordinal);
+            Assert.Contains(UiText.NextActionText(Core.Feedback.NextAction.ReviewWarning), tip, StringComparison.Ordinal);
+            Assert.DoesNotContain("sotsiaalmaks", cell.ToolTipText, StringComparison.Ordinal); // the grid's own tooltip would cut the text at 256 characters: never given it
+            Assert.Contains("KR_JAOTIS_TEST", panel.SubmissionsList.Items[0].ToolTipText, StringComparison.Ordinal);
+        }));
+    }
+
+    [Fact]
+    public void A_pension_age_persons_exemption_box_shows_the_pension_age_figure_and_stores_700_as_theirs()
+    {
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.SavePerson(mari with { PensionAgeYear = 2026 });
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var culture = System.Globalization.CultureInfo.CurrentCulture;
+            Mari(form);
+            Assert.Equal(776m.ToString("0.00", culture), form.PersonEditor.ExemptionBox.Text); // the pension-age figure of 2026
+
+            form.PersonEditor.ExemptionBox.Text = 700m.ToString("0.00", culture); // her own application: 700, below the 776 in force
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the save of 700");
+            Assert.Equal(700m, StoredMari(form).BasicExemptionMonthly);
+
+            Mari(form);
+            Assert.Equal(700m.ToString("0.00", culture), form.PersonEditor.ExemptionBox.Text);
+            form.PersonEditor.ExemptionBox.Text = 776m.ToString("0.00", culture);
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the save of the figure in force");
+            Assert.Null(StoredMari(form).BasicExemptionMonthly);
+        }));
+    }
+
+    [Fact]
+    public void The_export_is_refused_while_the_search_has_not_seen_every_linked_file()
+    {
+        using var fixture = new WindowFixture((store, company, period, _) =>
+        {
+            new Core.Declare.PeriodDeclarer(store).Build(period.Id);
+            var bytes = SatellesTSD.Tests.ReviewFixtures.Workbook(salary: 1000m);
+            var file = store.AddImport(company.Id, SatellesTSD.Tests.ReviewFixtures.Importer.Read("teine.xlsx", bytes), bytes);
+            store.LinkImport(period.Id, file.Id); // after "Koosta read", without a new search
+        });
+        var notices = new List<string>();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Informing = notices.Add;
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            Assert.True(form.View!.RunIsStale);
+            form.Declaration.ExportButton.PerformClick(); // refused before the folder dialog
+            Ui.Until(() => !form.IsBusy && notices.Count > 0, what: "the export's refusal");
+            Assert.Equal([UiText.RunStaleExport], notices);
+            Assert.Empty(form.Services!.Store.Submissions(form.View!.Period.Id));
+        }));
+    }
+
+    private static void Mari(MainForm form)
+    {
+        form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];
+        Ui.Pump();
+    }
+
+    private static Person StoredMari(MainForm form) => form.Services!.Store.FindPerson(form.View!.Period.CompanyId, SatellesTSD.Tests.ReviewFixtures.MariCode)!;
 }

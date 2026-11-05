@@ -123,4 +123,8 @@ public sealed class FeedbackOutcome
     public int Recorded { get; init; }
 
     public IReadOnlyDictionary<PaymentStatus, int> Statuses { get; init; } = new Dictionary<PaymentStatus, int>();
+
+    /// <summary>The report's findings that point at no line (a file refusal, a section-level finding); a confirmation
+    /// report's own answer is its <see cref="Confirmation"/>, not one of these.</summary>
+    public IReadOnlyList<GeneralValidation> General { get; init; } = [];
 }

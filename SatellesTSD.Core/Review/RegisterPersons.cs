@@ -9,7 +9,9 @@ namespace SatellesTSD.Core.Review;
 /// register writes them, with the employment's type id. The review and the lookups share this, so both see one person.</summary>
 public static class RegisterPersons
 {
-    public static Person? Find(IReadOnlyList<Person> persons, SearchPerson person)
+    /// <param name="runKeys">The register keys of the run the person comes from: a codeless row of these names still in it
+    /// is that person's, so a coded namesake beside it is not given the codeless person.</param>
+    public static Person? Find(IReadOnlyList<Person> persons, SearchPerson person, IReadOnlySet<string>? runKeys = null)
     {
         ArgumentNullException.ThrowIfNull(persons);
         ArgumentNullException.ThrowIfNull(person);
@@ -20,7 +22,13 @@ public static class RegisterPersons
 
         if (person.PersonalCode is { } code)
         {
-            return persons.FirstOrDefault(p => string.Equals(p.PersonalCode, code, StringComparison.Ordinal));
+            // by the code; else the person a codeless register row of the same names made (bound to that names key), so a
+            // register that writes the code from some month on keeps the one person — unless that codeless row is in this
+            // very run too, when the coded row is a namesake, another person
+            var nameKey = SearchPerson.NameKey(person.LastName, person.FirstName);
+            return persons.FirstOrDefault(p => string.Equals(p.PersonalCode, code, StringComparison.Ordinal))
+                ?? (runKeys?.Contains(nameKey) == true ? null
+                    : persons.FirstOrDefault(p => p.PersonalCode is null && string.Equals(p.RegisterKey, nameKey, StringComparison.Ordinal)));
         }
 
         return persons.FirstOrDefault(p => p.PersonalCode is null && SearchPerson.NameKey(p.LastName, p.FirstName) == person.Key);
@@ -28,19 +36,36 @@ public static class RegisterPersons
 
     /// <summary>The store person of a register person, bound to the register key, created when missing.</summary>
     /// <param name="persons">The company's persons as already read, to spare a query; read afresh when null.</param>
-    public static Person Ensure(IStore store, Guid companyId, MatchPerson registerPerson, IReadOnlyList<Person>? persons = null)
+    /// <param name="runKeys">The register keys of the run (see <see cref="Find"/>).</param>
+    public static Person Ensure(IStore store, Guid companyId, MatchPerson registerPerson, IReadOnlyList<Person>? persons = null, IReadOnlySet<string>? runKeys = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(registerPerson);
         var key = registerPerson.Key;
-        if (Find(persons ?? store.Persons(companyId), registerPerson.Person) is { } found)
+        if (Find(persons ?? store.Persons(companyId), registerPerson.Person, runKeys) is { } found)
         {
+            if (found.PersonalCode is null && registerPerson.Person.PersonalCode is { } code && !string.Equals(found.RegisterKey, key, StringComparison.Ordinal))
+            {
+                // a codeless person the register now writes with the code: the code is theirs from now on (the payee, the
+                // lookups); the binding to the names stays, so the earlier month still finds them. A person bound to this
+                // very key whose code the accountant cleared on the card keeps it cleared.
+                found = found with { PersonalCode = code };
+                store.UpdatePerson(found);
+            }
+
             if (string.Equals(found.RegisterKey, key, StringComparison.Ordinal))
             {
                 return found;
             }
 
-            // found by code or by names: bound now, so a later correction of either keeps the link
+            if (found.RegisterKey is not null)
+            {
+                // bound to another key already (another month's register wrote the person otherwise): the first binding
+                // stands, so that month still finds the person by it — rebinding would split the person between months
+                return found;
+            }
+
+            // found by code or by names and never bound: bound now, so a later correction of either keeps the link
             var bound = found with { RegisterKey = key };
             store.UpdatePerson(bound);
             return bound;

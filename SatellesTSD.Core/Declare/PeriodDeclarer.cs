@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
@@ -25,8 +26,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
     public const string ModeChanged = "MODE_CHANGED";
     public const string RatesMissing = "RATES_MISSING";
+    public const string RunStale = "RUN_STALE";
     public const string Excluded = "EXCLUDED";
     public const string Included = "INCLUDED";
+    public const string FactsOfAnotherMonth = "FACTS_OF_ANOTHER_MONTH";
 
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
@@ -129,6 +132,47 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             .ToList();
     }
 
+    /// <summary>Whether the period's drafts are what a build would make now: a build run and rolled back, its drafts
+    /// compared with the stored ones (by key, action, source, person, net paid and the line itself, its counter aside) — so
+    /// the export can say that the review changed after "Koosta read". False too for a stale search (the files
+    /// changed after it). Null when it cannot be told (a build the period refuses: another cut on the server, no rates for
+    /// its year, not a Draft). Never inside another unit of work: the
+    /// rollback is the outermost scope's.</summary>
+    public bool? DraftsCurrent(Guid periodId, DeclarationMode mode = DeclarationMode.PerPayment)
+    {
+        List<string> Drafts() => _store.Payments(periodId)
+            .Where(p => p.Status == PaymentStatus.Draft)
+            .Select(p => string.Join("|", p.Section, p.LineNumber, p.Action, p.SourceRef, p.PersonId, p.NetPaid, JsonSerializer.Serialize(p.Line with { Counter = 0 }, Json)))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var before = Drafts();
+        List<string>? after = null;
+        try
+        {
+            _store.InTransaction(() =>
+            {
+                Build(periodId, mode);
+                after = Drafts();
+                throw new DryRunDone(); // everything the build wrote goes back: drafts, the line counter, persons bound
+            });
+        }
+        catch (DryRunDone)
+        {
+        }
+        catch (DeclareException e) when (e.Code == RunStale)
+        {
+            return false; // a search that never saw every linked file: the drafts cannot be what a build would make
+        }
+        catch (Exception e) when (e is DeclareException or ReviewException)
+        {
+            return null;
+        }
+
+        return after is not null && before.SequenceEqual(after, StringComparer.Ordinal);
+    }
+
+    private sealed class DryRunDone : Exception;
+
     /// <summary>Builds the period's lines from the review (Draft only), cut as the mode says. Once lines of one cut are
     /// on the server, a build in the other cut is refused: it would cancel every line and declare the month anew.</summary>
     public BuildReport Build(Guid periodId, DeclarationMode mode = DeclarationMode.PerPayment)
@@ -137,6 +181,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         if (!view.Editable)
         {
             throw new DeclareException(ReviewWorkspace.PeriodNotDraft, $"The period is {view.Period.State}; its lines are built while it is a Draft.");
+        }
+
+        if (view.RunIsStale)
+        {
+            // the run never saw a file linked (or kept one unlinked) since: its lines would miss or double payments
+            throw new DeclareException(RunStale, "The period's files changed after the payments were searched; search again (Otsi maksed) before building the lines.");
         }
 
         var period = view.Period;
@@ -232,6 +282,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var declared = new List<(ReviewPayment Payment, string Source)>();
         var refusedTypes = new HashSet<string>(StringComparer.Ordinal); // the totals cut: a type with a refused payment is not rebuilt
         var keptMinimum = false; // a refused payment's line left standing carries the minimum: no zero line beside it
+        var keptPools = new List<string>(); // refused payments' lines on the server that used the month's exemption or minimum
         foreach (var payment in reviewPerson.Payments.Where(p => p.Declare))
         {
             var source = SourceOf(payment);
@@ -247,11 +298,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 {
                     _store.DeleteDraft(stale.Id);
                     lines.Add(new BuiltLine { Key = stale.LineNumber, Section = stale.Section, Action = stale.Action, Change = LineChange.Deleted, Source = payment.Reference, Note = Refused });
+                    NotePool(HistoryStanding(stale), keptPools);
                 }
                 else if (bySource.TryGetValue(source, out var kept))
                 {
                     lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = payment.Reference, Note = Refused });
                     keptMinimum |= CarriesMinimum(kept);
+                    NotePool(kept, keptPools);
                 }
 
                 claimed.Add(source);
@@ -280,11 +333,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     {
                         _store.DeleteDraft(stale.Id);
                         lines.Add(new BuiltLine { Key = stale.LineNumber, Section = stale.Section, Action = stale.Action, Change = LineChange.Deleted, Source = stale.SourceRef ?? "", Note = Refused });
+                        NotePool(HistoryStanding(stale), keptPools);
                     }
                     else if (bySource.TryGetValue(source, out var kept))
                     {
                         lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = kept.SourceRef ?? "", Note = Refused });
                         keptMinimum |= CarriesMinimum(kept);
+                        NotePool(kept, keptPools);
                     }
 
                     continue;
@@ -364,6 +419,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
         var facts = person.FactsFor(period.Year, share);
+        if (person.FactsControlDate is { } asked && (asked.Year != period.Year || asked.Month != period.Month)
+            && (person.ResidencySource == LookupSource.Emta || person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived))
+        {
+            // a note, not a refusal: the facts stand as the registers said them for that day; this month may say otherwise
+            problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.");
+        }
+
         if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)
         {
             // pay after the employment ended (a final settlement): the register covers no day of the month, so no minimum is owed on it
@@ -380,6 +442,23 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             {
                 problems.Add($"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.");
             }
+        }
+
+        if (keptPools.Count > 0 && monthPayments.Count > 0)
+        {
+            // a refused payment's line on the server used the month's exemption or minimum: the other payments would be given
+            // them again (MTA refuses the month's exemption twice, KR_KOOND_02) — nothing is allocated until it is put right
+            problems.Add($"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.");
+            foreach (var source in monthPayments.Select(m => m.Key))
+            {
+                claimed.Add(source); // what stands, stands; nothing is cancelled
+                if (bySource.TryGetValue(source, out var held))
+                {
+                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = references[source].Reference, Note = NotAllocated });
+                }
+            }
+
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems, MinimumShare = share };
         }
 
         MonthAllocation allocation;
@@ -579,6 +658,16 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     private static bool SameLine(PaymentLine a, PaymentLine b) =>
         JsonSerializer.Serialize(a with { Counter = 0, Action = LineAction.R }, Json) == JsonSerializer.Serialize(b with { Counter = 0, Action = LineAction.R }, Json);
+
+    /// <summary>Notes a refused payment's line that stands on the server (not a T) and used the month's exemption or minimum.</summary>
+    private static void NotePool(StoredPayment? line, List<string> pools)
+    {
+        if (line is { OnServer: true, Result: { } result } && line.Action != LineAction.T
+            && (result.ExemptionUsed > 0 || result.SocialTaxMinimumApplies))
+        {
+            pools.Add(line.LineNumber);
+        }
+    }
 
     /// <summary>Whether a standing line (not its cancellation) is of a type that carries the minimum — so that the
     /// month's minimum is already on it, topped up there or owed through it.</summary>

@@ -1,10 +1,12 @@
 using System.Text;
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
+using SatellesTSD.Core.Tax;
 using SatellesTSD.Infrastructure;
 
 namespace SatellesTSD.Tests;
@@ -141,6 +143,38 @@ public class PeriodPipelineTests
             var one = await pipeline.LookUpAsync(mari, period);
             Assert.Equal(mari.Id, one.PersonId);
             Assert.Contains("reused", string.Join(" ", one.Steps));
+            Assert.NotNull(store.FindPerson(period.CompanyId, ReviewFixtures.MariCode)!.FactsControlDate); // the day the registers were asked for
+
+            // a month past Draft asks the registers no more: the facts other months are built with would change under it
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Equal(ReviewWorkspace.PeriodNotDraft, (await Assert.ThrowsAsync<ReviewException>(() => pipeline.RunLookupsAsync(period.Id))).Code);
+            Assert.Equal(ReviewWorkspace.PeriodNotDraft, (await Assert.ThrowsAsync<ReviewException>(() => pipeline.LookUpAsync(mari, period))).Code);
+        }
+    }
+
+    [Fact]
+    public void A_file_linked_after_the_run_makes_the_run_stale_until_it_is_unlinked_or_the_search_made_again()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook());
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026);
+            Assert.False(workspace.Load(period.Id).RunIsStale);
+
+            // a second file (its own register and statement) linked after the search: the run never saw it
+            var second = pipeline.ImportFile(period.Id, "teine.xlsx", ReviewFixtures.Workbook(salary: 1000m)).File!;
+            Assert.True(workspace.Load(period.Id).RunIsStale);
+            Assert.Equal(PeriodDeclarer.RunStale, Assert.Throws<DeclareException>(() => declarer.Build(period.Id)).Code);
+            Assert.Empty(store.Payments(period.Id)); // refused before any write
+            Assert.False(declarer.DraftsCurrent(period.Id)); // the export is told: no draft can be what a search of every file would make
+
+            pipeline.UnlinkFile(period.Id, second.Id);
+            Assert.False(workspace.Load(period.Id).RunIsStale);
+            Assert.Null(Record.Exception(() => declarer.Build(period.Id)));
         }
     }
 }

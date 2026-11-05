@@ -33,8 +33,13 @@ public sealed class HistoryDialog : Form
     /// <summary>The accountant's word on the picked version: on the server (true) or refused (false).</summary>
     public event Action<StoredPayment, bool>? ResolveRequested;
 
+    /// <summary>The feedback cell's long tooltip: the version's latest report in full.</summary>
+    internal GridTips FeedbackTips { get; }
+
     public HistoryDialog(AppServices services, DeclaredLine line)
     {
+        FeedbackTips = new GridTips(_grid, "feedback");
+        Disposed += (_, _) => FeedbackTips.Dispose();
         ArgumentNullException.ThrowIfNull(line);
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _line = line.Payment;
@@ -89,6 +94,7 @@ public sealed class HistoryDialog : Form
         var files = _services.Store.Submissions(_line.PeriodId).ToDictionary(s => s.Id, s => s.FileName);
         Versions = _services.Store.History(_line.PeriodId, _line.Section, _line.LineNumber);
         _grid.Rows.Clear();
+        FeedbackTips.Clear();
         foreach (var version in Versions)
         {
             var feedback = _services.Store.Feedback(version.Id).LastOrDefault();
@@ -103,6 +109,8 @@ public sealed class HistoryDialog : Form
                 feedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "");
             var row = _grid.Rows[index];
             row.Tag = version;
+            FeedbackTips.Set(row, feedback is null ? null : UiText.FeedbackDetail(feedback, version.Result));
+
             if (version.Status is PaymentStatus.Rejected or PaymentStatus.Cancelled)
             {
                 row.DefaultCellStyle.ForeColor = Color.Gray;

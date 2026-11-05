@@ -57,7 +57,7 @@ public class RecordEqualityTests
         yield return [SampleHit];
         yield return [new SubTableRow("k", "name", new Dictionary<string, decimal> { ["LHV pank *1757"] = 1m })];
         yield return [new MatchResult(2026, 10, [SampleMatchPerson], [SampleSource], [SampleHit], [SampleProblem], "{}")];
-        yield return [new StoredMatchRun(Guid.NewGuid(), Guid.NewGuid(), new DateTime(2026, 11, 3, 12, 0, 0, DateTimeKind.Utc), "{}", [SampleProblem])];
+        yield return [new StoredMatchRun(Guid.NewGuid(), Guid.NewGuid(), new DateTime(2026, 11, 3, 12, 0, 0, DateTimeKind.Utc), "{}", [SampleProblem], Guid.NewGuid())];
         yield return [new StoredMatchPerson(Guid.NewGuid(), Guid.NewGuid(), 1, "key", "38810140309", "BAVÕKIN", "DMITRI", Guid.NewGuid(), [Guid.NewGuid()])];
         yield return
         [

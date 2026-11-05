@@ -41,6 +41,18 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// every payment row of the run its defaults and its overlay — a row the run found for two persons once, nobody's
     /// until the accountant names one — the hand lines their place; the rows nobody matched come last. Without a run
     /// the view holds the files and the persons of the company only.</summary>
+    /// <summary>Whether the linked files are no longer those the run read: the same filter as the run's (register sheets, and
+    /// statement sheets with a layout), compared by sheet id — not by import time, an older file can be linked after the run.</summary>
+    private bool IsStale(StoredMatchRun storedRun, MatchResult run, IReadOnlyList<ImportFile> files)
+    {
+        var sheets = files.SelectMany(f => _store.Sheets(f.Id)).ToList();
+        var tor = sheets.Where(s => s.Kind == SheetKind.Tor).Select(s => s.Id).ToHashSet();
+        var statements = sheets.Where(s => s is { Kind: SheetKind.Statement, Layout: not null }).Select(s => s.Id).ToHashSet();
+        var runTor = storedRun.TorSheetId is { } t ? new HashSet<Guid> { t } : [];
+        var runStatements = run.Sources.Select(s => s.SheetId).OfType<Guid>().ToHashSet();
+        return !tor.SetEquals(runTor) || !statements.SetEquals(runStatements);
+    }
+
     public ReviewView Load(Guid periodId)
     {
         var period = FindPeriod(periodId);
@@ -57,11 +69,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         if (run is not null)
         {
             var known = _store.Persons(company.Id);
+            var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
             foreach (var registerPerson in run.Persons)
             {
-                var person = RegisterPersons.Ensure(_store, company.Id, registerPerson, known);
+                var person = RegisterPersons.Ensure(_store, company.Id, registerPerson, known, runKeys);
                 personsByKey[registerPerson.Key] = person;
-                if (!known.Any(p => p.Id == person.Id && p.RegisterKey == person.RegisterKey))
+                if (!known.Any(p => p.Id == person.Id && p.RegisterKey == person.RegisterKey && p.PersonalCode == person.PersonalCode))
                 {
                     known = _store.Persons(company.Id);
                 }
@@ -184,6 +197,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Company = company,
             Run = run,
             StoredRun = storedRun,
+            RunIsStale = storedRun is not null && run is not null && IsStale(storedRun, run, files),
             Catalog = catalog,
             Files = files,
             Sources = sources,

@@ -36,7 +36,7 @@ public sealed class DeclarationPanel : UserControl
         RowHeadersVisible = false,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
     };
-    private readonly ListView _submissions = new() { Dock = DockStyle.Bottom, Height = 110, View = View.Details, FullRowSelect = true, MultiSelect = false };
+    private readonly ListView _submissions = new() { Dock = DockStyle.Bottom, Height = 110, View = View.Details, FullRowSelect = true, MultiSelect = false, ShowItemToolTips = true };
     private bool _filling;
 
     public event Action? BuildRequested;
@@ -61,6 +61,7 @@ public sealed class DeclarationPanel : UserControl
     // the window tests drive the panel through these
     internal DataGridView LinesGrid => _lines;
     internal Button BuildButton => _build;
+    internal Button ExportButton => _export;
     internal Button UploadedButton => _uploaded;
     internal Button ConfirmedButton => _confirmed;
     internal Button ReopenButton => _reopen;
@@ -79,8 +80,13 @@ public sealed class DeclarationPanel : UserControl
         EnableLineButtons();
     }
 
+    /// <summary>The feedback cell's long tooltip: the latest report in full.</summary>
+    internal GridTips FeedbackTips { get; }
+
     public DeclarationPanel()
     {
+        FeedbackTips = new GridTips(_lines, "feedback");
+        Disposed += (_, _) => FeedbackTips.Dispose();
         _buttons.Controls.AddRange([_build, _export, _withdraw, _uploaded, _feedback, _confirmed, _reopen, _accept, _reject, _history]);
         foreach (var (name, header, right) in new[]
         {
@@ -151,6 +157,7 @@ public sealed class DeclarationPanel : UserControl
         var sortDirection = _lines.SortOrder == SortOrder.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending;
         DataGridViewRow? keepRow = null;
         _lines.Rows.Clear();
+        FeedbackTips.Clear();
         foreach (var line in lines)
         {
             var p = line.Payment;
@@ -176,6 +183,8 @@ public sealed class DeclarationPanel : UserControl
                 line.Versions);
             var row = _lines.Rows[index];
             row.Tag = line;
+            FeedbackTips.Set(row, line.LastFeedback is { } detail ? UiText.FeedbackDetail(detail, r) : null);
+
             row.DefaultCellStyle.BackColor = p.Status switch
             {
                 PaymentStatus.Draft => Color.White,
@@ -212,7 +221,7 @@ public sealed class DeclarationPanel : UserControl
         foreach (var submission in submissions)
         {
             var item = new ListViewItem([submission.FileName, submission.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture), submission.UniqueId,
-                submission.Result?.ToString() ?? "", submission.FeedbackSource ?? ""]) { Tag = submission };
+                submission.Result?.ToString() ?? "", submission.FeedbackSource ?? ""]) { Tag = submission, ToolTipText = string.Join(Environment.NewLine, submission.General.Select(UiText.GeneralText)) };
             _submissions.Items.Add(item);
         }
 

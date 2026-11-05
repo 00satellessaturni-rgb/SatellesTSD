@@ -611,4 +611,52 @@ public class ReviewWorkspaceTests
             Assert.Equal([ReviewChecks.ResidencyNotChecked, ReviewChecks.NotInPeriod, ReviewChecks.NoType], next.Checks.Select(c => c.Code));
         }
     }
+
+    [Fact]
+    public void A_codeless_register_person_keeps_their_store_person_when_a_later_register_writes_the_code()
+    {
+        using var store = SqliteStore.InMemory();
+        var company = store.AddCompany("10235688", "Näidis OÜ");
+        TorEntry Entry(string? code) => new(1, "1", code, "JAAN", "TAMM", "EE", new DateOnly(2024, 1, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+        var nameKey = SearchPerson.NameKey("TAMM", "JAAN");
+        var codeless = new MatchPerson(new SearchPerson(nameKey, "TAMM", "JAAN", null), [Entry(null)], Entry(null), 0);
+        var coded = new MatchPerson(new SearchPerson(ReviewFixtures.JaanCode, "TAMM", "JAAN", ReviewFixtures.JaanCode), [Entry(ReviewFixtures.JaanCode)], Entry(ReviewFixtures.JaanCode), 0);
+
+        // October's register wrote no code: a codeless person bound to the names; November's writes it: the same person
+        var october = RegisterPersons.Ensure(store, company.Id, codeless);
+        var november = RegisterPersons.Ensure(store, company.Id, coded);
+        Assert.Equal(october.Id, november.Id);
+        var stored = Assert.Single(store.Persons(company.Id));
+        Assert.Equal(nameKey, stored.RegisterKey); // the first binding stands, so October still finds the person by it
+        Assert.Equal(ReviewFixtures.JaanCode, stored.PersonalCode); // the code the register now writes is theirs: the payee, the lookups
+        Assert.Equal(october.Id, RegisterPersons.Ensure(store, company.Id, codeless).Id);
+        Assert.Single(store.Persons(company.Id));
+    }
+
+    [Fact]
+    public void A_coded_namesake_beside_the_codeless_register_row_in_one_run_is_another_person()
+    {
+        using var store = SqliteStore.InMemory();
+        var company = store.AddCompany("10235688", "Näidis OÜ");
+        TorEntry Entry(string? code) => new(1, "1", code, "JAAN", "TAMM", "EE", new DateOnly(2024, 1, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+        var nameKey = SearchPerson.NameKey("TAMM", "JAAN");
+        var codeless = new MatchPerson(new SearchPerson(nameKey, "TAMM", "JAAN", null), [Entry(null)], Entry(null), 0);
+        var coded = new MatchPerson(new SearchPerson(ReviewFixtures.JaanCode, "TAMM", "JAAN", ReviewFixtures.JaanCode), [Entry(ReviewFixtures.JaanCode)], Entry(ReviewFixtures.JaanCode), 1);
+        var first = RegisterPersons.Ensure(store, company.Id, codeless);
+
+        // one run holds both rows: the coded one is a namesake, not the codeless person written with a code at last
+        var runKeys = new HashSet<string>(StringComparer.Ordinal) { nameKey, ReviewFixtures.JaanCode };
+        var namesake = RegisterPersons.Ensure(store, company.Id, coded, runKeys: runKeys);
+        Assert.NotEqual(first.Id, namesake.Id);
+        Assert.Null(store.Persons(company.Id).Single(p => p.Id == first.Id).PersonalCode);
+        Assert.Equal(first.Id, RegisterPersons.Ensure(store, company.Id, codeless, runKeys: runKeys).Id);
+
+        // a person bound to the code whose code the accountant cleared on the card (given to another): it stays cleared
+        var bound = store.Persons(company.Id).Single(p => p.Id == namesake.Id);
+        store.UpdatePerson(bound with { PersonalCode = null });
+        var other = store.AddPerson(Person.New(company.Id, "Teine", "Isik", ReviewFixtures.JaanCode));
+        Assert.Equal(namesake.Id, RegisterPersons.Ensure(store, company.Id, coded, runKeys: runKeys).Id);
+        Assert.Null(store.Persons(company.Id).Single(p => p.Id == namesake.Id).PersonalCode);
+        Assert.Equal(ReviewFixtures.JaanCode, store.Persons(company.Id).Single(p => p.Id == other.Id).PersonalCode);
+    }
 }

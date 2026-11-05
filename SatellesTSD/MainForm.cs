@@ -591,6 +591,13 @@ public sealed class MainForm : Form
                 Inform(UiText.DeclareModeRefused, UiText.BuildLines);
                 return;
             }
+            catch (DeclareException e) when (e.Code == PeriodDeclarer.RunStale)
+            {
+                // a file linked or unlinked after the search: the lines would miss what the search never saw
+                Log($"{UiText.BuildLines}: {e.Message}");
+                Inform(UiText.RunStaleRefused, UiText.BuildLines);
+                return;
+            }
             catch (DeclareException e) when (e.Code == PeriodDeclarer.RatesMissing)
             {
                 // a year this version has no rates for: said, never computed with another year's figures
@@ -629,6 +636,44 @@ public sealed class MainForm : Form
 
     private async Task ExportAsync()
     {
+        if (_services is null || _view is null)
+        {
+            return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // the card's edits are in the export or dropped, never saved into a locked month after it
+            ReloadView(); // the card and the grids show what the store holds, whichever way it went — even if the export stops here
+            if (_services is null || _view is null)
+            {
+                return;
+            }
+        }
+
+        if (_view.Editable && _view.RunIsStale)
+        {
+            // a file linked or unlinked after the search: the drafts miss (or double) payments, whatever the build would say
+            Log($"{UiText.Export}: {UiText.RunStale}");
+            Inform(UiText.RunStaleExport, UiText.Export);
+            return;
+        }
+
+        // The lines are those "Koosta read" made: a review changed after it (a card, a type, a link) would not be in them.
+        var checkServices = _services;
+        var checkPeriod = _view.Period.Id;
+        var mode = DeclarationMode;
+        bool? current = null;
+        await RunBusyAsync(async () => current = await Task.Run(() => checkServices.Declarer.DraftsCurrent(checkPeriod, mode)));
+        if (current is null)
+        {
+            Log(UiText.ReviewNotChecked);
+        }
+        else if (current == false && !Confirm(UiText.ReviewChangedSinceBuild, UiText.Export))
+        {
+            return;
+        }
+
         if (_services is null || _view is null)
         {
             return;
@@ -788,6 +833,11 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // before the report is read into the store
+        }
+
         var services = _services;
         var path = dialog.FileName;
         await RunBusyAsync(async () =>
@@ -798,6 +848,10 @@ public sealed class MainForm : Form
                 Log(outcome.Confirmation is { } confirmation
                     ? $"{UiText.ReadFeedback} {outcome.Source}: kinnitamise raport — {confirmation}"
                     : $"{UiText.ReadFeedback} {outcome.Source}: {outcome.Recorded} rida; {string.Join(", ", outcome.Statuses.Select(kv => $"{UiText.PaymentStatusText(kv.Key)} {kv.Value}"))}");
+                foreach (var general in outcome.General)
+                {
+                    Log("   " + UiText.GeneralText(general)); // a finding about the file or a section, on no line
+                }
             }
         });
         ReloadView();
@@ -892,6 +946,11 @@ public sealed class MainForm : Form
 
     private void OpenStore(string path)
     {
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // against the store it was typed for, before that store closes
+        }
+
         _lookups?.Cancel();
         _services?.Dispose();
         _services = null;
@@ -1320,6 +1379,12 @@ public sealed class MainForm : Form
     {
         var person = SelectedPerson;
         FillPayments(person);
+        if (_busy && _personPanel.IsDirty)
+        {
+            // a run holds the store: the typed edits stay on the card, unasked, until the run's reload shows a person again
+            return;
+        }
+
         var target = person?.Person;
         var sameAsTyped = _personPanel.IsDirty && _personPanel.PresentedId is { } presented && presented == target?.Id;
         if (!sameAsTyped)
@@ -1330,7 +1395,14 @@ public sealed class MainForm : Form
                 BeginInvoke(() => ReloadView());
             }
 
-            _personPanel.Present(target, Editable && !_busy);
+            if (_view is { } view)
+            {
+                _personPanel.Present(target, Editable && !_busy, view.Period.Year, TaxRates.For(view.Period.Year) ?? _services?.Workspace.Rates ?? TaxRates.Year2026);
+            }
+            else
+            {
+                _personPanel.Present(target, Editable && !_busy);
+            }
         }
 
         _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true };
@@ -1550,12 +1622,12 @@ public sealed class MainForm : Form
         var editable = _view?.Editable ?? hasCompany;
         _stateLabel.Text = _view is null
             ? hasCompany ? UiText.NoPeriodYet : ""
-            : $"{UiText.PeriodState(_view.Period.State)} — {(_view.Editable ? UiText.Editable : UiText.Locked)}{StateDates(_view.Period)}";
+            : $"{UiText.PeriodState(_view.Period.State)} — {(_view.Editable ? UiText.Editable : UiText.Locked)}{StateDates(_view.Period)}{(_view.Editable && _view.RunIsStale ? " — " + UiText.RunStale : "")}";
         // without a company the files' TÖR export may name one (found or created); with one shown, its month must be open
         _importButton.Enabled = !_busy && _services is not null && (hasCompany ? editable : SelectedPeriod is not null);
         _filesButton.Enabled = !_busy && _view is not null;
         _matchButton.Enabled = !_busy && Editable;
-        _lookupButton.Enabled = !_busy && _view is not null && _services?.Pipeline.HasLookups == true;
+        _lookupButton.Enabled = !_busy && Editable && _services?.Pipeline.HasLookups == true; // a locked month's lookups would rewrite the facts other months are built with
         _addLineButton.Enabled = !_busy && hasCompany && editable;
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
@@ -1689,6 +1761,11 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // before the import holds the store
+        }
+
         var periodId = period.Id;
         await RunBusyAsync(async () =>
         {
@@ -1727,9 +1804,14 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_view.Run is not null && MessageBox.Show(this, UiText.RunReplacesRun, UiText.RunMatch, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (_view.Run is not null && !Confirm(UiText.RunReplacesRun, UiText.RunMatch))
         {
             return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // before the run holds the store
         }
 
         var services = _services;

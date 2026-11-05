@@ -147,6 +147,11 @@ public sealed class ReviewView
 
     public StoredMatchRun? StoredRun { get; init; }
 
+    /// <summary>Whether the period's files changed after the run: a statement sheet with a layout linked or unlinked since,
+    /// or the register sheets not the one the run read. The lines would then miss what the run never saw — "Otsi maksed
+    /// uuesti" (with one register sheet linked).</summary>
+    public bool RunIsStale { get; init; }
+
     /// <summary>The catalog the run was made with (the category picker's list), else the one in force.</summary>
     public required MatchCatalog Catalog { get; init; }
 

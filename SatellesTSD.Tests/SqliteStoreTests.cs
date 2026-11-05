@@ -477,6 +477,26 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void A_black_M_on_an_unknown_key_takes_back_an_earlier_version_settled_on_the_server_by_mistake()
+    {
+        var (store, _, period, person) = Setup();
+        using (store)
+        {
+            var r = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file1 = store.AddSubmission(period.Id, "f1.xml", "u1", [r.Id], DateTime.UtcNow);
+            store.RecordFeedback(file1.Id, Clean("EE0201001", r.LineNumber, 1)); // a report read onto the wrong file, say: Accepted
+            var m = store.AddPayment(SalaryDraft(store, period, person, LineAction.M, r.LineNumber, gross: 900m));
+            var file2 = store.AddSubmission(period.Id, "f2.xml", "u2", [m.Id], DateTime.UtcNow);
+
+            // MTA says the key is not there: the accepted version was never on the server, and the key is free for an R
+            store.RecordFeedback(file2.Id, Coloured("EE0201001", r.LineNumber, "ERROR_BLACK", FeedbackReport.RuleChangeOnUnknownKey));
+
+            Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Rejected], store.History(period.Id, Section.EE0201001, r.LineNumber).Select(v => v.Status));
+            Assert.Equal(3, store.AddPayment(SalaryDraft(store, period, person, LineAction.R, r.LineNumber)).Version);
+        }
+    }
+
+    [Fact]
     public void A_report_that_names_a_line_of_another_file_is_refused()
     {
         var (store, _, period, person) = Setup();

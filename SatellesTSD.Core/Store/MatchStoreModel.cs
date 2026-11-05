@@ -4,12 +4,12 @@ namespace SatellesTSD.Core.Store;
 
 /// <summary>A period's match run as stored: when it ran, the catalog it ran with (so a later edit of the categories
 /// never re-reads stored verdicts), and its problems.</summary>
-public sealed record StoredMatchRun(Guid Id, Guid PeriodId, DateTime RunAt, string CatalogJson, IReadOnlyList<MatchProblem> Problems)
+public sealed record StoredMatchRun(Guid Id, Guid PeriodId, DateTime RunAt, string CatalogJson, IReadOnlyList<MatchProblem> Problems, Guid? TorSheetId = null)
 {
     public bool Equals(StoredMatchRun? other) =>
-        other is not null && Id == other.Id && PeriodId == other.PeriodId && RunAt == other.RunAt && CatalogJson == other.CatalogJson && Problems.SequenceEqual(other.Problems);
+        other is not null && Id == other.Id && PeriodId == other.PeriodId && RunAt == other.RunAt && CatalogJson == other.CatalogJson && Problems.SequenceEqual(other.Problems) && TorSheetId == other.TorSheetId;
 
-    public override int GetHashCode() => HashCode.Combine(Id, PeriodId, RunAt, Problems.Count);
+    public override int GetHashCode() => HashCode.Combine(Id, PeriodId, RunAt, Problems.Count, TorSheetId);
 }
 
 /// <summary>A person of a stored run, with the register rows behind them.</summary>

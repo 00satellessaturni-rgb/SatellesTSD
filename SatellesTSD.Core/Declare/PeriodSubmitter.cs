@@ -164,8 +164,9 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         _store.SetPeriodState(periodId, PeriodState.Uploaded, _clock.GetUtcNow().UtcDateTime);
     }
 
-    /// <summary>The accountant confirmed the declaration in e-MTA. Refused while a line still awaits a verdict or
-    /// needs a change, unless forced.</summary>
+    /// <summary>The accountant confirmed the declaration in e-MTA. Refused while a line still awaits a verdict, needs a
+    /// change, or was refused by MTA and so is not on the server (black, or settled as refused by hand), unless forced:
+    /// a payment the review no longer declares may stay refused.</summary>
     public void MarkConfirmed(Guid periodId, bool force = false)
     {
         var period = FindPeriod(periodId);
@@ -185,6 +186,13 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         if (open.Count > 0 && !force)
         {
             throw new DeclareException(LinesPending, $"{open.Count} line(s) still await a verdict or need a change: {string.Join(", ", open.Select(p => p.LineNumber))}.");
+        }
+
+        // a key whose every version MTA refused stands as Rejected: nothing of it is on the server
+        var refused = lines.Where(p => p.Status == PaymentStatus.Rejected).ToList();
+        if (refused.Count > 0 && !force)
+        {
+            throw new DeclareException(LinesPending, $"{refused.Count} line(s) were refused by MTA and are not on the server: {string.Join(", ", refused.Select(p => p.LineNumber))}; reopen the period and build again to resend them, or confirm anyway.");
         }
 
         _store.SetPeriodState(periodId, PeriodState.Confirmed, _clock.GetUtcNow().UtcDateTime);
@@ -224,7 +232,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             var recorded = _store.RecordFeedback(submissionId, report);
             var statuses = _store.Payments(FindSubmission(submissionId).PeriodId).Where(p => p.SubmissionId == submissionId)
                 .GroupBy(p => p.Status).ToDictionary(g => g.Key, g => g.Count());
-            outcomes.Add(new FeedbackOutcome { Source = report.Source ?? Path.GetFileName(path), Kind = report.Kind, Recorded = recorded.Count, Statuses = statuses });
+            outcomes.Add(new FeedbackOutcome { Source = report.Source ?? Path.GetFileName(path), Kind = report.Kind, Recorded = recorded.Count, Statuses = statuses, General = report.GeneralValidations });
         }
 
         return outcomes;

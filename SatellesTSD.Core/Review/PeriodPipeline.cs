@@ -193,15 +193,20 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         _store.UnlinkImport(periodId, fileId);
     }
 
-    /// <summary>The lookups for the period's persons, reported one by one as they finish.</summary>
-    public Task<LookupRunReport> RunLookupsAsync(Guid periodId, IProgress<PersonLookupOutcome>? progress = null, CancellationToken cancellationToken = default) =>
-        Runner().RunAsync(periodId, cancellationToken, progress);
+    /// <summary>The lookups for the period's persons, reported one by one as they finish. Only for a Draft: a locked month's
+    /// lookups would write its control date's answer over the facts every other month is built with.</summary>
+    public Task<LookupRunReport> RunLookupsAsync(Guid periodId, IProgress<PersonLookupOutcome>? progress = null, CancellationToken cancellationToken = default)
+    {
+        RequireDraft(FindPeriod(periodId), LookupsLocked);
+        return Runner().RunAsync(periodId, cancellationToken, progress);
+    }
 
     /// <summary>The lookups for one person, for the day their facts are checked for in the period (their latest
     /// payout of the month, else its last day).</summary>
     public Task<PersonLookupOutcome> LookUpAsync(Person person, Period period, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(period);
+        RequireDraft(FindPeriod(period.Id), LookupsLocked);
         var runner = Runner();
         return runner.LookUpAsync(person, runner.ControlDateFor(person, period), cancellationToken);
     }
@@ -211,11 +216,13 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
             ? new LookupRunner(_store, residency, pension, lookupOptions, clock)
             : throw new InvalidOperationException("No lookups are configured; the registers cannot be asked.");
 
-    private static void RequireDraft(Period period)
+    private const string LookupsLocked = "the registers are asked for a month still being prepared";
+
+    private static void RequireDraft(Period period, string? why = null)
     {
         if (period.State != PeriodState.Draft)
         {
-            throw new ReviewException(ReviewWorkspace.PeriodNotDraft, $"The period is {period.State}; its files and its run stay as its record.");
+            throw new ReviewException(ReviewWorkspace.PeriodNotDraft, $"The period is {period.State}; {why ?? "its files and its run stay as its record"}.");
         }
     }
 

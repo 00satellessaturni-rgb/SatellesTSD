@@ -889,6 +889,130 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_line_refused_by_MTA_is_not_on_the_server_so_the_month_is_confirmed_only_by_force()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: false);
+        Assert.Equal(PaymentStatus.Rejected, box.Lines.Single().Status);
+
+        var refused = Assert.Throws<DeclareException>(() => box.Submitter.MarkConfirmed(box.Period.Id));
+        Assert.Equal(PeriodSubmitter.LinesPending, refused.Code);
+        Assert.Contains("refused", refused.Message);
+        box.Submitter.MarkConfirmed(box.Period.Id, force: true);
+        Assert.Equal(PeriodState.Confirmed, box.Store.Periods(box.Company.Id).Single().State);
+    }
+
+    [Fact]
+    public void The_drafts_are_checked_against_a_build_rolled_back_so_an_export_knows_the_review_changed()
+    {
+        using var box = Ready();
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id)); // nothing built yet: a build would make a line
+        Assert.Empty(box.Lines);
+
+        box.Declarer.Build(box.Period.Id);
+        var built = box.Lines.Single();
+        Assert.True(box.Declarer.DraftsCurrent(box.Period.Id));
+        Assert.Equal((built.Id, built.Version, built.LineNumber, built.Result), (box.Lines.Single().Id, box.Lines.Single().Version, box.Lines.Single().LineNumber, box.Lines.Single().Result)); // the dry run left the draft as it was, its id and counter too
+
+        // the card changed after the build: the drafts no longer say it, and the dry run changed nothing
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id));
+        Assert.Equal((built.Id, built.Result), (box.Lines.Single().Id, box.Lines.Single().Result));
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id, DeclarationMode.TotalsPerType)); // the other cut is another set of lines
+        box.Declarer.Build(box.Period.Id);
+        Assert.True(box.Declarer.DraftsCurrent(box.Period.Id));
+
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        Assert.Null(box.Declarer.DraftsCurrent(box.Period.Id)); // past Draft: a build is refused, nothing can be told
+    }
+
+    [Fact]
+    public void A_refused_payments_line_that_used_the_months_exemption_holds_the_persons_other_payments_back()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.True(box.Lines.Single().Result!.ExemptionUsed > 0m);
+
+        // the salary refused by the review (a type no table knows), its line standing with the exemption; a second payment
+        // would be given the month's exemption again — nothing is allocated, and what stands stands
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal));
+        Assert.Equal(0, report.Count(LineChange.New));
+        Assert.Single(box.Lines);
+        Assert.Equal(PaymentStatus.Accepted, box.Lines.Single().Status);
+
+        // the salary put right: both payments are built again, the exemption shared between them
+        box.Workspace.SetTypeCode(box.Salary, null);
+        report = box.Declarer.Build(box.Period.Id);
+        Assert.DoesNotContain(report.Persons.SelectMany(p => p.Problems), p => p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal));
+        Assert.Equal(2, box.Lines.Count);
+    }
+
+    [Fact]
+    public void Facts_the_registers_gave_for_another_month_are_noted_on_the_build()
+    {
+        using var box = Ready();
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, FactsControlDate = new DateOnly(2026, 9, 15) });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal));
+        Assert.Single(box.Lines); // a note, not a refusal
+
+        box.Store.UpdatePerson(box.Mari with { FactsControlDate = new DateOnly(2026, 10, 31) });
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_v8_store_upgrades_to_v9_and_a_persons_facts_have_no_control_date_until_the_registers_are_asked()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");
+        try
+        {
+            Guid companyId;
+            using (var v8 = SqliteStore.OpenAtVersion(path, 8))
+            {
+                var company = v8.AddCompany("10235688", "Näidis OÜ");
+                companyId = company.Id;
+                v8.ExecuteRaw($"INSERT INTO person (id, company_id, first_name, last_name, residency, on_pension, exemption_applied, minimum_applies, a1_case, residency_source, pension_source, declaration, card_type) VALUES ('{Guid.NewGuid():N}', '{company.Id:N}', 'Mari', 'Maasikas', 'Resident', 0, 1, 1, 'None', 'Emta', 'Unknown', 'Auto', 0)");
+            }
+
+            using var v9 = SqliteStore.Open(path);
+            Assert.Equal((long)SqliteStore.SchemaVersion, v9.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+            var person = Assert.Single(v9.Persons(companyId));
+            Assert.Null(person.FactsControlDate);
+            v9.UpdatePerson(person with { FactsControlDate = new DateOnly(2026, 10, 31) });
+            Assert.Equal(new DateOnly(2026, 10, 31), Assert.Single(v9.Persons(companyId)).FactsControlDate);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(SqliteStore.BackupPathFor(path));
+        }
+    }
+
+    [Fact]
+    public void A_reports_findings_on_no_line_come_back_with_what_it_did()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        var export = box.Submitter.Export(box.Period.Id, box.Folder);
+        var outcome = Assert.Single(box.Submitter.ReadFeedback(export.Submission.Id, Path.Combine(AppContext.BaseDirectory, "Fixtures", "feedback", "APA_TSD_20260330_tagasisideraport_faili_enda_veaga.xml")));
+        var general = Assert.Single(outcome.General);
+        Assert.Equal("KR_VALIDATE_XBRL_FILE_7", general.Validation.Code);
+    }
+
+    [Fact]
     public void A_feedback_report_is_read_onto_the_submissions_lines_and_a_confirmation_report_is_only_answered()
     {
         using var box = Ready();

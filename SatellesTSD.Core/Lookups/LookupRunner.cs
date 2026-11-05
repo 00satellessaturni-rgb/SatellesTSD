@@ -152,7 +152,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         else
         {
             isResident = residency!.IsResidentOn(controlDate);
-            current = current with { Residency = isResident ? Residency.Resident : Residency.NonResident, ResidencyCheckedOn = Today(), ResidencySource = LookupSource.Emta };
+            current = current with { Residency = isResident ? Residency.Resident : Residency.NonResident, ResidencyCheckedOn = Today(), ResidencySource = LookupSource.Emta, FactsControlDate = controlDate };
             _store.UpdatePerson(current);
             steps.Add($"residency {(isResident ? "resident" : "non-resident")}");
         }
@@ -221,6 +221,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             PensionRate = member ? rate : null,
             PensionCheckedOn = Today(),
             PensionSource = source,
+            FactsControlDate = controlDate,
         });
         steps.Add(member ? $"pension member, rate {Percent(rate)}" : "pension not a member");
     }
@@ -286,6 +287,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             return persons;
         }
 
+        var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         foreach (var matchPerson in run.Persons)
         {
             if (matchPerson.Person.PersonalCode is null)
@@ -294,7 +296,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 continue;
             }
 
-            persons.Add((Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson), ControlDateOf(period, PayoutDates(run, matchPerson))));
+            persons.Add((Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys), ControlDateOf(period, PayoutDates(run, matchPerson))));
         }
 
         return persons;

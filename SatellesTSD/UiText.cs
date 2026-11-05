@@ -199,6 +199,9 @@ internal static class UiText
     public const string ModeEach = "iga makse eraldi reana";
     public const string ModeTotals = "koondina liigi kaupa";
     public const string RatesMissing = "Selle aasta maksumäärad ja kuumäär ei ole programmis: kuu ridu ei saa koostada enne, kui uus versioon need toob.";
+    public const string RunStale = "failid muutusid pärast otsingut (Otsi maksed uuesti)";
+    public const string RunStaleRefused = "Perioodi failid muutusid pärast maksete otsingut: read koostatakse alles uue otsingu järel. Vajuta „Otsi maksed“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
+    public const string RunStaleExport = "Perioodi failid muutusid pärast maksete otsingut: read ei sisalda kõiki makseid. Vajuta enne eksporti „Otsi maksed“ ja „Koosta read“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
     public const string StoreSetAside = "kõrvale pandud";
     public const string DeclareModeRefused = "Selle kuu read on e-MTA-s juba teises lõikes (iga makse eraldi või koond liigi kaupa). Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.";
 
@@ -238,7 +241,9 @@ internal static class UiText
     public const string ExportFolder = "Vali kaust, kuhu XML-fail salvestada";
     public const string FeedbackFilter = "Tagasisideraport (*.xml;*.zip)|*.xml;*.zip|Kõik failid (*.*)|*.*";
     public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Ainult faili puhul, mida e-MTA-sse ei laaditud.";
-    public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või on mustand. Märkida periood siiski kinnitatuks?";
+    public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris). Märkida periood siiski kinnitatuks?";
+    public const string ReviewChangedSinceBuild = "Ülevaatus on pärast „Koosta read“ muutunud ja read ei kajasta seda. Eksportida siiski? (Muidu vajuta uuesti „Koosta read“.)";
+    public const string ReviewNotChecked = "Ei saanud kontrollida, kas read vastavad ülevaatusele.";
     public const string ReopenConfirm = "Avada periood parandamiseks? Ülevaatus muutub taas muudetavaks; järgmine eksport kannab muudatused (M) ja tühistused (T) võtmetele, mida e-MTA juba teab. e-MTA-s tuleb deklaratsioon samuti muudatusteks avada. (Kui faili ei laaditudki üles, kasuta „Tühista eksport“.)";
     public const string ApplyReportTo = "Rakendada raport failile";
     public const string ResolveAcceptedConfirm = "Märkida rida e-MTA-s vastu võetuks (sinu sõna, tagasisideraportita)?";
@@ -276,6 +281,57 @@ internal static class UiText
     public static string PaymentStatusText(PaymentStatus status) => Core.Report.ReportText.PaymentStatusText(status);
 
     public static string ActionText(LineAction action) => Core.Report.ReportText.ActionText(action);
+
+    public static string NextActionText(Core.Feedback.NextAction action) => action switch
+    {
+        Core.Feedback.NextAction.ReviewWarning => "Hoiatus: vaata üle; rida on serveris.",
+        Core.Feedback.NextAction.CorrectWithChange => "Rida on serveris vigasena: paranda ja saada sama võtmega uuesti (M).",
+        Core.Feedback.NextAction.FixAndResendAsNew => "Rida ei ole serveris: paranda ja saada uuesti uue reana (R).",
+        Core.Feedback.NextAction.Review => "Otsusta teate järgi (vt e-MTA juhend).",
+        _ => "",
+    };
+
+    private static readonly (string Code, string Name, Func<Core.Tax.TaxResult, decimal>? Ours)[] ServerTaxNames =
+    [
+        ("TSD_SM", "sotsiaalmaks", r => r.SocialTax),
+        ("TSD_KP", "kogumispension", r => r.FundedPension),
+        ("TSD_TK", "töötuskindlustus (töötaja)", r => r.UnemploymentEmployee),
+        ("TSD_TTK", "töötuskindlustus (tööandja)", r => r.UnemploymentEmployer),
+        ("TSD_KTM", "TSD_KTM", null), // no figure of ours stands for it; the server's is shown alone
+    ];
+
+    /// <summary>The tooltip of a feedback cell: the latest report's messages in full, the advice, and the server's taxes
+    /// beside ours — the cell itself keeps its short "Severity: codes" text (the grid sorts, searches and exports it).</summary>
+    public static string FeedbackDetail(LineFeedback feedback, Core.Tax.TaxResult? ours)
+    {
+        var lines = new List<string> { $"Viimane raport ({feedback.RecordedAt.ToLocalTime():dd.MM.yyyy HH:mm}): {feedback.Severity}" };
+        lines.AddRange(feedback.Messages.Select(m => $"{m.Code} ({m.Severity}): {m.Info}"));
+        if (NextActionText(feedback.NextAction) is { Length: > 0 } advice)
+        {
+            lines.Add(advice);
+        }
+
+        if (feedback.ServerTaxes.Count > 0)
+        {
+            lines.Add("Serveri maksud (meie arvutus):");
+            foreach (var (code, name, pick) in ServerTaxNames)
+            {
+                if (feedback.ServerTaxes.TryGetValue(code, out var server))
+                {
+                    lines.Add(ours is not null && pick is not null ? $"  {name}: {Money(server)} ({Money(pick(ours))})" : $"  {name}: {Money(server)}");
+                }
+            }
+
+            lines.AddRange(feedback.ServerTaxes.Where(kv => ServerTaxNames.All(n => n.Code != kv.Key)).Select(kv => $"  {kv.Key}: {Money(kv.Value)}"));
+        }
+
+        lines.AddRange(feedback.Unclassified.Select(u => $"{u.Code}: {u.Info}"));
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>A report's finding that points at no line: about the file, or a whole section.</summary>
+    public static string GeneralText(Core.Feedback.GeneralValidation general) =>
+        $"{general.EntryNumber ?? "fail"}: {general.Validation.Level} {general.Validation.Code} — {general.Validation.Description}";
 
     // the key's history
     public const string History = "Ajalugu…";

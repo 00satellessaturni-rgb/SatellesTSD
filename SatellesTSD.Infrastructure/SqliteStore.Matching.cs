@@ -60,7 +60,7 @@ public sealed partial class SqliteStore
         }
 
         DeleteRun(periodId);
-        var run = new StoredMatchRun(Guid.NewGuid(), periodId, Now(), result.CatalogJson, result.Problems); // the catalog the run was made with, whatever is in force now
+        var run = new StoredMatchRun(Guid.NewGuid(), periodId, Now(), result.CatalogJson, result.Problems, torSheetId); // the catalog the run was made with, whatever is in force now
         Exec("INSERT INTO match_run (id, period_id, tor_sheet_id, run_at, catalog_json, problems_json) VALUES ($id, $period, $tor, $at, $catalog, $problems)",
             ("$id", G(run.Id)), ("$period", G(periodId)), ("$tor", torSheetId is { } t2 ? G(t2) : null), ("$at", T(run.RunAt)), ("$catalog", run.CatalogJson),
             ("$problems", JsonSerializer.Serialize(result.Problems, LayoutCatalog.CompactJson)));
@@ -224,11 +224,11 @@ public sealed partial class SqliteStore
         Exec("DELETE FROM match_run WHERE period_id = $period", ("$period", G(periodId)));
     }
 
-    private const string MatchRunSelect = "SELECT id, period_id, run_at, catalog_json, problems_json FROM match_run";
+    private const string MatchRunSelect = "SELECT id, period_id, run_at, catalog_json, problems_json, tor_sheet_id FROM match_run";
 
     private static StoredMatchRun ReadMatchRun(SqliteDataReader r) => new(
         Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, r.GetString(3),
-        JsonSerializer.Deserialize<List<MatchProblem>>(r.GetString(4), LayoutCatalog.CompactJson) ?? []);
+        JsonSerializer.Deserialize<List<MatchProblem>>(r.GetString(4), LayoutCatalog.CompactJson) ?? [], Str(r, 5) is { } tor ? Guid.Parse(tor) : null);
 
     private const string MatchPersonSelect = "SELECT id, run_id, ord, person_key, personal_code, last_name, first_name, active_entry_id, entry_ids_json FROM match_person";
 
