@@ -16,6 +16,10 @@ public class WindowTests
         Ui.Run(() => fixture.Drive(form =>
         {
             Assert.StartsWith("SatellesTSD v", form.Text, StringComparison.Ordinal);
+            // the bar between the two grids is seen and grabbed: darker than the panels, wide enough to hit
+            var split = form.GridsSplit;
+            Assert.NotEqual(split.Panel1.BackColor, split.BackColor);
+            Assert.True(split.SplitterWidth >= 6);
             var persons = form.PersonsGrid;
             Assert.Equal(3, persons.Rows.Count); // the two register persons and the rows nobody matched
             Assert.Equal("MAASIKAS", persons.Rows[0].Cells["last"].Value?.ToString());
@@ -72,7 +76,7 @@ public class WindowTests
         Ui.Run(() => fixture.Drive(form =>
         {
             // the commands sit in the menus, grouped; the toolbar keeps what is chosen
-            Assert.Equal(["Andmebaas", "Ettevõte", "Periood", "Isik", "Tööriistad", "Seaded"], form.Menus.Items.Cast<ToolStripMenuItem>().Select(m => m.Text.Replace("&", "")));
+            Assert.Equal(["Andmebaas", "Ettevõte", "Periood", "Isik", "Tööriistad", "Vaade", "Seaded"], form.Menus.Items.Cast<ToolStripMenuItem>().Select(m => m.Text.Replace("&", "")));
             Assert.Contains(form.ImportButton, ((ToolStripMenuItem)form.Menus.Items[2]).DropDownItems.Cast<ToolStripItem>());
 
             // Maksuvaba: the amount when applied, "ei" when not, nothing on the unmatched row
@@ -161,6 +165,50 @@ public class WindowTests
             Assert.NotNull(form.View);
             Assert.Equal(3, form.PersonsGrid.Rows.Count);
         }));
+    }
+
+    [Fact]
+    public void The_Vaade_menu_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() =>
+        {
+            fixture.Drive(form =>
+            {
+                Assert.True(form.LogDefaultItem.Checked);
+                Assert.False(form.LogOneRowItem.Checked);
+                var tall = form.LogPanel.Height;
+
+                // one line: the panel shrinks to a line (and room for a scrollbar), the grids above take the rest
+                form.LogOneRowItem.PerformClick();
+                Ui.Pump();
+                Assert.True(AppSettings.Load(fixture.SettingsPath).LogOneRow);
+                Assert.True(form.LogOneRowItem.Checked);
+                Assert.False(form.LogDefaultItem.Checked);
+                Assert.InRange(form.LogPanel.Height, 1, tall / 3);
+
+                // the line shown is the latest, and it fits: something said in the log (the Seaded choice says itself)
+                form.DeclareTotalsItem.PerformClick();
+                form.DeclareEachItem.PerformClick();
+                Ui.Pump();
+                var log = form.LogList;
+                Assert.True(log.Items.Count >= 2);
+                Assert.Equal(log.Items.Count - 1, log.TopIndex);
+                Assert.True(log.ClientSize.Height >= log.ItemHeight, $"the list's client area ({log.ClientSize.Height}) holds no whole line ({log.ItemHeight})");
+            });
+
+            // a new window on the same settings: still one line; and back to the default height
+            fixture.Drive(form =>
+            {
+                Assert.True(form.LogOneRowItem.Checked);
+                var small = form.LogPanel.Height;
+                form.LogDefaultItem.PerformClick();
+                Ui.Pump();
+                Assert.False(AppSettings.Load(fixture.SettingsPath).LogOneRow);
+                Assert.True(form.LogDefaultItem.Checked);
+                Assert.True(form.LogPanel.Height > small * 3);
+            });
+        });
     }
 
     [Fact]

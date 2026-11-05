@@ -24,6 +24,9 @@ public sealed class AppSettings
     /// type, the payments added up and dated by the latest (the Seaded menu; kept across sessions).</summary>
     public bool DeclareTotalsPerType { get; set; }
 
+    /// <summary>The log under the window one line high instead of its default height (the Vaade menu; kept across sessions).</summary>
+    public bool LogOneRow { get; set; }
+
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SatellesTSD", "settings.json");
 
     public static AppSettings Load(string path)

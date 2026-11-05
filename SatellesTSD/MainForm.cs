@@ -65,6 +65,8 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
     private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
+    private readonly ToolStripMenuItem _logDefaultItem = new(UiText.LogHeightDefault);
+    private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow);
     private readonly ToolStripMenuItem _reportButton = new(UiText.ExportReport);
     private readonly ToolStripMenuItem _updateButton = new(UiText.CheckUpdates);
 
@@ -87,6 +89,7 @@ public sealed class MainForm : Form
     private readonly DataGridView _paymentsGrid = Grid();
     private readonly PersonPanel _personPanel = new() { Dock = DockStyle.Fill };
     private readonly ListBox _log = new() { Dock = DockStyle.Fill, IntegralHeight = false, HorizontalScrollbar = true };
+    private readonly Panel _logPanel = new() { Dock = DockStyle.Bottom, Height = LogDefaultHeight };
     private readonly SplitContainer _outer = new() { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
     private readonly SplitContainer _grids = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
 
@@ -116,10 +119,15 @@ public sealed class MainForm : Form
         personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton]);
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
         toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
+        // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
+        var viewMenu = new ToolStripMenuItem(UiText.MenuView);
+        viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem]);
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
         settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem]);
-        _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, settingsMenu]);
+        _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, viewMenu, settingsMenu]);
+        _logDefaultItem.Click += (_, _) => SetLogOneRow(false);
+        _logOneRowItem.Click += (_, _) => SetLogOneRow(true);
         _declareEachItem.Click += (_, _) => SetDeclarationMode(totals: false);
         _declareTotalsItem.Click += (_, _) => SetDeclarationMode(totals: true);
         ShowDeclarationMode();
@@ -133,6 +141,8 @@ public sealed class MainForm : Form
         _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
         _closeButton.Click += (_, _) => Close();
 
+        VisibleSplitter(_grids);
+        VisibleSplitter(_outer);
         _grids.Panel1.Controls.Add(_personsGrid);
         _grids.Panel1.Controls.Add(SearchBar(_personsSearch));
         _grids.Panel1.Controls.Add(_salaryTotal);
@@ -162,10 +172,10 @@ public sealed class MainForm : Form
         _tabs.TabPages.Add(declarationTab);
         _outer.Panel1.Controls.Add(_tabs);
         _outer.Panel2.Controls.Add(_personPanel);
-        var logPanel = new Panel { Dock = DockStyle.Bottom, Height = 150 };
-        logPanel.Controls.Add(_log);
+        _logPanel.Controls.Add(_log);
+        ShowLogHeight();
         Controls.Add(_outer);
-        Controls.Add(logPanel);
+        Controls.Add(_logPanel);
         Controls.Add(_toolbar);
         Controls.Add(_menu);
 
@@ -229,6 +239,10 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem DeclareEachItem => _declareEachItem;
 
     internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
+    internal ToolStripMenuItem LogDefaultItem => _logDefaultItem;
+    internal ToolStripMenuItem LogOneRowItem => _logOneRowItem;
+    internal Panel LogPanel => _logPanel;
+    internal ListBox LogList => _log;
     internal MenuStrip Menus => _menu;
     internal TextBox PersonsSearch => _personsSearch;
     internal TextBox PaymentsSearch => _paymentsSearch;
@@ -238,6 +252,7 @@ public sealed class MainForm : Form
     internal TabControl Tabs => _tabs;
     internal DeclarationPanel Declaration => _declaration;
     internal PersonPanel PersonEditor => _personPanel;
+    internal SplitContainer GridsSplit => _grids;
     internal AppServices? Services => _services;
     internal ReviewView? View => _view;
 
@@ -994,6 +1009,34 @@ public sealed class MainForm : Form
         SaveSettings();
         ShowDeclarationMode();
         Log($"{UiText.DeclareModeChanged} {(totals ? UiText.ModeTotals : UiText.ModeEach)} ({UiText.BuildLines})");
+    }
+
+    /// <summary>The log's default height, in pixels: about nine lines.</summary>
+    private const int LogDefaultHeight = 150;
+
+    /// <summary>The Vaade menu's choice: the log at its default height or one line high (the latest line still shown,
+    /// the list scrolling to it); kept in the settings at once.</summary>
+    private void SetLogOneRow(bool oneRow)
+    {
+        if (_settings.LogOneRow == oneRow)
+        {
+            return;
+        }
+
+        _settings.LogOneRow = oneRow;
+        SaveSettings();
+        ShowLogHeight();
+    }
+
+    private void ShowLogHeight()
+    {
+        _logDefaultItem.Checked = !_settings.LogOneRow;
+        _logOneRowItem.Checked = _settings.LogOneRow;
+        // one line: exactly the list's line and its border; no horizontal scrollbar there, which would cover the line
+        // (a long line is cut at the window's edge, and the default height shows it whole)
+        _log.HorizontalScrollbar = !_settings.LogOneRow;
+        _logPanel.Height = _settings.LogOneRow ? _log.ItemHeight + 2 * SystemInformation.Border3DSize.Height : LogDefaultHeight;
+        _log.TopIndex = Math.Max(0, _log.Items.Count - 1);
     }
 
     private void ShowDeclarationMode()
@@ -1942,6 +1985,17 @@ public sealed class MainForm : Form
             Format = money ? "N2" : date ? "dd.MM.yyyy" : "",
         },
     };
+
+    /// <summary>A splitter the accountant can see and grab: a darker bar between the two panels, wide enough to hit,
+    /// the panels keeping the window's own colour (a SplitContainer paints its splitter in its own background colour,
+    /// which the panels otherwise inherit, so the bar disappears).</summary>
+    private static void VisibleSplitter(SplitContainer split)
+    {
+        split.BackColor = SystemColors.ControlDark;
+        split.Panel1.BackColor = SystemColors.Control;
+        split.Panel2.BackColor = SystemColors.Control;
+        split.SplitterWidth = 6;
+    }
 
     /// <summary>The search box over a grid: what is typed hides every row with no cell containing it.</summary>
     private static Panel SearchBar(TextBox box)
