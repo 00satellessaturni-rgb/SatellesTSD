@@ -19,13 +19,13 @@ internal static class ReviewFixtures
 
     /// <param name="mariType">Mari's employment type id in the register (1 = Tööleping, 501 = Tasuta töötamine …).</param>
     /// <param name="mariEnded">Mari's employment ended on 30 September 2026 (state 4), so no entry covers October.</param>
-    /// <param name="mariPaused">Mari's employment is paused (state 3, Peatatud), with no end: the entry still covers October.</param>
+    /// <param name="mariPaused">Mari's employment is paused (state 3, Peatatud), with no end: the entry still covers October; paused since 3 August 2026 for Lapsehoolduspuhkus, until 30 June 2027.</param>
     public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false)
     {
         List<object?[]> register =
         [
             TorHeaders.All.ToArray<object?>(),
-            ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : mariPaused ? 3 : 2, mariEnded ? "Lõpetatud" : mariPaused ? "Peatatud" : "Kehtiv", mariEnded ? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
+            ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : mariPaused ? 3 : 2, mariEnded ? "Lõpetatud" : mariPaused ? "Peatatud" : "Kehtiv", mariEnded ? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", mariPaused ? new DateTime(2026, 8, 3) : null, mariPaused ? 2 : null, mariPaused ? "Lapsehoolduspuhkus" : null, mariPaused ? new DateTime(2027, 6, 30) : null, null, null, null, null, 10235688, "Näidis OÜ"],
             ["2", jaanCodeless ? null : 38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 600, "VÕS leping", 4, "Lõpetatud", new DateTime(2026, 9, 30), null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
         ];
         if (twin)

@@ -92,6 +92,36 @@ public class TorParserTests
     }
 
     [Fact]
+    public void A_paused_employment_says_since_when_why_and_until_when()
+    {
+        var paused = Full("414390", "48712219406", "MAASIKAS", "MARI", "15.02.2024", "1", "Tööleping", "3", "Peatatud", "", "12223047", "STOPFIRE OÜ");
+        paused[18] = "2026-08-03";
+        paused[19] = "2";
+        paused[20] = "Lapsehoolduspuhkus";
+        var sheet = Tables.Sheet(TorHeaders.All.ToArray(), paused, Full("414389", "38810140309", "BAVÕKIN", "DMITRI", "01.03.2012", "1", "Tööleping", "2", "Kehtiv", "", "12223047", "STOPFIRE OÜ"));
+
+        var tor = TorParser.Parse(sheet, TorParser.Detect(sheet, out _)!);
+
+        Assert.Equal(((DateOnly?)new DateOnly(2026, 8, 3), (DateOnly?)null, "Lapsehoolduspuhkus"), (tor.Entries[0].PauseStart, tor.Entries[0].PauseEnd, tor.Entries[0].PauseReason));
+        Assert.Equal(((DateOnly?)null, (DateOnly?)null, (string?)null), (tor.Entries[1].PauseStart, tor.Entries[1].PauseEnd, tor.Entries[1].PauseReason));
+        Assert.Null(tor.Entries[0].Problem);
+
+        // typed dates through Excel, the planned end too; a pause date not understood reads as none, not as a problem
+        var xlsx = Tables.Xlsx("Töötajate loend",
+            TorHeaders.All.ToArray<object?>(),
+            ["414390", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), 1, "Tööleping", 3, "Peatatud", null, null, null, null, null, null, null, null, "EE", new DateTime(2026, 8, 3), 2, "Vanemapuhkus", new DateTime(2027, 6, 30), null, null, null, null, 12223047, "STOPFIRE OÜ"],
+            ["414391", 38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 1, "Tööleping", 3, "Peatatud", null, null, null, null, null, null, null, null, "EE", "pole teada", null, null, null, null, null, null, null, 12223047, "STOPFIRE OÜ"]);
+        var excel = Tables.FirstSheet(xlsx);
+        var read = TorParser.Parse(excel, TorParser.Detect(excel, out _)!);
+        Assert.Equal(((DateOnly?)new DateOnly(2026, 8, 3), (DateOnly?)new DateOnly(2027, 6, 30), "Vanemapuhkus"), (read.Entries[0].PauseStart, read.Entries[0].PauseEnd, read.Entries[0].PauseReason));
+        Assert.Null(read.Entries[1].PauseStart);
+        Assert.Empty(read.Problems);
+
+        // the same reading from the cells and the header row alone: what the store does for an import it already holds
+        Assert.Equal((read.Entries[0].PauseStart, read.Entries[0].PauseEnd, read.Entries[0].PauseReason), TorPause.Of(read.Headers, read.Entries[0].Cells));
+    }
+
+    [Fact]
     public void Columns_may_come_in_any_order_with_extras_and_the_header_may_sit_lower()
     {
         var headers = new[] { "Eesnimi", "Perekonnanimi", "Töötaja isikukood", "Uus veerg", "Töötamise alguse aeg", "Töötamise lõpu aeg", "Töötamise liigi ID", "Töötamise liik", "Kande oleku ID", "Kande olek", "Riigi kood", "tööandja /tegeliku  tööandja nimetus" };

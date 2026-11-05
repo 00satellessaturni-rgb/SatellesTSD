@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -21,12 +22,15 @@ public static partial class TorHeaders
     public const string Country = "Riigi kood";
     public const string EmployerCode = "Tööandja registrikood või ID";
     public const string EmployerName = "Tööandja /Tegeliku tööandja nimetus";
+    public const string PauseStart = "Peatamise alguse aeg";
+    public const string PauseReason = "Peatamise alus";
+    public const string PauseEnd = "Peatamise lõpu aeg";
 
     /// <summary>The 35 headers of the export the workbook knew, in order.</summary>
     public static readonly IReadOnlyList<string> All =
     [
         TorId, PersonalCode, LastName, FirstName, StartDate, TypeId, Type, StateId, State, EndDate, TerminationId, Termination,
-        "Leping", "Ameti ID", "Amet", "Aadressi ID", "Aadress", Country, "Peatamise alguse aeg", "Peatamise aluse ID", "Peatamise alus", "Peatamise lõpu aeg",
+        "Leping", "Ameti ID", "Amet", "Aadressi ID", "Aadress", Country, PauseStart, "Peatamise aluse ID", PauseReason, PauseEnd,
         "Otsus alguse aja kohta", "Otsus töö liigi kohta", "Otsus töö lõpetamise aja kohta", "Otsus lõpetamise aluse kohta", EmployerCode, EmployerName,
         "RKA märge", "TKA märge", "Viimase muutmise kuupäev", "Viimase muutja ID", "Viimase muutja nimi", "Tööaja määr", "IMO",
     ];
@@ -73,6 +77,8 @@ public static class TorStates
 /// <summary>One row of the TÖR export: one employment of one person. Several rows per person are normal (an ended
 /// contract and a new one, a contract and a board seat); every row is kept.</summary>
 /// <param name="Problem">What could not be read on the row (a date, an id), if anything.</param>
+/// <param name="PauseStart">"Peatamise alguse aeg": since when a paused employment (kande olek 3) is paused. Read from the
+/// row's cells by <see cref="TorPause.Of"/>, so an import stored before the field existed has it too.</param>
 public sealed record TorEntry(
     int RowNo,
     string? TorId,
@@ -91,7 +97,10 @@ public sealed record TorEntry(
     string? EmployerCode,
     string? EmployerName,
     IReadOnlyList<string> Cells,
-    string? Problem)
+    string? Problem,
+    DateOnly? PauseStart = null,
+    DateOnly? PauseEnd = null,
+    string? PauseReason = null)
 {
     /// <summary>Whether the employment covers any day of the month (an open end covers everything after the start).</summary>
     public bool Overlaps(int year, int month)
@@ -105,9 +114,48 @@ public sealed record TorEntry(
         other is not null && RowNo == other.RowNo && TorId == other.TorId && PersonalCode == other.PersonalCode && FirstName == other.FirstName && LastName == other.LastName
         && Country == other.Country && StartDate == other.StartDate && EndDate == other.EndDate && TypeId == other.TypeId && Type == other.Type && StateId == other.StateId
         && State == other.State && TerminationId == other.TerminationId && Termination == other.Termination && EmployerCode == other.EmployerCode && EmployerName == other.EmployerName
-        && Problem == other.Problem && Seq.Equal(Cells, other.Cells);
+        && Problem == other.Problem && PauseStart == other.PauseStart && PauseEnd == other.PauseEnd && PauseReason == other.PauseReason && Seq.Equal(Cells, other.Cells);
 
     public override int GetHashCode() => HashCode.Combine(RowNo, TorId, PersonalCode, FirstName, LastName, StartDate, Seq.Hash(Cells));
+}
+
+/// <summary>The pause columns of a TÖR row ("Peatamise alguse aeg", "Peatamise lõpu aeg", "Peatamise alus"), read from
+/// the row's cell texts by the sheet's header row: the one reading for a fresh import and for a stored one, whose cells
+/// and headers are kept. A date that is not understood reads as no date; the pause is only shown, never declared.</summary>
+public static class TorPause
+{
+    public static (DateOnly? Start, DateOnly? End, string? Reason) Of(IReadOnlyList<string> headers, IReadOnlyList<string> cells)
+    {
+        ArgumentNullException.ThrowIfNull(headers);
+        ArgumentNullException.ThrowIfNull(cells);
+        string? At(string header)
+        {
+            var key = TorHeaders.Key(header);
+            for (var i = 0; i < headers.Count && i < cells.Count; i++)
+            {
+                if (TorHeaders.Key(headers[i]) == key)
+                {
+                    var text = HeaderText.Clean(cells[i]);
+                    return text.Length == 0 ? null : text;
+                }
+            }
+
+            return null;
+        }
+
+        return (DateOf(At(TorHeaders.PauseStart)), DateOf(At(TorHeaders.PauseEnd)), At(TorHeaders.PauseReason));
+    }
+
+    private static DateOnly? DateOf(string? text)
+    {
+        var value = DateText.ParseText(text);
+        if (value is null && decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var serial) && serial is >= 20000 and < 100000)
+        {
+            value = DateTime.FromOADate((double)serial); // a typed Excel date that came through as its serial
+        }
+
+        return value is null ? null : DateOnly.FromDateTime(value.Value);
+    }
 }
 
 /// <summary>A sheet recognised as the TÖR export: where its header row is and which column plays which role.</summary>
@@ -212,6 +260,7 @@ public static class TorParser
 
             var start = ParseDate(sheet, rowNo, col, TorHeaders.StartDate, problem, problems);
             var end = ParseDate(sheet, rowNo, col, TorHeaders.EndDate, problem, problems);
+            var pause = TorPause.Of(detection.Headers, cells);
             entries.Add(new TorEntry(
                 rowNo,
                 IdText.Code(CellOf(sheet, rowNo, col, TorHeaders.TorId)),
@@ -230,7 +279,10 @@ public static class TorParser
                 IdText.Code(CellOf(sheet, rowNo, col, TorHeaders.EmployerCode)),
                 Clean(CellOf(sheet, rowNo, col, TorHeaders.EmployerName)),
                 cells,
-                problem.Count == 0 ? null : string.Join("; ", problem)));
+                problem.Count == 0 ? null : string.Join("; ", problem),
+                pause.Start,
+                pause.End,
+                pause.Reason));
         }
 
         var employers = entries.Select(e => e.EmployerCode ?? e.EmployerName).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().ToList();

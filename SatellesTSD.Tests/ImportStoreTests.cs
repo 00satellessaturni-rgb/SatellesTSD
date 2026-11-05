@@ -76,6 +76,23 @@ public class ImportStoreTests
     }
 
     [Fact]
+    public void A_stored_paused_entry_reads_its_pause_from_the_kept_cells_and_header_row()
+    {
+        var (store, company, _, file) = ReviewFixtures.Setup(mariPaused: true);
+        using (store)
+        {
+            var bytes = ReviewFixtures.Workbook(mariPaused: true);
+            var parsed = ReviewFixtures.Importer.Read("palgad.xlsx", bytes);
+            var entries = store.TorEntries(company.Id, file.Id).Select(e => e.Entry).ToList();
+
+            // no column of their own: an import stored before the pause was read gives it the same way
+            Assert.Equal(parsed.Sheets.First(s => s.Tor is not null).Tor!.Entries, entries);
+            Assert.Equal(((DateOnly?)new DateOnly(2026, 8, 3), (DateOnly?)new DateOnly(2027, 6, 30), "Lapsehoolduspuhkus"), (entries[0].PauseStart, entries[0].PauseEnd, entries[0].PauseReason));
+            Assert.Null(entries[1].PauseStart);
+        }
+    }
+
+    [Fact]
     public void The_same_bytes_are_not_imported_twice_and_nothing_recognised_is_not_imported_at_all()
     {
         var (store, company, _) = Setup();

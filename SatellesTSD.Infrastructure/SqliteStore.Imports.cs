@@ -323,12 +323,20 @@ public sealed partial class SqliteStore
         """
         SELECT tor_entry.id, tor_entry.sheet_id, tor_entry.company_id, tor_entry.row_no, tor_entry.tor_id, tor_entry.personal_code, tor_entry.first_name, tor_entry.last_name,
                tor_entry.country, tor_entry.start_date, tor_entry.end_date, tor_entry.type_id, tor_entry.type, tor_entry.state_id, tor_entry.state, tor_entry.termination_id,
-               tor_entry.termination, tor_entry.employer_code, tor_entry.employer_name, tor_entry.problem, tor_entry.cells_json
+               tor_entry.termination, tor_entry.employer_code, tor_entry.employer_name, tor_entry.problem, tor_entry.cells_json,
+               (SELECT headers_json FROM import_sheet WHERE import_sheet.id = tor_entry.sheet_id)
         FROM tor_entry
         """;
 
-    private static StoredTorEntry ReadTorEntry(SqliteDataReader r) => new(
-        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Guid.Parse(r.GetString(2)),
-        new TorEntry((int)r.GetInt64(3), Str(r, 4), Str(r, 5), r.GetString(6), r.GetString(7), Str(r, 8), Date(r, 9), Date(r, 10), Str(r, 11), Str(r, 12), Str(r, 13), Str(r, 14),
-            Str(r, 15), Str(r, 16), Str(r, 17), Str(r, 18), StatementParser.CellsFromJson(r.GetString(20)), Str(r, 19)));
+    /// <summary>The pause dates and reason are not columns of their own: they are read from the stored cells by the
+    /// sheet's stored header row, as the parser reads them, so an import stored before they were read has them too.</summary>
+    private static StoredTorEntry ReadTorEntry(SqliteDataReader r)
+    {
+        var cells = StatementParser.CellsFromJson(r.GetString(20));
+        var pause = r.IsDBNull(21) ? default : TorPause.Of(StatementParser.CellsFromJson(r.GetString(21)), cells);
+        return new(
+            Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Guid.Parse(r.GetString(2)),
+            new TorEntry((int)r.GetInt64(3), Str(r, 4), Str(r, 5), r.GetString(6), r.GetString(7), Str(r, 8), Date(r, 9), Date(r, 10), Str(r, 11), Str(r, 12), Str(r, 13), Str(r, 14),
+                Str(r, 15), Str(r, 16), Str(r, 17), Str(r, 18), cells, Str(r, 19), pause.Start, pause.End, pause.Reason));
+    }
 }

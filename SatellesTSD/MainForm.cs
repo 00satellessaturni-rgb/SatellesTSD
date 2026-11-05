@@ -1175,6 +1175,7 @@ public sealed class MainForm : Form
         _personsGrid.Columns.Add(Column("type", UiText.EmploymentType));
         _personsGrid.Columns.Add(Column("state", UiText.EntryState));
         _personsGrid.Columns.Add(Column("end", UiText.EmploymentEnd, date: true));
+        _personsGrid.Columns.Add(Column("pause", UiText.PauseStart, date: true));
         _personsGrid.Columns.Add(Column("declaration", UiText.DeclarationLabel));
         _personsGrid.Columns.Add(Column("problems", UiText.Problems));
 
@@ -1186,7 +1187,7 @@ public sealed class MainForm : Form
             {
                 values.AddRange(["", UiText.UnmatchedRow, "", null]);
                 values.AddRange(_view.Sources.Select(_ => (object?)null));
-                values.AddRange([null, "", "", "", "", "", null, "", ""]);
+                values.AddRange([null, "", "", "", "", "", null, null, "", ""]);
             }
             else
             {
@@ -1200,6 +1201,7 @@ public sealed class MainForm : Form
                 values.Add(person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
                 values.Add(person.Register?.Entry.State ?? "");
                 values.Add(EmploymentEndValue(person.Register));
+                values.Add(PausedEntry(person.Register)?.PauseStart?.ToDateTime(TimeOnly.MinValue));
                 values.Add(p is null ? "" : UiText.DeclarationShort(p.Declaration));
                 values.Add(string.Join(", ", person.Problems.Select(x => x.Code).Distinct()));
             }
@@ -1219,6 +1221,11 @@ public sealed class MainForm : Form
             else if (person.Problems.Count > 0)
             {
                 row.DefaultCellStyle.BackColor = Color.LightYellow;
+            }
+
+            if (PausedEntry(person.Register) is { } paused && UiText.PauseTip(paused.PauseReason, paused.PauseEnd) is { Length: > 0 } tip)
+            {
+                row.Cells["pause"].ToolTipText = tip;
             }
 
             if (person.Person is null && !person.IsUnmatched)
@@ -2105,6 +2112,10 @@ public sealed class MainForm : Form
 
         return entry.StateId == TorStates.Ended || end <= last ? end.ToDateTime(TimeOnly.MinValue) : null;
     }
+
+    /// <summary>The register entry standing for the person (the one "Kande olek" shows) when it is paused (kande olek 3):
+    /// "Peatamise algus" shows since when, the tooltip why and until when, as the register gives them.</summary>
+    private static TorEntry? PausedEntry(MatchPerson? register) => register?.Entry is { StateId: TorStates.Paused } entry ? entry : null;
 
     private static string CheckedText(Person person)
     {

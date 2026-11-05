@@ -168,6 +168,23 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_paused_employment_shows_since_when_and_the_tooltip_says_why_and_until_when()
+    {
+        using var fixture = new WindowFixture(mariPaused: true);
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var persons = form.PersonsGrid;
+            Assert.Equal(persons.Columns["end"]!.Index + 1, persons.Columns["pause"]!.Index); // right after Töötamise lõpu aeg
+            Assert.Equal("Peatamise algus", persons.Columns["pause"]!.HeaderText);
+            Assert.Equal(typeof(DateTime), persons.Columns["pause"]!.ValueType);
+            Assert.Equal(["Peatatud", "Lõpetatud", ""], persons.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["state"].Value?.ToString() ?? ""));
+            Assert.Equal(["03.08.2026", "", ""], persons.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["pause"].FormattedValue?.ToString() ?? ""));
+            Assert.Equal("Peatamise alus: Lapsehoolduspuhkus" + Environment.NewLine + "Peatamise lõpu aeg: 30.06.2027", persons.Rows[0].Cells["pause"].ToolTipText);
+            Assert.DoesNotContain("Peatamise", persons.Rows[1].Cells["pause"].ToolTipText, StringComparison.Ordinal);
+        }));
+    }
+
+    [Fact]
     public void The_Vaade_menu_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
     {
         using var fixture = new WindowFixture();

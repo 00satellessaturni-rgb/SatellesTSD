@@ -19,7 +19,8 @@ internal sealed class WindowFixture : IDisposable
     /// <param name="prepare">More to do in the store before the window opens: the store, the company, the period, and
     /// a folder inside the fixture's for files that go out.</param>
     /// <param name="empty">A store with nothing in it: no company, no period — the window opens on it with no company shown.</param>
-    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null, bool empty = false)
+    /// <param name="mariPaused">The register has Mari's employment paused (see <see cref="ReviewFixtures.Workbook"/>).</param>
+    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null, bool empty = false, bool mariPaused = false)
     {
         Folder = Path.Combine(Path.GetTempPath(), $"satellestsd-window-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Folder);
@@ -41,7 +42,7 @@ internal sealed class WindowFixture : IDisposable
         {
             var company = store.AddCompany(RegistryCode, "Näidis OÜ");
             var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-            var bytes = ReviewFixtures.Workbook();
+            var bytes = ReviewFixtures.Workbook(mariPaused: mariPaused);
             var file = store.AddImport(company.Id, ReviewFixtures.Importer.Read("palgad.xlsx", bytes), bytes);
             store.LinkImport(period.Id, file.Id);
             new MatchRunner(store).Run(period.Id);

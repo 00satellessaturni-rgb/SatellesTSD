@@ -43,6 +43,7 @@ internal static class UiText
     public const string EmploymentType = "Töötamise liik";
     public const string EntryState = "Kande olek";
     public const string EmploymentEnd = "Töötamise lõpu aeg";
+    public const string PauseStart = "Peatamise algus";
     public const string Problems = "Probleemid";
     public const string UnmatchedRow = "— leidmata read —";
 
@@ -113,6 +114,11 @@ internal static class UiText
         Core.Store.DeclarationChoice.Exclude => "välja",
         _ => "",
     };
+
+    /// <summary>The "Peatamise algus" cell's tooltip: why and until when the employment is paused, as the register says.</summary>
+    public static string PauseTip(string? reason, DateOnly? end) => string.Join(Environment.NewLine,
+        new[] { reason is null ? null : "Peatamise alus: " + reason, end is null ? null : "Peatamise lõpu aeg: " + Day(end) }.Where(t => t is not null));
+
     public const string A1 = "A1 tõend";
     public const string A1None = "puudub";
     public const string A1Estonian = "Eesti A1, töö välismaal";
