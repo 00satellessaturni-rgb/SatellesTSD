@@ -77,6 +77,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var byPerson = new Dictionary<Guid, List<ReviewPayment>>();
         var unmatched = new List<ReviewPayment>();
         var leftOut = 0;
+        // the sources whose layout only assumes the direction (the currency column read as the marker)
+        var layouts = LayoutCatalog.Default.WithOverrides(_store.Layouts());
+        var assumed = run?.Sources.Where(s => layouts.Find(s.LayoutId)?.DirectionIsAssumed() == true).Select(s => s.Name).ToHashSet(StringComparer.Ordinal) ?? [];
         if (run is not null)
         {
             if (storedHits.Count != run.Hits.Count)
@@ -132,7 +135,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 var register = person is not null
                     ? registerByPersonId.GetValueOrDefault(person.Id)
                     : hit.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
-                Place(FromHit(period, hit, rowId, overlay, person, defaultPerson?.Id, register, catalog, shared, candidates));
+                Place(FromHit(period, hit, rowId, overlay, person, defaultPerson?.Id, register, catalog, shared, candidates, assumed.Contains(hit.Source)));
             }
         }
 
@@ -328,7 +331,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         return _store.AddPerson(Person.New(companyId, firstName.Trim(), lastName.Trim(), code, residency) with { TorEmploymentTypeId = Clean(torEmploymentTypeId), BasicExemptionApplied = residency == Residency.Resident });
     }
 
-    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates)
+    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed)
     {
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? defaultCategory;
@@ -353,6 +356,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Amount = hit.Amount,
             AmountText = hit.Row.Amount is null ? hit.Row.AmountText ?? "" : null, // no amount read: its text, else nothing — never a 0 that looks read
             AmountOk = amountOk,
+            Direction = hit.Row.Direction,
+            DirectionAssumed = directionAssumed,
+            Currency = hit.Row.Currency,
             RunPersonKey = hit.PersonKey,
             DefaultPersonId = defaultPersonId,
             PersonId = person?.Id,

@@ -450,8 +450,10 @@ public class StatementParserTests
         row[1] = "2026-10-31 22:30:00"; // UTC: already 1 November in Tallinn
         row[2] = "ID-1";
         row[5] = "Mari Maasikas";
-        row[11] = "EUR";
-        row[12] = "-300.00";
+        row[11] = "USD"; // the card payment's own currency and amount, always positive: not what the account paid
+        row[12] = "330.00";
+        row[13] = "EUR"; // the account's: the amount signed, money out below zero
+        row[14] = "-300.00";
         row[21] = "LT601234567890123456";
         var zoned = (string[])row.Clone();
         zoned[1] = "2026-10-31T22:30:00Z"; // the same instant, the zone written into the text: converted once, not twice
@@ -466,6 +468,7 @@ public class StatementParserTests
         Assert.Contains(parsed.Problems, p => p.Code == ImportProblem.BadDate && p.RowNo == 4);
         Assert.Equal(Direction.Debit, parsed.Rows[0].Direction);
         Assert.Equal("EUR", parsed.Rows[0].Currency);
+        Assert.Equal(-300m, parsed.Rows[0].Amount);
 
         // a zone written into the text is honoured by a layout in Estonian time too
         var lhv = Catalog.Find("lhv-et-short")!;

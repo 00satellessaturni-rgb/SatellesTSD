@@ -1,4 +1,5 @@
 using SatellesTSD.Core.Declare;
+using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
@@ -91,6 +92,9 @@ public class ReviewWorkspaceTests
             Assert.Equal(("", (DateOnly?)new DateOnly(2026, 10, 6), 0.38m, (string?)null, "", (string?)null, false, true), (fee.Payee, fee.Date, fee.Amount, fee.AmountText, fee.VerdictText, fee.Category, fee.Declare, fee.InPeriod));
             var stranger = unmatched.Payments[1];
             Assert.Equal(("Kinnisvara OÜ", (Guid?)null, false), (stranger.Payee, stranger.PersonId, stranger.Declare));
+            // the direction and the currency travel from the statement, a payee-less row's too
+            Assert.Equal((Direction.Debit, "EUR"), (fee.Direction, fee.Currency));
+            Assert.Equal((Direction.Debit, "EUR"), (stranger.Direction, stranger.Currency));
             Assert.Equal(0, view.RowsLeftOut); // only a blank row inside the data is left out
 
             // a decision on a payee-less row stands like any other: a category, then the person it went to — and then

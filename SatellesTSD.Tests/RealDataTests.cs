@@ -131,6 +131,67 @@ public class RealDataTests
     }
 
     [Fact]
+    public void Every_bank_statement_reads_its_direction_in_agreement_with_the_amounts_sign_and_the_card_exports_money_out_as_debit()
+    {
+        if (Folder is not { } folder)
+        {
+            return;
+        }
+
+        // two shapes of a statement: an always-positive amount with a D/C column (SEB, Luminor), or a signed amount —
+        // with a D/C column beside it (LHV, Swedbank, Coop, Paysera) or with none (the card export, source1). Whatever
+        // the shape, money out is Debit and money in Credit, and a sign never contradicts the column.
+        var files = Directory.GetFiles(folder, "*.*", SearchOption.AllDirectories)
+            .Where(f => f.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var sheets = new List<ImportedSheet>();
+        foreach (var file in files)
+        {
+            try
+            {
+                sheets.AddRange(Read(file).Sheets.Where(s => s.Statement is { Layout.Kind: LayoutKind.Bank }));
+            }
+            catch (ImportException)
+            {
+                // not a file this importer reads at all (a hand-made workbook); the other tests say what each kind should read as
+            }
+        }
+
+        Assert.True(sheets.Count >= 100, $"only {sheets.Count} bank sheets found");
+        foreach (var sheet in sheets)
+        {
+            // a sheet with any amount below zero writes signed amounts: then money out is below zero, money in above
+            var signed = sheet.Statement!.Rows.Any(r => r.Amount < 0);
+            foreach (var row in sheet.Statement.Rows.Where(r => r.Amount is { } a && a != 0m && r.Direction != Direction.Unknown))
+            {
+                var where = $"{sheet.Statement.Layout.Id} row {row.RowNo}";
+                Assert.False(row.Direction == Direction.Credit && row.Amount < 0, $"{where}: Credit with a negative amount");
+                Assert.False(signed && row.Direction == Direction.Debit && row.Amount > 0, $"{where}: Debit with a positive amount in a signed statement");
+            }
+        }
+
+        // the card export: a top-up is money in; a card payment, a cash withdrawal, a fee money out
+        var cards = sheets.Where(s => s.Statement!.Layout.Id == "source1").ToList();
+        Assert.NotEmpty(cards);
+        foreach (var sheet in cards)
+        {
+            var typeColumn = sheet.Statement!.Headers.Select(HeaderText.Clean).ToList().IndexOf("Type");
+            foreach (var row in sheet.Statement.Rows.Where(r => r.IsPayment))
+            {
+                var type = row.Cells[typeColumn];
+                if (type == "TOPUP")
+                {
+                    Assert.Equal(Direction.Credit, row.Direction);
+                }
+                else if (type is "CARD_PAYMENT" or "ATM" or "FEE")
+                {
+                    Assert.Equal(Direction.Debit, row.Direction);
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void Every_tor_export_reads_with_its_employer_and_no_row_problems()
     {
         if (Folder is not { } folder)

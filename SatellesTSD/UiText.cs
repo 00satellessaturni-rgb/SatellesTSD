@@ -52,6 +52,19 @@ internal static class UiText
     public const string PayeeOnStatement = "Nimi väljavõttel";
     public const string Description = "Selgitus";
     public const string Amount = "Summa";
+    public const string DebitCredit = "D/C";
+    public const string Currency = "Valuuta";
+
+    /// <summary>The payments grid's direction: "D" money out, "C" money in, as the statement's D/C column or the
+    /// amount's sign said it — one shape whatever the bank's (Д/К, a signed amount); nothing when the statement says neither.</summary>
+    public static string DebitCreditText(Core.Import.Direction direction, bool assumed = false) => (direction switch
+    {
+        Core.Import.Direction.Debit => "D",
+        Core.Import.Direction.Credit => "C",
+        _ => "",
+    }) + (assumed && direction != Core.Import.Direction.Unknown ? "?" : "");
+
+    public const string DirectionAssumedTip = "Väljavõte ei ütle deebetit ega kreeditit: iga EUR-rida loetakse väljamakseks (nagu makroga töövihik).";
     public const string Verdict = "Kontroll/Kategooria";
     public const string Category = "Kategooria";
     public const string PaymentType = "Väljamakse liik";

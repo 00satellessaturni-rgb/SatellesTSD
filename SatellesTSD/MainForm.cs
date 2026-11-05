@@ -1309,6 +1309,8 @@ public sealed class MainForm : Form
         _paymentsGrid.Columns.Add(Column("payee", UiText.PayeeOnStatement));
         _paymentsGrid.Columns.Add(Column("description", UiText.Description));
         _paymentsGrid.Columns.Add(Column("amount", UiText.Amount, money: true));
+        _paymentsGrid.Columns.Add(Column("dc", UiText.DebitCredit));
+        _paymentsGrid.Columns.Add(Column("currency", UiText.Currency));
         _paymentsGrid.Columns.Add(Column("verdict", UiText.Verdict));
         _paymentsGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = ColCategory, HeaderText = UiText.Category, DisplayMember = nameof(Choice.Text), ValueMember = nameof(Choice.Value), FlatStyle = FlatStyle.Flat, Width = 130 });
         _paymentsGrid.Columns.Add(new DataGridViewComboBoxColumn { Name = ColType, HeaderText = UiText.PaymentType, DisplayMember = nameof(Choice.Text), ValueMember = nameof(Choice.Value), FlatStyle = FlatStyle.Flat, Width = 260 });
@@ -1368,6 +1370,8 @@ public sealed class MainForm : Form
                 payment.Payee,
                 payment.Description ?? "",
                 payment.AmountText is not null || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal) ? null : payment.Amount,
+                UiText.DebitCreditText(payment.Direction, payment.DirectionAssumed),
+                payment.Currency ?? "",
                 verdict,
                 payment.Category ?? None,
                 payment.TypeCode ?? "",
@@ -1378,6 +1382,11 @@ public sealed class MainForm : Form
             var row = _paymentsGrid.Rows[index];
             row.Tag = payment;
             row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}"));
+            if (payment.DirectionAssumed)
+            {
+                row.Cells["dc"].ToolTipText = UiText.DirectionAssumedTip;
+            }
+
             if (payment.AmountText is not null || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
             {
                 // an amount that could not be read: its text, else "?", shown in its place and sorted as none

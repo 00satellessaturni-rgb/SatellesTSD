@@ -72,6 +72,12 @@ public sealed record StatementLayout(
 
     public override int GetHashCode() => HashCode.Combine(Id, Bank, Kind, Seq.Hash(Headers), Roles, Direction);
 
+    /// <summary>Whether the direction is only assumed: the "marker" is the currency column (Paysera's short export, where
+    /// every EUR row counts as money out, as the workbook had it) — the statement itself never says debit or credit.
+    /// A method, not a property, so that it never travels in the layout's JSON.</summary>
+    public bool DirectionIsAssumed() =>
+        Direction == DirectionRule.Markers && Roles.DebitCredit is { } marker && string.Equals(marker, Roles.Currency, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>The 1-based column of a role header within <see cref="Headers"/>, or 0 when the role has no column.</summary>
     public int ColumnOf(string? roleHeader)
     {

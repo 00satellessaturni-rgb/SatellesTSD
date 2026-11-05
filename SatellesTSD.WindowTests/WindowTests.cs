@@ -117,6 +117,11 @@ public class WindowTests
             var amounts = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => Assert.IsType<decimal>(r.Cells["amount"].Value)).ToList();
             Assert.Equal(amounts.OrderBy(a => a), amounts);
             Assert.Equal(0.38m, amounts[0]); // the fee without a payee
+            // the direction and the currency beside the amount: the statement's D (money out) and EUR; a hand line has neither
+            Assert.Equal(
+                form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => ((ReviewPayment)r.Tag!).IsByHand ? ("", "") : ("D", "EUR")),
+                form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => (r.Cells["dc"].Value?.ToString() ?? "", r.Cells["currency"].Value?.ToString() ?? "")));
+            Assert.Equal(["D/C", "Valuuta"], new[] { form.PaymentsGrid.Columns["dc"]!.HeaderText, form.PaymentsGrid.Columns["currency"]!.HeaderText });
             Assert.IsType<DateTime>(form.PaymentsGrid.Rows[0].Cells["date"].Value);
             Assert.Equal(SortOrder.Ascending, form.PaymentsGrid.SortOrder);
             form.PaymentsSearch.Text = "kinnisvara";

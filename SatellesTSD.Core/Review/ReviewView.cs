@@ -38,6 +38,16 @@ public sealed class ReviewPayment
     /// statement had none); null when the amount was read.</summary>
     public string? AmountText { get; init; }
 
+    /// <summary>Money out (Debit) or in (Credit) as the statement said it — by its D/C column, or by the amount's sign
+    /// where the bank writes no such column; Unknown when the statement says neither, and for a line added by hand.</summary>
+    public Import.Direction Direction { get; init; } = Import.Direction.Unknown;
+
+    /// <summary>The statement never says the direction; it is the layout's assumption (<see cref="Import.StatementLayout.DirectionIsAssumed"/>).</summary>
+    public bool DirectionAssumed { get; init; }
+
+    /// <summary>The currency the statement gave the amount in; null when it gave none, and for a line added by hand.</summary>
+    public string? Currency { get; init; }
+
     /// <summary>The amount was read and the row is not shared between two persons: it counts.</summary>
     public bool AmountOk { get; init; }
 

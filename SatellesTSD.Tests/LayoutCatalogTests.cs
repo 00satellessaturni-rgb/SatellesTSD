@@ -60,6 +60,9 @@ public class LayoutCatalogTests
 
         Assert.Equal(DirectionRule.Sign, catalog.Find("source1")!.Direction);
         Assert.Equal("UTC", catalog.Find("source1")!.TimeZone);
+        Assert.Equal(("Amount", "Payment currency"), (catalog.Find("source1")!.Roles.Amount, catalog.Find("source1")!.Roles.Currency)); // the signed amount in the account's currency, not "Orig amount"
+        // only the short Paysera export assumes its direction (its "marker" is the currency column)
+        Assert.Equal(["paysera-ru-short"], catalog.Layouts.Where(l => l.DirectionIsAssumed()).Select(l => l.Id));
         Assert.Equal(DirectionRule.Sign, catalog.Find("wise")!.Direction);
         Assert.Null(catalog.Find("wise")!.Roles.Account);
         Assert.Equal("EUR", catalog.Find("paysera-ru-short")!.DebitMarker);
