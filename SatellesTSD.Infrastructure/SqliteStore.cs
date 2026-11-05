@@ -766,17 +766,35 @@ public sealed partial class SqliteStore : IStore
             .FirstOrDefault();
     }
 
-    /// <summary>Puts the copy back in place of the store: the upgraded store goes aside under the given name, the copy
-    /// is copied in (the copy itself stays, for another try).</summary>
-    public static void RestoreBackup(string path, string backup, string aside)
+    /// <summary>Puts the copy back in place of the store: the upgraded store goes aside under the given name — or, when a
+    /// store set aside earlier already holds that name, under the name with a stamp, so that nothing set aside is ever
+    /// deleted (decision 68: the copies are the owner's to delete) — and the copy is copied in (the copy itself stays, for
+    /// another try). Returns the name the store went aside under.</summary>
+    public static string RestoreBackup(string path, string backup, string aside)
     {
-        if (File.Exists(aside))
+        var target = FreeAsidePathFor(aside);
+        File.Move(path, target);
+        File.Copy(backup, path);
+        return target;
+    }
+
+    /// <summary>The name a store goes aside under: the aside name itself when free, else with a stamp (and a count), so
+    /// that the question put to the accountant names the very file.</summary>
+    public static string FreeAsidePathFor(string aside)
+    {
+        if (!File.Exists(aside))
         {
-            File.Delete(aside);
+            return aside;
         }
 
-        File.Move(path, aside);
-        File.Copy(backup, path);
+        var stamped = $"{aside}-{DateTime.Now:yyyyMMdd-HHmmss}";
+        var target = stamped;
+        for (var n = 2; File.Exists(target); n++)
+        {
+            target = $"{stamped}-{n}";
+        }
+
+        return target;
     }
 
     private void BackUpBeforeUpgrade(string path)

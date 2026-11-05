@@ -118,6 +118,10 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     public const string HeaderRow = "HEADER_ROW";
     /// <summary>A hit whose amount could not be read counts as nothing.</summary>
     public const string BadAmount = "BAD_AMOUNT";
+    /// <summary>A payment row whose fingerprint (and the bank's transaction id, when it has one) already stood in an
+    /// earlier source of the run: two exports that overlap, or a bank's file beside its copy. Listed, never searched
+    /// for a person, never counted.</summary>
+    public const string DuplicateRow = "DUPLICATE_ROW";
 }
 
 /// <summary>One row of the workbook's "Otsingu kontroll": a statement row with the person it was found for (or none),

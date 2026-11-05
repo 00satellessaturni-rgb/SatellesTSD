@@ -24,6 +24,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string NoPayee = "NO_PAYEE";
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
     public const string ModeChanged = "MODE_CHANGED";
+    public const string RatesMissing = "RATES_MISSING";
     public const string Excluded = "EXCLUDED";
     public const string Included = "INCLUDED";
 
@@ -37,18 +38,26 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly TaxRates _rates = rates ?? TaxRates.Year2026;
+    private readonly bool _ratesGiven = rates is not null;
     private readonly ReviewWorkspace _workspace = new(store, rates, clock);
 
     /// <summary>The part of the month the minimum obligation covers: the employment's days in the month over 30
     /// (määrus nr 17 § 6), 1 for a whole month or an unknown employment.</summary>
     public static decimal MonthShare(TorEntry? entry, int year, int month) => MonthShare(entry, [], year, month);
 
-    /// <summary>The share over every day the person was employed at the payer in the month: the days of the entry
-    /// standing for the month and, when its own type carries the minimum, those of the person's other register rows
-    /// whose type carries it too — so a contract ended on the 15th and the next begun on the 16th make a whole month, not
-    /// the new contract's 16 days. Another row's days of pause (from its "Peatamise alguse aeg" to its "Peatamise lõpu
-    /// aeg", or on) are not counted; a paused row that does not say since when adds nothing. A day two rows cover counts once.</summary>
-    public static decimal MonthShare(TorEntry? entry, IReadOnlyList<TorEntry> others, int year, int month)
+    private static bool Carries(string? typeId) => EmploymentTypes.Find(typeId) is { SocialTaxMinimum: true };
+
+    /// <summary>The share of the month the minimum is measured by (decision 89): the days covered by the person's register
+    /// rows of the month whose employment type carries the minimum — the entry standing for the month among them when its
+    /// own type does, else the person's other rows (a board seat or a VÕS row newer than the Tööleping stands for the
+    /// month; the Tööleping carries the minimum) — so a contract ended on the 15th and the next begun on the 16th make a
+    /// whole month; the standing entry alone when no row carries it. Every row's days of pause (from "Peatamise alguse
+    /// aeg" to "Peatamise lõpu aeg", or on) are left out, the standing entry's included; a paused row that does not say
+    /// since when adds nothing; the standing entry declared "kaasa" counts every day as if valid. A day two rows cover
+    /// counts once.</summary>
+    /// <param name="treatPausedAsValid">The person card's "kaasa": the entry standing for the month counts its days as if
+    /// valid, its pause included.</param>
+    public static decimal MonthShare(TorEntry? entry, IReadOnlyList<TorEntry> others, int year, int month, bool treatPausedAsValid = false)
     {
         ArgumentNullException.ThrowIfNull(others);
         if (entry is null)
@@ -59,10 +68,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var first = new DateOnly(year, month, 1);
         var last = first.AddMonths(1).AddDays(-1);
         var covered = new bool[last.Day];
-        bool Mark(TorEntry e, bool skipPause = false)
+        (DateOnly Start, DateOnly End) Span(TorEntry e) => (e.StartDate is { } s && s > first ? s : first, e.EndDate is { } x && x < last ? x : last);
+        void Mark(TorEntry e, bool skipPause)
         {
-            var start = e.StartDate is { } s && s > first ? s : first;
-            var end = e.EndDate is { } x && x < last ? x : last;
+            var (start, end) = Span(e);
             for (var day = start; day <= end; day = day.AddDays(1))
             {
                 if (skipPause && e.PauseStart is { } from && day >= from && (e.PauseEnd is not { } to || day <= to))
@@ -72,21 +81,31 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
                 covered[day.Day - 1] = true;
             }
-
-            return start <= end;
         }
 
-        if (!Mark(entry))
+        var (entryStart, entryEnd) = Span(entry);
+        if (entryStart > entryEnd)
         {
             return 1m; // no overlap: not this build's business
         }
 
-        if (EmploymentTypes.Find(entry.TypeId) is { SocialTaxMinimum: true })
+        // the rows the minimum is measured by: those whose type carries it — the standing entry among them when its own
+        // does, else the person's other rows (a board seat or a VÕS row newer than the Tööleping stands for the month, the
+        // Tööleping carries the minimum) — and, where no row carries it, the standing entry alone. A paused row counts
+        // its days outside the pause, and nothing when it does not say since when; the standing entry declared "kaasa"
+        // counts every day as if valid.
+        var rows = new[] { entry }.Concat(others).ToList(); // the entry may be among the others too: a day marked twice is marked once
+        var carriers = rows.Where(r => Carries(r.TypeId) && Span(r).Start <= Span(r).End).ToList(); // only rows that cover a day of the month
+        foreach (var row in carriers.Count > 0 ? carriers : [entry])
         {
-            foreach (var other in others.Where(o => EmploymentTypes.Find(o.TypeId) is { SocialTaxMinimum: true } && (o.StateId != TorStates.Paused || o.PauseStart is not null)))
+            var asValid = treatPausedAsValid && (ReferenceEquals(row, entry) || row == entry);
+            var paused = row.StateId == TorStates.Paused && !asValid;
+            if (paused && row.PauseStart is null)
             {
-                Mark(other, skipPause: true);
+                continue;
             }
+
+            Mark(row, skipPause: paused);
         }
 
         var days = covered.Count(c => c);
@@ -150,7 +169,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var builds = new List<PersonBuild>();
         var problems = new List<string>();
-        var allocator = new MonthAllocator(new TaxEngine(_rates));
+        // the month's own year's rates; a year this build knows no rates for is refused, never computed with another's
+        var rates = _ratesGiven ? _rates : TaxRates.For(period.Year)
+            ?? throw new DeclareException(RatesMissing, $"This version knows no tax rates for {period.Year}; the month's lines cannot be built until a version that does.");
+        var allocator = new MonthAllocator(new TaxEngine(rates));
         _store.InTransaction(() =>
         {
             foreach (var reviewPerson in view.Persons.Where(p => !p.IsUnmatched && p.PersonId is { } id && persons.ContainsKey(id)))
@@ -293,7 +315,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var lastDay = new DateOnly(period.Year, period.Month, DateTime.DaysInMonth(period.Year, period.Month));
         // the card's type, when the card says it stands for every payment, stands for the zero line too
         var cardType = person is { TypeFromCard: true, TorEmploymentTypeId: { Length: > 0 } card } && EmploymentTypes.Find(card) is not null ? card : null;
-        var zeroTypeId = entry is { StateId: TorStates.Valid } ? cardType ?? entry.TypeId
+        // the valid employment the zero line's type comes from: the standing entry when its own type carries the minimum,
+        // else another valid row of the month whose type does (a board seat newer than the Tööleping stands for the
+        // month; the Tööleping carries the minimum)
+        var carrier = entry is { StateId: TorStates.Valid } && Carries(entry.TypeId) ? entry
+            : reviewPerson.Register?.Entries.Where(e => e.Overlaps(period.Year, period.Month) && e.StateId == TorStates.Valid && Carries(e.TypeId)).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault() ?? entry;
+        var zeroTypeId = carrier is { StateId: TorStates.Valid } ? cardType ?? carrier.TypeId
             : !include ? null
             : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
@@ -303,7 +330,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             var zeroSource = MinimumKey(person.Id);
             monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
             references[zeroSource] = (MinimumSource, null, null);
-            problems.Add(entry is { StateId: TorStates.Valid }
+            problems.Add(carrier is { StateId: TorStates.Valid }
                 ? $"{ZeroLine}: a valid employment{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
                 : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
         }
@@ -335,13 +362,24 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
         }
 
-        var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month);
+        var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
         var facts = person.FactsFor(period.Year, share);
         if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)
         {
             // pay after the employment ended (a final settlement): the register covers no day of the month, so no minimum is owed on it
             facts = facts with { SocialTaxMinimumApplies = false };
             problems.Add($"{NoEmploymentInMonth}: no employment of the register covers the month; the minimum is not owed on this pay.");
+        }
+        else if (share == 0m)
+        {
+            // the employment is paused for every day of the month (or its pause has no start): no day counts, no minimum
+            // is owed — the engine takes a whole share with the minimum switched off, never a share of nothing
+            var owed = facts.SocialTaxMinimumApplies;
+            facts = person.FactsFor(period.Year, 1m) with { SocialTaxMinimumApplies = false };
+            if (owed)
+            {
+                problems.Add($"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.");
+            }
         }
 
         MonthAllocation allocation;

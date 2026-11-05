@@ -14,7 +14,7 @@ public class PeriodMatcherTests
 
     private static StatementRow Row(int rowNo, string? date, string? name, decimal? amount, string? description, Direction direction = Direction.Debit, string? skip = null) =>
         new(rowNo, date is null ? null : DateOnly.ParseExact(date, "yyyy-MM-dd"), date ?? "kolmapäev", "EE49", name, null, amount, amount?.ToString(), "EUR", description, null, null, direction,
-            direction == Direction.Debit ? "D" : direction == Direction.Credit ? "C" : null, skip, null, $"hash{rowNo}", []);
+            direction == Direction.Debit ? "D" : direction == Direction.Credit ? "C" : null, skip, null, $"hash{rowNo}|{name}|{amount}|{description}", []);
 
     private static readonly IReadOnlyList<TorEntry> Register =
     [
@@ -140,6 +140,64 @@ public class PeriodMatcherTests
         Assert.Contains(result.Problems, p => p.Code == MatchProblem.HeaderRow && p.RowNo == 12);
         Assert.DoesNotContain(result.Hits, h => h.Row.RowNo == 12); // a pasted header row is left out
         Assert.DoesNotContain(result.Hits, h => h.Row.RowNo == 15); // the balance line after the last named row: the workbook never reached it
+    }
+
+    [Fact]
+    public void A_row_already_in_an_earlier_source_is_a_duplicate_listed_not_searched_not_counted()
+    {
+        // two exports of one account that overlap: the first carries the salary and two identical fees without a bank id;
+        // the second carries the salary again (the same fingerprint and bank id), one of the fees, and a payment of its own
+        var first = new MatchSource("LHV pank *1757", "lhv-et-short", LayoutKind.Bank,
+        [
+            Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "T1" },
+            Row(3, "2026-10-06", "Mari Maasikas", -0.38m, "Teenustasu") with { RowHash = "h-fee" },
+            Row(4, "2026-10-06", "Mari Maasikas", -0.38m, "Teenustasu") with { RowHash = "h-fee" },
+        ]);
+        var second = new MatchSource("LHV pank *1757 #2", "lhv-et-short", LayoutKind.Bank,
+        [
+            Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "T1" },
+            Row(3, "2026-10-06", "Mari Maasikas", -0.38m, "Teenustasu") with { RowHash = "h-fee" },
+            Row(4, "2026-10-20", "Mari Maasikas", -100m, "Lisatasu") with { RowHash = "h-bonus", TransactionId = "T2" },
+        ]);
+
+        var result = Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [first, second]);
+
+        // the first source's rows are all the person's; the second's salary and one fee are copies, the bonus is new
+        var mari = result.Hits.Where(h => h.PersonKey == "48712219406").Select(h => h.Reference).ToList();
+        Assert.Equal(["LHV pank *1757 [2]", "LHV pank *1757 [3]", "LHV pank *1757 [4]", "LHV pank *1757 #2 [4]"], mari);
+        var copies = result.Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).ToList();
+        Assert.Equal(["LHV pank *1757 #2 [2]", "LHV pank *1757 #2 [3]"], copies.Select(h => h.Reference));
+        Assert.All(copies, h => Assert.Equal((null, false, "duplikaat: "), (h.PersonKey, h.Counted, h.Text[..11])));
+        Assert.Equal("duplikaat: LHV pank *1757 [2]", copies[0].Text);
+        Assert.Equal("duplikaat: LHV pank *1757 [3]", copies[1].Text); // the first fee: one copy for one row, never both
+        Assert.Equal(2, result.Problems.Count(p => p.Code == MatchProblem.DuplicateRow));
+        Assert.Equal(905.92m + 100m, result.SalaryTotal("48712219406")); // the salary once, the bonus once
+
+        // the same fingerprints in the other order: the copies are the ones that come later
+        var reversed = Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [second with { Name = "A" }, first with { Name = "B" }]);
+        Assert.Equal(["B [2]", "B [3]"], reversed.Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).Select(h => h.Reference));
+
+        // a third export carrying the salary again: a copy too — an original is never used up
+        var third = new MatchSource("C", "lhv-et-short", LayoutKind.Bank, [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "T1" }]);
+        var three = Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [first, second, third]);
+        Assert.Equal(["LHV pank *1757 #2 [2]", "LHV pank *1757 #2 [3]", "C [2]"], three.Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).Select(h => h.Reference));
+        Assert.Equal(905.92m + 100m, three.SalaryTotal("48712219406"));
+
+        // the accountant's hand-made copy: Excel rounded the sixteen-digit bank id, so the ids differ — such an id tells
+        // nothing, the fingerprint does; a short id that differs keeps two rows apart
+        var bank = new MatchSource("A", "swedbank-et", LayoutKind.Bank, [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "2026100500000456" }]);
+        var copy = new MatchSource("B", "swedbank-et", LayoutKind.Bank, [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "2026100500000450" }]);
+        Assert.Equal(["B [2]"], Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [bank, copy]).Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).Select(h => h.Reference));
+        var other = new MatchSource("B", "lhv-et-short", LayoutKind.Bank, [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "T2" }]);
+        Assert.Empty(Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [first, other]).Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)));
+
+        // two identical fees in the first export and both again in the second: each copy names its own original
+        var fees = new MatchSource("B", "lhv-et-short", LayoutKind.Bank,
+        [
+            Row(3, "2026-10-06", "Mari Maasikas", -0.38m, "Teenustasu") with { RowHash = "h-fee" },
+            Row(4, "2026-10-06", "Mari Maasikas", -0.38m, "Teenustasu") with { RowHash = "h-fee" },
+        ]);
+        Assert.Equal(["duplikaat: LHV pank *1757 [3]", "duplikaat: LHV pank *1757 [4]"], Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [first, fees]).Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).Select(h => h.Text));
     }
 
     [Fact]

@@ -65,7 +65,9 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(payment);
-        return payment.Category is null && (owner.IsUnmatched ? payment.VerdictText.Length > 0 : payment.InPeriod);
+        // a copy of an earlier source's row waits for no category: it is in Otsingu kontroll, as the run listed it
+        return payment.Category is null && !payment.Flags.Contains(Matching.MatchProblem.DuplicateRow, StringComparer.Ordinal)
+            && (owner.IsUnmatched ? payment.VerdictText.Length > 0 : payment.InPeriod);
     }
 
     // ---------------------------------------------------------------- Vahearuanne

@@ -123,6 +123,10 @@ public sealed class PersonPanel : UserControl
     /// <summary>The person shown, for a caller to tell a reload of the same person from a move to another.</summary>
     public Guid? PresentedId => _person?.Id;
 
+    /// <summary>The copy the card was filled from: what the accountant's edits are measured against when saved, so that a
+    /// fact changed in the store meanwhile (the registers' answer) is not written over by the card's stale copy.</summary>
+    public Person? Presented => _person;
+
     /// <summary>Seams for the window tests: the declaration choice and the save button.</summary>
     internal ComboBox DeclarationBox => _declaration;
 

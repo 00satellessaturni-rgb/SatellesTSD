@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false)
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false)
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -114,8 +114,8 @@ public class DeclareTests
         Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(next, [paused with { PauseEnd = new DateOnly(2026, 10, 20) }], 2026, 10)); // 21–31 already the new contract's
         Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 22), null), [paused with { PauseEnd = new DateOnly(2026, 10, 18) }], 2026, 10)); // 1–9 and 19–31: 22 days
 
-        // the entry standing for the month carries no minimum (a board seat): the others do not stretch its share
-        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 10), null, "2", "600"), [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4")], 2026, 10)); // 22 days of its own
+        // a row that carries no minimum stands for the month: the share is measured by the Tööleping that carries it (decision 89)
+        Assert.Equal(0.5m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 10), null, "2", "600"), [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4")], 2026, 10)); // a VÕS row (no minimum) stands for the month; the minimum is the ended Tööleping's 15 days (decision 89)
     }
 
     [Fact]
@@ -125,6 +125,75 @@ public class DeclareTests
         var report = box.Declarer.Build(box.Period.Id);
         var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
         Assert.Equal(1m, mari.MinimumShare); // the new contract alone would be 16/30
+    }
+
+    [Fact]
+    public void The_month_share_is_measured_by_the_rows_that_carry_the_minimum_and_a_paused_entry_counts_no_pause()
+    {
+        TorEntry Entry(DateOnly? start, DateOnly? end, string state = "2", string type = "1", int row = 1) =>
+            new(row, row.ToString(), ReviewFixtures.MariCode, "MARI", "MAASIKAS", "EE", start, end, type, type == "1" ? "Tööleping" : "Muu", state, state == "2" ? "Kehtiv" : state == "3" ? "Peatatud" : "Lõpetatud", null, null, null, null, [], null);
+
+        // a board seat (601, no minimum) from the 11th stands for the month; the Tööleping ended on the 10th carries the
+        // minimum: the share is the Tööleping's 10 days, not the board seat's 21
+        var board = Entry(new DateOnly(2026, 10, 11), null, "2", "601", 2);
+        var contract = Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 10), "4", "1", 1);
+        Assert.Equal(0.3333m, PeriodDeclarer.MonthShare(board, [contract, board], 2026, 10));
+        // a VÕS row newer than a running Tööleping: the Tööleping's whole month
+        Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 6), null, "2", "600", 2), [Entry(new DateOnly(2024, 1, 1), null), Entry(new DateOnly(2026, 10, 6), null, "2", "600", 2)], 2026, 10));
+        // no row carries the minimum: the standing entry's own days, as before
+        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [], 2026, 10));
+        // a Tööleping ended years ago beside the board seat covers no day of the month: it measures nothing, the board seat's days stand
+        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [Entry(new DateOnly(2020, 1, 1), new DateOnly(2025, 6, 30), "4", "1", 3)], 2026, 10));
+
+        // the entry standing for the month is paused: its days before the pause count, the pause does not
+        var paused = Entry(new DateOnly(2024, 1, 1), null, "3") with { PauseStart = new DateOnly(2026, 10, 10) };
+        Assert.Equal(0.3m, PeriodDeclarer.MonthShare(paused, [paused], 2026, 10));
+        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(paused with { PauseEnd = new DateOnly(2026, 10, 18) }, [], 2026, 10)); // 1–9 and 19–31: 22 days
+        Assert.Equal(0m, PeriodDeclarer.MonthShare(paused with { PauseStart = new DateOnly(2026, 8, 1) }, [], 2026, 10)); // paused through the month
+        Assert.Equal(0m, PeriodDeclarer.MonthShare(paused with { PauseStart = null }, [], 2026, 10)); // a pause without a start counts nothing
+        // the person card's "kaasa": the paused entry counts every day as if valid
+        Assert.Equal(1m, PeriodDeclarer.MonthShare(paused, [], 2026, 10, treatPausedAsValid: true));
+    }
+
+    [Fact]
+    public void A_paused_employment_owes_no_minimum_on_its_pause_and_a_newer_contract_without_the_minimum_does_not_hide_the_zero_line()
+    {
+        // paused since August, through the month: the small pay is not topped up, and the build says why
+        using (var paused = Ready(minimum: true, mariPaused: true, salary: 100m))
+        {
+            var report = paused.Declarer.Build(paused.Period.Id);
+            var mari = Assert.Single(report.Persons, p => p.PersonId == paused.Mari.Id);
+            Assert.Equal((0m, 0m), (mari.MinimumShare, mari.MinimumDue));
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal) && p.Contains("paused", StringComparison.Ordinal));
+            Assert.True(paused.Lines.Count == 1, string.Join(" | ", mari.Problems.Concat(report.Problems)));
+            Assert.Equal(0m, Assert.Single(paused.Lines).Result!.SocialTaxMinimumIncrease);
+        }
+
+        // a VÕS contract (no minimum) begun on the 6th stands for the month beside the running Tööleping: with no pay
+        // carrying the minimum, the zero line comes from the Tööleping, over the whole month
+        using (var second = Ready(minimum: true, mariSecond: true))
+        {
+            second.Workspace.SetCategory(second.Salary, "Haigusleht");
+            var report = second.Declarer.Build(second.Period.Id);
+            var mari = Assert.Single(report.Persons, p => p.PersonId == second.Mari.Id);
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+            Assert.True(second.Lines.Count > 0, string.Join(" | ", mari.Problems.Concat(report.Problems)));
+            var zero = Assert.Single(second.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+            Assert.Equal(("10", 1m, 886m), (zero.Line.TypeCode, mari.MinimumShare, mari.MinimumDue));
+        }
+    }
+
+    [Fact]
+    public void A_month_of_a_year_this_build_has_no_rates_for_is_refused_never_computed_with_anothers()
+    {
+        Assert.Same(TaxRates.Year2026, TaxRates.For(2026));
+        Assert.Null(TaxRates.For(2027));
+        using var box = Ready();
+        var january = box.Store.GetOrCreatePeriod(box.Company.Id, 2027, 1);
+        var refusal = Assert.Throws<DeclareException>(() => new PeriodDeclarer(box.Store).Build(january.Id));
+        Assert.Equal(PeriodDeclarer.RatesMissing, refusal.Code);
+        Assert.Contains("2027", refusal.Message, StringComparison.Ordinal);
+        Assert.Empty(box.Store.Payments(january.Id));
     }
 
     [Fact]

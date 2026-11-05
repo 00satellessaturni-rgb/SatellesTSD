@@ -440,6 +440,60 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void A_payment_in_another_currency_never_counts_and_is_refused_when_declared()
+    {
+        var (store, _, period, _) = ReviewFixtures.Setup(strangerCurrency: "USD");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            var view = workspace.Load(period.Id);
+            var stranger = Stranger(view);
+            Assert.Equal(("USD", false, false), (stranger.Currency, stranger.AmountOk, stranger.Declare));
+
+            // given to the first person as salary: not in her sums, not declared by default, refused when declared all the same
+            var mari = view.Persons[0];
+            workspace.SetPerson(stranger, mari.PersonId);
+            workspace.SetCategory(stranger, "Palgad");
+            view = workspace.Load(period.Id);
+            Assert.Equal(905.92m, view.Persons[0].SalaryTotal);
+            var given = view.Persons[0].Payments.Single(p => p.Payee == "Kinnisvara OÜ");
+            Assert.Equal(("Palgad", "10", false), (given.Category, given.TypeCode, given.Declare));
+            workspace.SetDeclare(given, true);
+            var declared = workspace.Load(period.Id).Persons[0].Payments.Single(p => p.Payee == "Kinnisvara OÜ");
+            Assert.Contains(declared.Checks, c => c.Code == ReviewChecks.ForeignCurrency);
+            Assert.Equal(905.92m, workspace.Load(period.Id).Persons[0].SalaryTotal);
+        }
+    }
+
+    [Fact]
+    public void A_save_measured_against_the_card_shown_keeps_a_fact_the_registers_wrote_meanwhile()
+    {
+        var (store, _, period, workspace) = Run();
+        using (store)
+        {
+            var shown = workspace.Load(period.Id).Persons[0].Person!; // the card filled from this copy
+            Assert.Equal((Residency.Resident, LookupSource.Unknown), (shown.Residency, shown.ResidencySource));
+
+            // the registers answer meanwhile (a lookup run): the store's copy moves on
+            store.UpdatePerson(shown with { Residency = Residency.NonResident, ResidenceCountry = "LV", ResidencySource = LookupSource.Emta, ResidencyCheckedOn = Today, FundedPensionMember = true, PensionRate = 0.04m, PensionSource = LookupSource.Pensionikeskus, PensionCheckedOn = Today });
+
+            // the card, still showing the old facts, saves a note: only the note is the accountant's, the registers' word stands
+            var saved = workspace.SavePerson(shown with { Notes = "helistada" }, presented: shown);
+            Assert.Equal((Residency.NonResident, "LV", LookupSource.Emta, true, 0.04m, LookupSource.Pensionikeskus, "helistada"),
+                (saved.Residency, saved.ResidenceCountry, saved.ResidencySource, saved.FundedPensionMember, saved.PensionRate, saved.PensionSource, saved.Notes));
+
+            // a fact the accountant did change on the card is theirs, and Manual
+            var changed = workspace.SavePerson(shown with { FundedPensionMember = false, PensionRate = null }, presented: shown);
+            Assert.Equal((Residency.NonResident, LookupSource.Emta, false, LookupSource.Manual), (changed.Residency, changed.ResidencySource, changed.FundedPensionMember, changed.PensionSource));
+
+            // without the card's copy to measure against, every field of the edit stands (the old way)
+            var overwritten = workspace.SavePerson(shown with { Notes = "x" });
+            Assert.Equal((Residency.Resident, LookupSource.Manual), (overwritten.Residency, overwritten.ResidencySource));
+        }
+    }
+
+    [Fact]
     public void A_persons_facts_edited_by_hand_become_manual_and_the_salary_type_follows_the_residency()
     {
         var (store, _, period, workspace) = Run();

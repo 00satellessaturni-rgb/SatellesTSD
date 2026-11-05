@@ -198,6 +198,8 @@ internal static class UiText
     public const string DeclareModeChanged = "Deklaratsiooni read koostatakse nüüd";
     public const string ModeEach = "iga makse eraldi reana";
     public const string ModeTotals = "koondina liigi kaupa";
+    public const string RatesMissing = "Selle aasta maksumäärad ja kuumäär ei ole programmis: kuu ridu ei saa koostada enne, kui uus versioon need toob.";
+    public const string StoreSetAside = "kõrvale pandud";
     public const string DeclareModeRefused = "Selle kuu read on e-MTA-s juba teises lõikes (iga makse eraldi või koond liigi kaupa). Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.";
 
     // the declaration tab

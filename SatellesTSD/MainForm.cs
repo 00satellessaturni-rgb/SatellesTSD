@@ -463,7 +463,7 @@ public sealed class MainForm : Form
             return false;
         }
 
-        var aside = SqliteStore.AsidePathFor(path);
+        var aside = SqliteStore.FreeAsidePathFor(SqliteStore.AsidePathFor(path)); // the very name the store will go aside under
         if (!Confirm($"{UiText.StoreNewerRestore}\n{backup}\n\n{UiText.StoreNewerRestoreQuestion}\n{aside}", UiText.Title))
         {
             return false;
@@ -471,8 +471,8 @@ public sealed class MainForm : Form
 
         try
         {
-            SqliteStore.RestoreBackup(path, backup, aside);
-            Log($"{UiText.StoreRestored}: {backup}");
+            var setAside = SqliteStore.RestoreBackup(path, backup, aside);
+            Log($"{UiText.StoreRestored}: {backup} ({UiText.StoreSetAside}: {setAside})");
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -589,6 +589,13 @@ public sealed class MainForm : Form
                 // the month is on the server in the other cut: said in the accountant's words, with the way out
                 Log($"{UiText.BuildLines}: {e.Message}");
                 Inform(UiText.DeclareModeRefused, UiText.BuildLines);
+                return;
+            }
+            catch (DeclareException e) when (e.Code == PeriodDeclarer.RatesMissing)
+            {
+                // a year this version has no rates for: said, never computed with another year's figures
+                Log($"{UiText.BuildLines}: {e.Message}");
+                Inform(UiText.RatesMissing, UiText.BuildLines);
                 return;
             }
 
@@ -1333,12 +1340,13 @@ public sealed class MainForm : Form
     private bool ResolveDirtyPanel()
     {
         var saved = false;
-        var answer = MessageBox.Show(this, UiText.UnsavedPerson, UiText.PersonPanel, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        var answer = Confirming is { } hook ? (hook(UiText.UnsavedPerson, UiText.PersonPanel) ? DialogResult.Yes : DialogResult.No)
+            : MessageBox.Show(this, UiText.UnsavedPerson, UiText.PersonPanel, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (answer == DialogResult.Yes && _services is not null && _personPanel.Collect() is { } edited)
         {
             try
             {
-                var person = _services.Workspace.SavePerson(edited, _personPanel.ConfirmResidency, _personPanel.ConfirmPension);
+                var person = _services.Workspace.SavePerson(edited, _personPanel.ConfirmResidency, _personPanel.ConfirmPension, _personPanel.Presented);
                 Log($"{UiText.Save}: {person.LastName} {person.FirstName}");
                 saved = true;
             }
@@ -1750,6 +1758,11 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (_personPanel.IsDirty)
+        {
+            ResolveDirtyPanel(); // the registers are asked about the persons as saved, and the card shown afresh with their answers
+        }
+
         var services = _services;
         var periodId = _view.Period.Id;
         var progress = new Progress<PersonLookupOutcome>(LogOutcome);
@@ -1937,7 +1950,7 @@ public sealed class MainForm : Form
 
         try
         {
-            var saved = _services.Workspace.SavePerson(edited, confirmResidency, confirmPension);
+            var saved = _services.Workspace.SavePerson(edited, confirmResidency, confirmPension, _personPanel.Presented);
             Log($"{UiText.Save}: {saved.LastName} {saved.FirstName}");
             _personPanel.MarkClean();
         }

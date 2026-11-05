@@ -34,7 +34,50 @@ public sealed class PeriodMatcher
         var problems = new List<MatchProblem>();
         var hits = new List<MatchHit>();
         var searchPersons = persons.Select(p => p.Person).ToList();
-        var names = sources.ToDictionary(s => s.Name, s => (IReadOnlyList<string?>)s.Rows.Select(r => r.IsPayment ? NameText.Normalize(NameText.Demojibake(r.Counterparty)) : null).ToList(), StringComparer.Ordinal);
+        // a payment row already seen in an earlier source — the same fingerprint and the same bank id (or none on both),
+        // one for one, so two identical payments inside one export are not each other's copy — is a duplicate: told, left
+        // out of the search and of the sums, listed as nobody's row (decision 23: overlapping exports told apart)
+        // The originals: per fingerprint, the rows of the earlier sources with the bank id each carries. A later source's
+        // row is a copy of the first original of its fingerprint not yet copied by that source whose id does not say
+        // otherwise — ids are compared only when both are trustworthy (a run of sixteen or more digits is not: Excel
+        // rounds it in a hand-made copy, decision 20). An original is never used up: a third export's copy is a copy too.
+        var duplicates = new Dictionary<(string Source, int RowNo), string>();
+        var originals = new Dictionary<string, List<(string Reference, string? Id)>>(StringComparer.Ordinal);
+        static bool Trusted(string? id) => !string.IsNullOrWhiteSpace(id) && !(id.Length >= 16 && id.All(char.IsDigit));
+        static bool Compatible(string? a, string? b) => !Trusted(a) || !Trusted(b) || string.Equals(a!.Trim(), b!.Trim(), StringComparison.Ordinal);
+        foreach (var source in sources)
+        {
+            var own = new List<(string Hash, string Reference, string? Id)>();
+            var copied = new HashSet<(string Hash, int Index)>();
+            foreach (var row in source.Rows.Where(r => r.IsPayment && r.RowHash.Length > 0))
+            {
+                var reference = $"{source.Name} [{row.RowNo}]";
+                var earlier = originals.GetValueOrDefault(row.RowHash);
+                var index = earlier is null ? -1 : earlier.FindIndex(o => !copied.Contains((row.RowHash, earlier.IndexOf(o))) && Compatible(o.Id, row.TransactionId));
+                if (index >= 0)
+                {
+                    copied.Add((row.RowHash, index));
+                    duplicates[(source.Name, row.RowNo)] = earlier![index].Reference;
+                    problems.Add(new MatchProblem(MatchProblem.DuplicateRow, $"{reference} is the same payment as {earlier[index].Reference}; listed, not counted.", Source: source.Name, RowNo: row.RowNo));
+                    continue;
+                }
+
+                own.Add((row.RowHash, reference, row.TransactionId));
+            }
+
+            foreach (var (hash, reference, id) in own)
+            {
+                if (!originals.TryGetValue(hash, out var list))
+                {
+                    list = [];
+                    originals[hash] = list;
+                }
+
+                list.Add((reference, id));
+            }
+        }
+
+        var names = sources.ToDictionary(s => s.Name, s => (IReadOnlyList<string?>)s.Rows.Select(r => r.IsPayment && !duplicates.ContainsKey((s.Name, r.RowNo)) ? NameText.Normalize(NameText.Demojibake(r.Counterparty)) : null).ToList(), StringComparer.Ordinal);
 
         foreach (var source in sources)
         {
@@ -102,6 +145,12 @@ public sealed class PeriodMatcher
             {
                 if (row.RowNo > lastNamed || matchedRows.Contains((source.Name, row.RowNo)))
                 {
+                    continue;
+                }
+
+                if (duplicates.TryGetValue((source.Name, row.RowNo), out var first))
+                {
+                    hits.Add(new MatchHit(source.Name, row, null, "", "", false, CategoryVerdict.None, $"duplikaat: {first}", InMonth(row, year, month), false, [MatchProblem.DuplicateRow]));
                     continue;
                 }
 

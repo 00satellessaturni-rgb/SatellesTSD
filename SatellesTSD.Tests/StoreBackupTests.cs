@@ -52,8 +52,16 @@ public class StoreBackupTests
             File.Copy(backup, $"{path}.before-v{SqliteStore.SchemaVersion + 3}");
             Assert.Equal(newerCopy, SqliteStore.NewerBackupOf(path)); // the earliest beyond this build: the store as it last knew it
             var aside = SqliteStore.AsidePathFor(path);
-            SqliteStore.RestoreBackup(path, newerCopy, aside);
+            Assert.Equal(aside, SqliteStore.RestoreBackup(path, newerCopy, aside));
             Assert.True(File.Exists(aside) && File.Exists(newerCopy) && File.Exists(path));
+
+            // a second restore never deletes what the first set aside: the store goes aside under a stamped name
+            var stamp2 = File.GetLastWriteTimeUtc(aside);
+            var second = SqliteStore.RestoreBackup(path, newerCopy, aside);
+            Assert.NotEqual(aside, second);
+            Assert.StartsWith(aside + "-", second, StringComparison.Ordinal);
+            Assert.True(File.Exists(aside) && File.Exists(second) && File.Exists(path));
+            Assert.Equal(stamp2, File.GetLastWriteTimeUtc(aside));
             Assert.True(SqliteStore.IsNewerThanThisBuild(new InvalidOperationException("The store is at schema version 9, newer than this build (6).")));
             Assert.False(SqliteStore.IsNewerThanThisBuild(new IOException("locked")));
 

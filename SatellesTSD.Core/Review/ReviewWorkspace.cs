@@ -24,9 +24,14 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly TaxRates _rates = rates ?? TaxRates.Year2026;
+    private readonly bool _ratesGiven = rates is not null;
 
     /// <summary>The rates the review reckons with (the report and the window show the allowance in force from them).</summary>
     public TaxRates Rates => _rates;
+
+    /// <summary>The rates the checks of a month use: the rates given to this workspace, else the month's year's, else the
+    /// default (the checks say what they can; the build is where a year without rates is refused).</summary>
+    private TaxRates RatesFor(int year) => _ratesGiven ? _rates : TaxRates.For(year) ?? _rates;
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
     /// <summary>The catalog in force for a new run: the owner's saved document, else the embedded default.</summary>
@@ -278,44 +283,57 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// <summary>Saves the facts the accountant edited onto a fresh copy of the person (so a lookup that ran meanwhile is
     /// not undone): a residency or pension changed — or confirmed — by hand becomes Manual, checked on today. The
     /// register link (<see cref="Person.RegisterKey"/>) stays, so a corrected code or name keeps the person one.</summary>
-    public Person SavePerson(Person edited, bool confirmResidency = false, bool confirmPension = false)
+    /// <param name="presented">The copy the card was filled from, when the caller has it: only what the accountant changed
+    /// against it is written, so a fact the registers wrote to the store meanwhile is not covered by the card's stale copy;
+    /// without it, every field of <paramref name="edited"/> stands.</param>
+    public Person SavePerson(Person edited, bool confirmResidency = false, bool confirmPension = false, Person? presented = null)
     {
         ArgumentNullException.ThrowIfNull(edited);
         var fresh = _store.Persons(edited.CompanyId).FirstOrDefault(p => p.Id == edited.Id)
             ?? throw new KeyNotFoundException($"Person {edited.Id} is not in the store.");
-        var code = CheckedCode(edited.CompanyId, edited.PersonalCode, fresh.Id);
+        var basis = presented is { } shown && shown.Id == edited.Id ? shown : null;
+        // the value to write: the edit where it differs from what the card showed, else what the store holds now
+        T Pick<T>(T editedValue, T shownValue, T storeValue) => basis is null || !EqualityComparer<T>.Default.Equals(editedValue, shownValue) ? editedValue : storeValue;
+        string? PickText(string? editedValue, string? shownValue, string? storeValue) =>
+            basis is null || !string.Equals(Clean(editedValue), Clean(shownValue), StringComparison.Ordinal) ? Clean(editedValue) : Clean(storeValue);
+
+        var code = CheckedCode(edited.CompanyId, Pick(edited.PersonalCode, basis?.PersonalCode, fresh.PersonalCode), fresh.Id);
         RequireNames(edited.FirstName, edited.LastName);
-        var residencyChanged = confirmResidency || fresh.Residency != edited.Residency
-            || !string.Equals(Clean(fresh.ResidenceCountry), Clean(edited.ResidenceCountry), StringComparison.OrdinalIgnoreCase);
-        var pensionChanged = confirmPension || fresh.FundedPensionMember != edited.FundedPensionMember || fresh.PensionRate != edited.PensionRate;
+        var residency = Pick(edited.Residency, basis?.Residency ?? edited.Residency, fresh.Residency);
+        var residenceCountry = PickText(edited.ResidenceCountry, basis?.ResidenceCountry, fresh.ResidenceCountry);
+        var residencyChanged = confirmResidency || fresh.Residency != residency
+            || !string.Equals(Clean(fresh.ResidenceCountry), residenceCountry, StringComparison.OrdinalIgnoreCase);
+        var member = Pick(edited.FundedPensionMember, basis?.FundedPensionMember, fresh.FundedPensionMember);
+        var rate = Pick(edited.PensionRate, basis?.PensionRate, fresh.PensionRate);
+        var pensionChanged = confirmPension || fresh.FundedPensionMember != member || fresh.PensionRate != rate;
         var today = Today();
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
             LastName = edited.LastName.Trim(),
             PersonalCode = code,
-            MrrCode = Clean(edited.MrrCode),
-            Residency = edited.Residency,
-            ResidenceCountry = Clean(edited.ResidenceCountry),
+            MrrCode = PickText(edited.MrrCode, basis?.MrrCode, fresh.MrrCode),
+            Residency = residency,
+            ResidenceCountry = residenceCountry,
             ResidencyCheckedOn = residencyChanged ? today : fresh.ResidencyCheckedOn,
             ResidencySource = residencyChanged ? LookupSource.Manual : fresh.ResidencySource,
-            FundedPensionMember = edited.FundedPensionMember,
-            PensionRate = edited.PensionRate,
+            FundedPensionMember = member,
+            PensionRate = rate,
             PensionCheckedOn = pensionChanged ? today : fresh.PensionCheckedOn,
             PensionSource = pensionChanged ? LookupSource.Manual : fresh.PensionSource,
-            OnOldAgeOrFlexiblePension = edited.OnOldAgeOrFlexiblePension,
-            PensionAgeYear = edited.PensionAgeYear,
-            BasicExemptionApplied = edited.BasicExemptionApplied,
-            BasicExemptionMonthly = edited.BasicExemptionMonthly,
-            SocialTaxMinimumApplies = edited.SocialTaxMinimumApplies,
-            Declaration = edited.Declaration,
-            TypeFromCard = edited.TypeFromCard,
-            A1 = edited.A1,
-            A1Country = Clean(edited.A1Country),
-            WorkCountry = Clean(edited.WorkCountry),
-            TreatyIncomeTaxRate = edited.TreatyIncomeTaxRate,
-            TorEmploymentTypeId = Clean(edited.TorEmploymentTypeId),
-            Notes = Clean(edited.Notes),
+            OnOldAgeOrFlexiblePension = Pick(edited.OnOldAgeOrFlexiblePension, basis?.OnOldAgeOrFlexiblePension ?? edited.OnOldAgeOrFlexiblePension, fresh.OnOldAgeOrFlexiblePension),
+            PensionAgeYear = Pick(edited.PensionAgeYear, basis?.PensionAgeYear, fresh.PensionAgeYear),
+            BasicExemptionApplied = Pick(edited.BasicExemptionApplied, basis?.BasicExemptionApplied ?? edited.BasicExemptionApplied, fresh.BasicExemptionApplied),
+            BasicExemptionMonthly = Pick(edited.BasicExemptionMonthly, basis?.BasicExemptionMonthly, fresh.BasicExemptionMonthly),
+            SocialTaxMinimumApplies = Pick(edited.SocialTaxMinimumApplies, basis?.SocialTaxMinimumApplies ?? edited.SocialTaxMinimumApplies, fresh.SocialTaxMinimumApplies),
+            Declaration = Pick(edited.Declaration, basis?.Declaration ?? edited.Declaration, fresh.Declaration),
+            TypeFromCard = Pick(edited.TypeFromCard, basis?.TypeFromCard ?? edited.TypeFromCard, fresh.TypeFromCard),
+            A1 = Pick(edited.A1, basis?.A1 ?? edited.A1, fresh.A1),
+            A1Country = PickText(edited.A1Country, basis?.A1Country, fresh.A1Country),
+            WorkCountry = PickText(edited.WorkCountry, basis?.WorkCountry, fresh.WorkCountry),
+            TreatyIncomeTaxRate = Pick(edited.TreatyIncomeTaxRate, basis?.TreatyIncomeTaxRate, fresh.TreatyIncomeTaxRate),
+            TorEmploymentTypeId = PickText(edited.TorEmploymentTypeId, basis?.TorEmploymentTypeId, fresh.TorEmploymentTypeId),
+            Notes = PickText(edited.Notes, basis?.Notes, fresh.Notes),
         };
         _store.UpdatePerson(next);
         return next;
@@ -339,8 +357,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var torType = ReviewDefaults.EmploymentTypeFor(register, person, hit.Row.Date);
         var defaultType = ReviewDefaults.TypeCodeFor(category is null ? null : catalog.Find(category), torType, person?.Residency ?? Residency.Resident);
         var typeCode = overlay?.TypeCode ?? defaultType;
-        var amountOk = hit.Row.Amount is not null && (!shared || person is not null);
-        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && person is not null;
+        // the amount counts when it was read, the row is one person's, it is no copy of an earlier source's row, and it is in euros
+        var euro = ReviewChecks.IsEuro(hit.Row.Currency);
+        var duplicate = hit.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal);
+        var amountOk = hit.Row.Amount is not null && (!shared || person is not null) && !duplicate;
+        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null;
         var declare = overlay?.Declare ?? defaultDeclare;
         return new ReviewPayment
         {
@@ -356,7 +377,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Description = hit.Row.Description,
             Amount = hit.Amount,
             AmountText = hit.Row.Amount is null ? hit.Row.AmountText ?? "" : null, // no amount read: its text, else nothing — never a 0 that looks read
-            AmountOk = amountOk,
+            AmountOk = amountOk && euro,
             Direction = hit.Row.Direction,
             DirectionAssumed = directionAssumed,
             Currency = hit.Row.Currency,
@@ -378,7 +399,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Candidates = candidates,
             Note = overlay?.Note,
             HasOverride = overlay is not null,
-            Checks = declare ? ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, _rates) : [],
+            Checks = declare ? ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate) : [],
         };
     }
 
@@ -420,7 +441,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Flags = [],
             Note = line.Note,
             HasOverride = true,
-            Checks = declare ? ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, _rates) : [],
+            Checks = declare ? ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year)) : [],
         };
     }
 

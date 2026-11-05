@@ -15,11 +15,28 @@ public static class ReviewChecks
     public const string UnknownType = "UNKNOWN_TYPE";
     public const string NotInPeriod = "NOT_IN_PERIOD";
     public const string NotCounted = "NOT_COUNTED";
+    public const string ForeignCurrency = "FOREIGN_CURRENCY";
+    public const string DuplicateRow = "DUPLICATE_ROW";
 
-    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates)
+    /// <summary>Whether an amount is in euros: the statement names no currency (the banks' euro accounts), or names the euro.</summary>
+    public static bool IsEuro(string? currency) =>
+        string.IsNullOrWhiteSpace(currency) || currency.Trim().Equals("EUR", StringComparison.OrdinalIgnoreCase) || currency.Trim() == "€";
+
+    /// <param name="duplicate">The row is a copy of an earlier source's row (the run's DUPLICATE_ROW): the original counts, this one never.</param>
+    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false)
     {
         ArgumentNullException.ThrowIfNull(rates);
         var refusals = new List<Refusal>();
+        if (!IsEuro(currency))
+        {
+            refusals.Add(new Refusal(ForeignCurrency, $"The amount is in {currency!.Trim()}, not in euros; declare the euro amount on a line added by hand."));
+        }
+
+        if (duplicate)
+        {
+            refusals.Add(new Refusal(DuplicateRow, "The row is a copy of an earlier statement's row (the same payment twice); the original counts, this one never."));
+        }
+
         if (person is null)
         {
             refusals.Add(new Refusal(NoPerson, "The payment has no person; pick one, or leave it undeclared."));
@@ -42,7 +59,7 @@ public static class ReviewChecks
             refusals.Add(new Refusal(NotInPeriod, "The payment's date is not in the period's month; it belongs in another month's file."));
         }
 
-        if (!amountOk)
+        if (!amountOk && !duplicate)
         {
             refusals.Add(new Refusal(NotCounted, "The amount could not be read, or two persons were found for the row; it counts as nothing."));
         }

@@ -18,6 +18,10 @@ public sealed record TaxRates(
     decimal BasicExemptionMonth,
     decimal PensionAgeExemptionMonth)
 {
+    /// <summary>The rates of a year, or null when this build knows none for it: a month of such a year cannot be built,
+    /// never computed with another year's figures (the kuumäär and the exemptions change every year).</summary>
+    public static TaxRates? For(int year) => year == 2026 ? Year2026 : null;
+
     /// <summary>The workbook's {taxes_config} for 2026 (CONFIG!B106:L106), which also matches MTA's calculator examples
     /// (886) — MTA's business example uses 820 for the minimum base; that is a known open question.</summary>
     public static readonly TaxRates Year2026 = new(
