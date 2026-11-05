@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false)
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false)
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -85,6 +85,46 @@ public class DeclareTests
         Assert.Equal(0.3333m, PeriodDeclarer.MonthShare(Entry(null, new DateOnly(2026, 10, 10)), 2026, 10));
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 30)), 2026, 10)); // 30 days = the whole
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 11, 1), null), 2026, 10)); // no overlap: not this build's business
+    }
+
+    [Fact]
+    public void The_month_share_counts_every_day_any_of_the_persons_minimum_carrying_rows_covers()
+    {
+        TorEntry Entry(DateOnly? start, DateOnly? end, string state = "2", string type = "1") =>
+            new(1, "1", ReviewFixtures.MariCode, "MARI", "MAASIKAS", "EE", start, end, type, "x", state, "x", null, null, null, null, [], null);
+        var next = Entry(new DateOnly(2026, 10, 16), null);
+
+        // a contract ended on the 15th and the next begun on the 16th: the whole month, not the new contract's 16 days
+        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, 2026, 10));
+        Assert.Equal(1m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4"), next], 2026, 10));
+
+        // a gap between them: 1–10 and 16–31 make 26 days
+        Assert.Equal(0.8667m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 10), "4")], 2026, 10));
+
+        // a day two rows cover counts once; a row of another month adds nothing
+        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 25)), Entry(new DateOnly(2025, 1, 1), new DateOnly(2026, 9, 30), "4")], 2026, 10));
+
+        // a paused row that does not say since when, or one whose type carries no minimum (600, VÕS), adds no day
+        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "3")], 2026, 10));
+        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4", "600")], 2026, 10));
+
+        // a paused row counts its days before the pause (1–9 here) and after its planned end, never the pause itself
+        var paused = Entry(new DateOnly(2024, 1, 1), null, "3") with { PauseStart = new DateOnly(2026, 10, 10) };
+        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(next, [paused], 2026, 10));
+        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(next, [paused with { PauseEnd = new DateOnly(2026, 10, 20) }], 2026, 10)); // 21–31 already the new contract's
+        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 22), null), [paused with { PauseEnd = new DateOnly(2026, 10, 18) }], 2026, 10)); // 1–9 and 19–31: 22 days
+
+        // the entry standing for the month carries no minimum (a board seat): the others do not stretch its share
+        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 10), null, "2", "600"), [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4")], 2026, 10)); // 22 days of its own
+    }
+
+    [Fact]
+    public void A_build_over_a_contract_ended_mid_month_and_the_next_begun_owes_the_whole_months_minimum()
+    {
+        using var box = Ready(minimum: true, mariRestarted: true);
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal(1m, mari.MinimumShare); // the new contract alone would be 16/30
     }
 
     [Fact]

@@ -41,8 +41,16 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     /// <summary>The part of the month the minimum obligation covers: the employment's days in the month over 30
     /// (määrus nr 17 § 6), 1 for a whole month or an unknown employment.</summary>
-    public static decimal MonthShare(TorEntry? entry, int year, int month)
+    public static decimal MonthShare(TorEntry? entry, int year, int month) => MonthShare(entry, [], year, month);
+
+    /// <summary>The share over every day the person was employed at the payer in the month: the days of the entry
+    /// standing for the month and, when its own type carries the minimum, those of the person's other register rows
+    /// whose type carries it too — so a contract ended on the 15th and the next begun on the 16th make a whole month, not
+    /// the new contract's 16 days. Another row's days of pause (from its "Peatamise alguse aeg" to its "Peatamise lõpu
+    /// aeg", or on) are not counted; a paused row that does not say since when adds nothing. A day two rows cover counts once.</summary>
+    public static decimal MonthShare(TorEntry? entry, IReadOnlyList<TorEntry> others, int year, int month)
     {
+        ArgumentNullException.ThrowIfNull(others);
         if (entry is null)
         {
             return 1m;
@@ -50,15 +58,39 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var first = new DateOnly(year, month, 1);
         var last = first.AddMonths(1).AddDays(-1);
-        var start = entry.StartDate is { } s && s > first ? s : first;
-        var end = entry.EndDate is { } e && e < last ? e : last;
-        if (start == first && end == last)
+        var covered = new bool[last.Day];
+        bool Mark(TorEntry e, bool skipPause = false)
         {
-            return 1m;
+            var start = e.StartDate is { } s && s > first ? s : first;
+            var end = e.EndDate is { } x && x < last ? x : last;
+            for (var day = start; day <= end; day = day.AddDays(1))
+            {
+                if (skipPause && e.PauseStart is { } from && day >= from && (e.PauseEnd is not { } to || day <= to))
+                {
+                    continue;
+                }
+
+                covered[day.Day - 1] = true;
+            }
+
+            return start <= end;
         }
 
-        var days = end.DayNumber - start.DayNumber + 1;
-        return days <= 0 ? 1m : Math.Min(1m, Math.Round(days / 30m, 4));
+        if (!Mark(entry))
+        {
+            return 1m; // no overlap: not this build's business
+        }
+
+        if (EmploymentTypes.Find(entry.TypeId) is { SocialTaxMinimum: true })
+        {
+            foreach (var other in others.Where(o => EmploymentTypes.Find(o.TypeId) is { SocialTaxMinimum: true } && (o.StateId != TorStates.Paused || o.PauseStart is not null)))
+            {
+                Mark(other, skipPause: true);
+            }
+        }
+
+        var days = covered.Count(c => c);
+        return days == covered.Length ? 1m : Math.Min(1m, Math.Round(days / 30m, 4));
     }
 
     /// <summary>The standing lines of the period with their person and the feedback's last word.</summary>
@@ -301,7 +333,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
         }
 
-        var share = MonthShare(entry, period.Year, period.Month);
+        var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month);
         var facts = person.FactsFor(period.Year, share);
         if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)
         {
