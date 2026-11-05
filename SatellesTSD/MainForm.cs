@@ -1198,7 +1198,7 @@ public sealed class MainForm : Form
                 values.Add(p is null ? "" : UiText.ResidencyText(p));
                 values.Add(p is null ? "" : UiText.PensionText(p));
                 values.Add(p is null ? "" : CheckedText(p));
-                values.Add(person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
+                values.Add(p is { TypeFromCard: true } && EmploymentTypes.Find(p.TorEmploymentTypeId) is { } cardType ? cardType.Name : person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
                 values.Add(person.Register?.Entry.State ?? "");
                 values.Add(EmploymentEndValue(person.Register));
                 values.Add(PausedEntry(person.Register)?.PauseStart?.ToDateTime(TimeOnly.MinValue));

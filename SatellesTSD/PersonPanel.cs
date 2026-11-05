@@ -46,6 +46,7 @@ public sealed class PersonPanel : UserControl
     private readonly TextBox _workCountry = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
     private readonly TextBox _treatyRate = new();
     private readonly ComboBox _torType = Combo(TorTypeChoices);
+    private readonly CheckBox _typeFromCard = new() { Text = UiText.TypeFromCard, AutoSize = true };
     private readonly TextBox _notes = new() { Multiline = true, Height = 60, ScrollBars = ScrollBars.Vertical };
     private readonly FlowLayoutPanel _buttons = new() { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly Button _save = new() { Text = UiText.Save, AutoSize = true };
@@ -89,6 +90,7 @@ public sealed class PersonPanel : UserControl
         Row(UiText.WorkCountry, _workCountry);
         Row(UiText.TreatyRate + ", %", _treatyRate);
         Row(UiText.TorType, _torType);
+        Row(_typeFromCard, span: true);
         Row(UiText.Notes, _notes);
         _buttons.Controls.AddRange([_save, _revert, _lookUp]);
         Row(_buttons, span: true);
@@ -104,7 +106,7 @@ public sealed class PersonPanel : UserControl
             combo.SelectedIndexChanged += (_, _) => Touched();
         }
 
-        foreach (var check in new[] { _confirmResidency, _confirmPension, _onPension, _exemptionApplied, _minimum })
+        foreach (var check in new[] { _confirmResidency, _confirmPension, _onPension, _exemptionApplied, _minimum, _typeFromCard })
         {
             check.CheckedChanged += (_, _) => Touched();
         }
@@ -123,6 +125,10 @@ public sealed class PersonPanel : UserControl
 
     /// <summary>Seams for the window tests: the declaration choice and the save button.</summary>
     internal ComboBox DeclarationBox => _declaration;
+
+    internal ComboBox TorTypeBox => _torType;
+
+    internal CheckBox TypeFromCardBox => _typeFromCard;
 
     internal Button SaveButton => _save;
 
@@ -168,6 +174,7 @@ public sealed class PersonPanel : UserControl
         _workCountry.Text = person?.WorkCountry ?? "";
         _treatyRate.Text = person?.TreatyIncomeTaxRate is { } rate ? (rate * 100).ToString("0.####", CultureInfo.CurrentCulture) : "";
         _torType.SelectedIndex = Math.Max(0, Choice.IndexOf(TorTypeChoices, person?.TorEmploymentTypeId));
+        _typeFromCard.Checked = person?.TypeFromCard ?? false;
         _notes.Text = person?.Notes ?? "";
         foreach (Control control in _table.Controls)
         {
@@ -219,6 +226,7 @@ public sealed class PersonPanel : UserControl
             WorkCountry = Null(_workCountry.Text),
             TreatyIncomeTaxRate = treaty is { } t ? t / 100m : null,
             TorEmploymentTypeId = _torType.SelectedItem is Choice { Value.Length: > 0 } type ? type.Value : null,
+            TypeFromCard = _typeFromCard.Checked,
             Notes = Null(_notes.Text),
         };
     }

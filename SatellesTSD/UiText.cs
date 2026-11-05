@@ -127,6 +127,7 @@ internal static class UiText
     public const string WorkCountry = "Töö riik";
     public const string TreatyRate = "Maksulepingu TM määr";
     public const string TorType = "TÖR töötamise liik";
+    public const string TypeFromCard = "Kaardi töötamise liik kõigile maksetele (registri asemel)";
     public const string Notes = "Märkused";
     public const string Save = "Salvesta";
     public const string Revert = "Tühista";

@@ -55,6 +55,54 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void With_two_contracts_at_once_each_payment_goes_by_the_contract_of_its_day_unless_the_card_says_otherwise()
+    {
+        var (store, _, period, _) = ReviewFixtures.Setup(mariSecond: true);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new ReviewWorkspace(store);
+            var mari = workspace.Load(period.Id).Persons[0];
+            Assert.Equal("600", mari.Register!.Entry.TypeId); // the month's entry: the later start of two valid ones
+            workspace.AddHandLine(period.Id, mari.PersonId, new DateOnly(2026, 10, 20), 200m, "Mari Maasikas", "töövõtt", "Palgad");
+
+            // the salary of 5 October goes by the Tööleping (1 → 10), the pay of the 20th by the VÕS leping begun on the 6th (600 → 17)
+            var payments = workspace.Load(period.Id).Persons[0].Payments.OrderBy(p => p.Date).ToList();
+            Assert.Equal(["10", "17"], payments.Select(p => p.DefaultTypeCode));
+
+            // the card's type for every payment: both by the card, the register's contracts aside
+            var person = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.SavePerson(person with { TorEmploymentTypeId = "1", TypeFromCard = true });
+            Assert.Equal(["10", "10"], workspace.Load(period.Id).Persons[0].Payments.OrderBy(p => p.Date).Select(p => p.DefaultTypeCode));
+
+            // the switch on with no type on the card changes nothing
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { TorEmploymentTypeId = null });
+            Assert.Equal(["10", "17"], workspace.Load(period.Id).Persons[0].Payments.OrderBy(p => p.Date).Select(p => p.DefaultTypeCode));
+        }
+    }
+
+    [Fact]
+    public void A_day_between_two_contracts_goes_by_the_one_ended_last_and_an_unknown_card_type_by_the_register()
+    {
+        TorEntry Entry(int row, DateOnly start, DateOnly? end, string type, string state) =>
+            new(row, null, ReviewFixtures.MariCode, "MARI", "MAASIKAS", "EE", start, end, type, "x", state, "x", null, null, null, null, [], null);
+        var ended = Entry(1, new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "1", "4");
+        var next = Entry(2, new DateOnly(2026, 10, 25), null, "600", "2");
+        var register = new MatchPerson(SearchPerson.Of(ReviewFixtures.MariCode, "MAASIKAS", "MARI"), [ended, next], next, 0);
+
+        // the final salary of the ended Tööleping paid on the 20th, before the VÕS leping began: the Tööleping's
+        Assert.Equal("1", ReviewDefaults.EmploymentTypeFor(register, null, new DateOnly(2026, 10, 20)));
+        Assert.Equal("1", ReviewDefaults.EmploymentTypeFor(register, null, new DateOnly(2026, 10, 10)));
+        Assert.Equal("600", ReviewDefaults.EmploymentTypeFor(register, null, new DateOnly(2026, 10, 26))); // the payment's own day: the new contract's (decision 85)
+        Assert.Equal("600", ReviewDefaults.EmploymentTypeFor(register, null, null)); // no day: the month's entry
+
+        // the card's switch: its type when the app knows it; an unknown one leaves the register's
+        var person = Person.New(Guid.NewGuid(), "Mari", "Maasikas", ReviewFixtures.MariCode) with { TorEmploymentTypeId = "601", TypeFromCard = true };
+        Assert.Equal("601", ReviewDefaults.EmploymentTypeFor(register, person, new DateOnly(2026, 10, 20)));
+        Assert.Equal("1", ReviewDefaults.EmploymentTypeFor(register, person with { TorEmploymentTypeId = "999" }, new DateOnly(2026, 10, 20)));
+    }
+
+    [Fact]
     public void A_run_is_read_with_its_defaults_and_the_register_persons_get_store_rows()
     {
         var (store, company, period, workspace) = Run();

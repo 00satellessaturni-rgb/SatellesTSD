@@ -91,7 +91,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             cells.Add(store is null ? ReportCell.Empty : ReportCell.Of(ReportText.PensionText(store)));
             cells.Add(ReportCell.Day(CheckedOn(store)));
             cells.Add(ReportCell.Day(entry?.StartDate));
-            cells.Add(ReportCell.Of(entry?.Type));
+            cells.Add(ReportCell.Of(store is { TypeFromCard: true } && EmploymentTypes.Find(store.TorEmploymentTypeId) is { } cardType ? cardType.Name : entry?.Type)); // the type that applies, as the grid shows it
             cells.Add(ReportCell.Of(entry?.State));
             cells.Add(ReportCell.Day(entry?.EndDate));
             rows.Add(new ReportRow(cells));

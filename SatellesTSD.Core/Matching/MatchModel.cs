@@ -44,6 +44,13 @@ public sealed record MatchPerson(SearchPerson Person, IReadOnlyList<TorEntry> En
     /// <summary>The entry whose facts stand for the person: the active one, else the latest.</summary>
     public TorEntry Entry => ActiveEntry ?? Entries.OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).First();
 
+    /// <summary>The entry covering the day, by the month's rule (a valid one first, then the latest start); null when none does.</summary>
+    public TorEntry? EntryOn(DateOnly day) => Entries
+        .Where(e => (e.StartDate is null || e.StartDate <= day) && (e.EndDate is null || e.EndDate >= day))
+        .OrderBy(e => e.StateId == TorStates.Valid ? 0 : 1)
+        .ThenByDescending(e => e.StartDate ?? DateOnly.MinValue)
+        .FirstOrDefault();
+
     /// <summary>Groups the register's rows into persons, in order of first appearance: a row with a personal code
     /// joins the person of that code; a row without one joins the earliest person of the same names, coded or not
     /// (the workbook's IsDuplicateEntry compared a codeless row by its names against every earlier row), else is a

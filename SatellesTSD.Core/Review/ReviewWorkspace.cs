@@ -309,6 +309,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             BasicExemptionMonthly = edited.BasicExemptionMonthly,
             SocialTaxMinimumApplies = edited.SocialTaxMinimumApplies,
             Declaration = edited.Declaration,
+            TypeFromCard = edited.TypeFromCard,
             A1 = edited.A1,
             A1Country = Clean(edited.A1Country),
             WorkCountry = Clean(edited.WorkCountry),
@@ -335,7 +336,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     {
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? defaultCategory;
-        var torType = register?.Entry.TypeId ?? person?.TorEmploymentTypeId;
+        var torType = ReviewDefaults.EmploymentTypeFor(register, person, hit.Row.Date);
         var defaultType = ReviewDefaults.TypeCodeFor(category is null ? null : catalog.Find(category), torType, person?.Residency ?? Residency.Resident);
         var typeCode = overlay?.TypeCode ?? defaultType;
         var amountOk = hit.Row.Amount is not null && (!shared || person is not null);
@@ -383,7 +384,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     private ReviewPayment FromHandLine(Period period, ReviewLine line, Person? person, MatchPerson? register, MatchCatalog catalog)
     {
-        var torType = register?.Entry.TypeId ?? person?.TorEmploymentTypeId;
+        var torType = ReviewDefaults.EmploymentTypeFor(register, person, line.Date);
         var defaultType = ReviewDefaults.TypeCodeFor(line.Category is null ? null : catalog.Find(line.Category), torType, person?.Residency ?? Residency.Resident);
         var typeCode = line.TypeCode ?? defaultType;
         var inPeriod = line.Date is { } date && date.Year == period.Year && date.Month == period.Month;

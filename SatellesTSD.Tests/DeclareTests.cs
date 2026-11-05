@@ -733,6 +733,34 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_v7_store_upgrades_to_v8_and_every_person_goes_by_the_register_until_the_card_says_otherwise()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");
+        try
+        {
+            Guid companyId;
+            using (var v7 = SqliteStore.OpenAtVersion(path, 7))
+            {
+                var company = v7.AddCompany("10235688", "Näidis OÜ");
+                companyId = company.Id;
+                v7.ExecuteRaw($"INSERT INTO person (id, company_id, first_name, last_name, residency, on_pension, exemption_applied, minimum_applies, a1_case, residency_source, pension_source, tor_type_id, declaration) VALUES ('{Guid.NewGuid():N}', '{company.Id:N}', 'Mari', 'Maasikas', 'Resident', 0, 1, 1, 'None', 'Unknown', 'Unknown', '600', 'Include')");
+            }
+
+            using var v8 = SqliteStore.Open(path);
+            Assert.Equal((long)SqliteStore.SchemaVersion, v8.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+            var person = Assert.Single(v8.Persons(companyId));
+            Assert.Equal(("600", DeclarationChoice.Include, false), (person.TorEmploymentTypeId, person.Declaration, person.TypeFromCard));
+            v8.UpdatePerson(person with { TypeFromCard = true });
+            Assert.True(Assert.Single(v8.Persons(companyId)).TypeFromCard);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(SqliteStore.BackupPathFor(path));
+        }
+    }
+
+    [Fact]
     public void A_file_is_taken_back_only_while_exported_and_only_the_latest_and_a_report_names_its_section()
     {
         using var box = Ready();

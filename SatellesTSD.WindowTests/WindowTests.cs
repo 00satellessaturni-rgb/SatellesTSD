@@ -185,6 +185,31 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_cards_employment_type_for_every_payment_is_saved_and_the_payments_and_the_grid_follow()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];
+            Ui.Pump();
+            var card = form.PersonEditor;
+            Assert.False(card.TypeFromCardBox.Checked);
+            Assert.Equal("Tööleping", form.PersonsGrid.Rows[0].Cells["type"].Value?.ToString());
+            card.TorTypeBox.SelectedIndex = card.TorTypeBox.Items.Cast<object>().Select(i => i.ToString()).ToList().IndexOf("600 VÕS leping");
+            card.TypeFromCardBox.Checked = true;
+            Assert.True(card.IsDirty);
+            card.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the reload after the save");
+
+            var stored = form.Services!.Store.FindPerson(form.View!.Period.CompanyId, SatellesTSD.Tests.ReviewFixtures.MariCode)!;
+            Assert.Equal(("600", true), (stored.TorEmploymentTypeId, stored.TypeFromCard));
+            Assert.True(form.PersonEditor.TypeFromCardBox.Checked);
+            Assert.Equal("VÕS leping", form.PersonsGrid.Rows[0].Cells["type"].Value?.ToString()); // the grid shows the type that applies
+            Assert.Equal("17", form.View!.Persons[0].Payments.Single().DefaultTypeCode); // the salary by the card's VÕS: 17, not the Tööleping's 10
+        }));
+    }
+
+    [Fact]
     public void The_Vaade_menu_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
     {
         using var fixture = new WindowFixture();

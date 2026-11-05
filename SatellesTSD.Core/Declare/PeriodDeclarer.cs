@@ -291,9 +291,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // the employment the zero line's type comes from: the one covering the month; for a person declared as if employed
         // (Include) also a paused one, else the latest begun by the month's end, else the type kept on the person
         var lastDay = new DateOnly(period.Year, period.Month, DateTime.DaysInMonth(period.Year, period.Month));
-        var zeroTypeId = entry is { StateId: TorStates.Valid } ? entry.TypeId
+        // the card's type, when the card says it stands for every payment, stands for the zero line too
+        var cardType = person is { TypeFromCard: true, TorEmploymentTypeId: { Length: > 0 } card } && EmploymentTypes.Find(card) is not null ? card : null;
+        var zeroTypeId = entry is { StateId: TorStates.Valid } ? cardType ?? entry.TypeId
             : !include ? null
-            : (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
+            : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
             && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed)
@@ -302,7 +304,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
             references[zeroSource] = (MinimumSource, null, null);
             problems.Add(entry is { StateId: TorStates.Valid }
-                ? $"{ZeroLine}: a valid employment of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
+                ? $"{ZeroLine}: a valid employment{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
                 : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
         }
 

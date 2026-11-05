@@ -34,6 +34,7 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <param name="RegisterKey">The register key (the personal code as the register wrote it, else the names) the person was
 /// created from or bound to, so a code or a name corrected by hand never splits the person from their register row.</param>
 /// <param name="Declaration">Whether the person is declared as the rules say, always, or never (the person card's "Deklareerimine"; see <see cref="DeclarationChoice"/>).</param>
+/// <param name="TypeFromCard">The card's <paramref name="TorEmploymentTypeId"/> stands for every payment of the person (the card's "Töötamise liik kõigile maksetele"), over the register's contract covering each payment's date.</param>
 public sealed record Person(
     Guid Id,
     Guid CompanyId,
@@ -61,7 +62,8 @@ public sealed record Person(
     LookupSource ResidencySource = LookupSource.Unknown,
     LookupSource PensionSource = LookupSource.Unknown,
     string? RegisterKey = null,
-    DeclarationChoice Declaration = DeclarationChoice.Auto)
+    DeclarationChoice Declaration = DeclarationChoice.Auto,
+    bool TypeFromCard = false)
 {
     public static Person New(Guid companyId, string firstName, string lastName, string? personalCode, Residency residency = Residency.Resident) =>
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,

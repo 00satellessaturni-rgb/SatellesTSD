@@ -130,11 +130,11 @@ public sealed partial class SqliteStore : IStore
             INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                                 funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                                 exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-                                residency_source, pension_source, register_key, declaration)
+                                residency_source, pension_source, register_key, declaration, card_type)
             VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
                     $member, $rate, $pchecked, $onpension, $pensionyear,
                     $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes,
-                    $rsource, $psource, $rkey, $declaration)
+                    $rsource, $psource, $rkey, $declaration, $cardtype)
             """,
             PersonParameters(stored));
         tx.Commit();
@@ -152,7 +152,7 @@ public sealed partial class SqliteStore : IStore
                 funded_pension_member = $member, pension_rate = $rate, pension_checked_on = $pchecked, on_pension = $onpension, pension_age_year = $pensionyear,
                 exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
                 a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes,
-                residency_source = $rsource, pension_source = $psource, register_key = $rkey, declaration = $declaration
+                residency_source = $rsource, pension_source = $psource, register_key = $rkey, declaration = $declaration, card_type = $cardtype
             WHERE id = $id
             """,
             PersonParameters(Normalize(person)));
@@ -190,7 +190,7 @@ public sealed partial class SqliteStore : IStore
         SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-               residency_source, pension_source, register_key, declaration
+               residency_source, pension_source, register_key, declaration, card_type
         FROM person
         """;
 
@@ -202,7 +202,7 @@ public sealed partial class SqliteStore : IStore
         ("$onpension", p.OnOldAgeOrFlexiblePension ? 1 : 0), ("$pensionyear", p.PensionAgeYear),
         ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
         ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
-        ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()), ("$rkey", p.RegisterKey), ("$declaration", p.Declaration.ToString()),
+        ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()), ("$rkey", p.RegisterKey), ("$declaration", p.Declaration.ToString()), ("$cardtype", p.TypeFromCard ? 1 : 0),
     ];
 
     private static Person ReadPerson(SqliteDataReader r) => new(
@@ -211,7 +211,7 @@ public sealed partial class SqliteStore : IStore
         r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
         r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22),
         Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)), Str(r, 25),
-        Enum.Parse<DeclarationChoice>(r.GetString(26)));
+        Enum.Parse<DeclarationChoice>(r.GetString(26)), r.GetInt64(27) != 0);
 
     // ---------------------------------------------------------------- periods
 
@@ -736,11 +736,11 @@ public sealed partial class SqliteStore : IStore
     // ---------------------------------------------------------------- schema
 
     /// <summary>The copy an upgrade leaves behind: the store as it was just before this build's schema, beside the file
-    /// ("firm.db.before-v7" for this build's v7), so that an older program can be put back after an update that went wrong. Made afresh at
+    /// ("firm.db.before-v8" for this build's v8), so that an older program can be put back after an update that went wrong. Made afresh at
     /// every upgrade to this version (a copy from an earlier, undone attempt would be stale), written whole or not at all.</summary>
     public static string BackupPathFor(string path) => $"{path}.before-v{SchemaVersion}";
 
-    /// <summary>Where a store upgraded beyond this build goes when its copy is put back: "firm.db.newer-v8" for this build's v7.</summary>
+    /// <summary>Where a store upgraded beyond this build goes when its copy is put back: "firm.db.newer-v9" for this build's v8.</summary>
     public static string AsidePathFor(string path) => $"{path}.newer-v{SchemaVersion + 1}";
 
     /// <summary>Whether a failure to open the store says it was upgraded by a newer build.</summary>
@@ -1136,6 +1136,11 @@ public sealed partial class SqliteStore : IStore
         // valid employment), or never (Exclude).
         """
         ALTER TABLE person ADD COLUMN declaration TEXT NOT NULL DEFAULT 'Auto';
+        """,
+
+        // v8 — the person card's employment type stands for every payment of the person, over the register's by date.
+        """
+        ALTER TABLE person ADD COLUMN card_type INTEGER NOT NULL DEFAULT 0;
         """,
     ];
 

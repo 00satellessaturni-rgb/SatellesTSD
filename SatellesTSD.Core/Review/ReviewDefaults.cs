@@ -20,6 +20,24 @@ public static class ReviewDefaults
         ["autorent"] = ("50", "186"),
     };
 
+    /// <summary>The TÖR employment type a payment of the person goes by: the card's type when the card says it stands for
+    /// every payment; else the register's contract covering the payment's day (a valid one first, then the latest start),
+    /// so a person with two contracts at once has each payment by its own day; on a day between contracts, the one ended
+    /// last before it (a final settlement paid after the end); else the entry standing for the month; else the type kept on
+    /// the card. A card type the app does not know is no card type: the register's stands, as the grid shows.</summary>
+    public static string? EmploymentTypeFor(MatchPerson? register, Store.Person? person, DateOnly? day)
+    {
+        if (person is { TypeFromCard: true, TorEmploymentTypeId: { Length: > 0 } card } && EmploymentTypes.Find(card) is not null)
+        {
+            return card;
+        }
+
+        var byDay = day is { } d && register is not null
+            ? register.EntryOn(d) ?? register.Entries.Where(e => e.EndDate is { } end && end < d).OrderByDescending(e => e.EndDate).FirstOrDefault()
+            : null;
+        return byDay?.TypeId ?? register?.Entry.TypeId ?? person?.TorEmploymentTypeId;
+    }
+
     public static string? TypeCodeFor(Category? category, string? torEmploymentTypeId, Residency residency)
     {
         if (category is null)
