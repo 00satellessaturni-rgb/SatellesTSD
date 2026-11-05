@@ -156,6 +156,13 @@ internal static class UiText
     public const string ScopeSelectedPerson = "Valitud isik";
     public const string ScopeAll = "Kõik";
     public const string BadAmountMark = "?";
+    public const string MenuSettings = "&Seaded";
+    public const string DeclareEachPayment = "Deklaratsioon: iga makse eraldi reana";
+    public const string DeclareTotalsPerType = "Deklaratsioon: koond väljamakse liigi kaupa, viimase kuupäevaga";
+    public const string DeclareModeChanged = "Deklaratsiooni read koostatakse nüüd";
+    public const string ModeEach = "iga makse eraldi reana";
+    public const string ModeTotals = "koondina liigi kaupa";
+    public const string DeclareModeRefused = "Selle kuu read on e-MTA-s juba teises lõikes (iga makse eraldi või koond liigi kaupa). Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.";
 
     // the declaration tab
     public const string ReviewTab = "Ülevaatus";
@@ -190,7 +197,6 @@ internal static class UiText
     public const string Time = "Aeg";
     public const string UniqueId = "uniqueID";
     public const string Result = "Tulemus";
-    public const string Minimum = "miinimum";
     public const string ExportFolder = "Vali kaust, kuhu XML-fail salvestada";
     public const string FeedbackFilter = "Tagasisideraport (*.xml;*.zip)|*.xml;*.zip|Kõik failid (*.*)|*.*";
     public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Ainult faili puhul, mida e-MTA-sse ei laaditud.";

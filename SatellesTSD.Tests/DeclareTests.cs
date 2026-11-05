@@ -5,6 +5,7 @@ using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
+using SatellesTSD.Core.Report;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
@@ -121,6 +122,96 @@ public class DeclareTests
         box.Workspace.SetDeclare(box.Salary, true);
         box.Declarer.Build(box.Period.Id);
         Assert.Equal("10235688-202610-01-002", Assert.Single(box.Lines).LineNumber);
+    }
+
+    [Fact]
+    public void Totals_per_type_make_one_line_per_person_and_type_dated_by_the_latest_payment_and_the_cuts_never_mix_once_sent()
+    {
+        using var box = Ready();
+        // a second payment of the salary type (10) by hand, later in the month, and one of another type (24)
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 15), 120m, "Mari Maasikas", "haigusleht", "Haigusleht");
+
+        // payment by payment: three lines
+        var each = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(3, each.Count(LineChange.New));
+        Assert.Equal(3, box.Lines.Count);
+
+        // the totals cut: one line per type, the salary type's two payments added up and dated by the later one; the
+        // three per-payment drafts go
+        var totals = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((2, 3), (totals.Count(LineChange.New), totals.Count(LineChange.Deleted)));
+        var lines = box.Lines.OrderBy(l => l.Line.TypeCode).ToList();
+        Assert.Equal(2, lines.Count);
+        var salary = lines[0];
+        Assert.Equal(("10", 1005.92m, new DateOnly(2026, 10, 20), (Guid?)null, (Guid?)null), (salary.Line.TypeCode, salary.NetPaid, salary.Line.DocumentDate, salary.SourceRowId, salary.ReviewLineId));
+        Assert.True(PeriodDeclarer.IsTotals(salary));
+        var (typeCode, references) = PeriodDeclarer.TotalsOf(salary.SourceRef)!.Value;
+        Assert.Equal("10", typeCode);
+        Assert.Equal($"{ReviewFixtures.Source} [2]; {ReviewWorkspace.ByHandSource}", references);
+        Assert.StartsWith("koond, liik 10: ", ReportText.SourceText(salary.SourceRef), StringComparison.Ordinal);
+        Assert.Equal(("24", 120m, new DateOnly(2026, 10, 15)), (lines[1].Line.TypeCode, lines[1].NetPaid, lines[1].Line.DocumentDate));
+
+        // built again the same way: kept in place (replaced drafts, the same keys)
+        var again = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((2, 0), (again.Count(LineChange.Replaced), again.Count(LineChange.New)));
+        Assert.Equal(lines.Select(l => l.LineNumber), box.Lines.OrderBy(l => l.Line.TypeCode).Select(l => l.LineNumber));
+
+        // sent as totals: the other cut is refused until those lines are gone, the same cut goes on
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.Equal(PeriodDeclarer.ModeChanged, Assert.Throws<DeclareException>(() => box.Declarer.Build(box.Period.Id)).Code);
+        Assert.Equal(2, box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType).Count(LineChange.Kept));
+
+        // drafts over the sent lines hide nothing: the cut is judged by what stands on the server beneath them
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m }); // the salary type carries the pension, sick pay does not
+        var pension = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((1, 1), (pension.Count(LineChange.Changed), pension.Count(LineChange.Kept)));
+        Assert.Equal((LineAction.M, PaymentStatus.Draft), box.Lines.Where(l => l.Line.TypeCode == "10").Select(l => (l.Action, l.Status)).Single());
+        Assert.Equal(PeriodDeclarer.ModeChanged, Assert.Throws<DeclareException>(() => box.Declarer.Build(box.Period.Id)).Code);
+
+        // a refused payment in a type: the type's line stands as it is on the server — the M draft goes, nothing is cancelled
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = null }); // PENSION_RATE_UNKNOWN on every payment
+        var refused = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((1, 1, 0, 0), (refused.Count(LineChange.Deleted), refused.Count(LineChange.Kept), refused.Count(LineChange.Cancelled), refused.Count(LineChange.Changed)));
+        Assert.All(box.Lines, l => Assert.Equal((PaymentStatus.Accepted, LineAction.R), (l.Status, l.Action)));
+        Assert.All(box.Lines, l => Assert.True(PeriodDeclarer.IsTotals(l)));
+
+        // the file whose rows a sent totals line adds up stays: it is their source, though no row is named on the line
+        box.Workspace.SavePerson(box.Mari with { PensionRate = 0.02m });
+        box.Store.ClearMatchRun(box.Period.Id);
+        var file = box.Store.Imports(box.Company.Id).Single();
+        Assert.Contains("add up", Assert.Throws<InvalidOperationException>(() => box.Store.RemoveImport(file.Id)).Message);
+    }
+
+    [Fact]
+    public void The_minimums_zero_line_belongs_to_both_cuts_and_never_trips_the_cut_guard()
+    {
+        using var box = Ready(minimum: true);
+        box.Workspace.SetCategory(box.Salary, "Haigusleht"); // sick pay (24) carries no minimum: the zero line of type 10 comes with it
+        var report = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal(2, report.Count(LineChange.New));
+        Assert.Single(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+        Assert.Single(box.Lines, PeriodDeclarer.IsTotals);
+
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.Equal(2, box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType).Count(LineChange.Kept)); // the zero line is no other cut
+        Assert.Equal(PeriodDeclarer.ModeChanged, Assert.Throws<DeclareException>(() => box.Declarer.Build(box.Period.Id)).Code); // the totals line is
     }
 
     [Fact]

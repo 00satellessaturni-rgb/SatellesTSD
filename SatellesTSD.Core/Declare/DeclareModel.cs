@@ -11,6 +11,14 @@ public sealed class DeclareException(string code, string message) : InvalidOpera
     public string Code { get; } = code;
 }
 
+/// <summary>How the period's lines are cut: one per payment (what the review shows), or one per person and payment
+/// type with the month's payments of that type added up and dated by the latest of them (the old TSD's shape).</summary>
+public enum DeclarationMode
+{
+    PerPayment,
+    TotalsPerType,
+}
+
 /// <summary>What a build did with one line of the period.</summary>
 public enum LineChange
 {

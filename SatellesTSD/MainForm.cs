@@ -63,6 +63,8 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
+    private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
+    private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
     private readonly ToolStripMenuItem _reportButton = new(UiText.ExportReport);
     private readonly ToolStripMenuItem _updateButton = new(UiText.CheckUpdates);
 
@@ -114,7 +116,13 @@ public sealed class MainForm : Form
         personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton]);
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
         toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
-        _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu]);
+        // the settings kept across sessions: the declaration's cut (one of the two items is checked)
+        var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
+        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem]);
+        _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, settingsMenu]);
+        _declareEachItem.Click += (_, _) => SetDeclarationMode(totals: false);
+        _declareTotalsItem.Click += (_, _) => SetDeclarationMode(totals: true);
+        ShowDeclarationMode();
         MainMenuStrip = _menu;
         _toolbar.Items.AddRange(
         [
@@ -217,6 +225,10 @@ public sealed class MainForm : Form
     internal ToolStripComboBox CompanyBox => _companyBox;
 
     internal Label SalaryTotalLabel => _salaryTotal;
+
+    internal ToolStripMenuItem DeclareEachItem => _declareEachItem;
+
+    internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
     internal MenuStrip Menus => _menu;
     internal TextBox PersonsSearch => _personsSearch;
     internal TextBox PaymentsSearch => _paymentsSearch;
@@ -549,10 +561,23 @@ public sealed class MainForm : Form
 
         var services = _services;
         var periodId = _view.Period.Id;
+        var mode = DeclarationMode;
         await RunBusyAsync(async () =>
         {
-            var report = await Task.Run(() => services.Declarer.Build(periodId));
-            Log($"{UiText.BuildLines}: {report.Count(LineChange.New)} uut, {report.Count(LineChange.Replaced)} asendatud, {report.Count(LineChange.Changed)} muudatust (M), {report.Count(LineChange.Cancelled)} tühistust (T), {report.Count(LineChange.Kept)} jäi, {report.Count(LineChange.Deleted)} kustutatud");
+            BuildReport report;
+            try
+            {
+                report = await Task.Run(() => services.Declarer.Build(periodId, mode));
+            }
+            catch (DeclareException e) when (e.Code == PeriodDeclarer.ModeChanged)
+            {
+                // the month is on the server in the other cut: said in the accountant's words, with the way out
+                Log($"{UiText.BuildLines}: {e.Message}");
+                Inform(UiText.DeclareModeRefused, UiText.BuildLines);
+                return;
+            }
+
+            Log($"{UiText.BuildLines} ({(mode == Core.Declare.DeclarationMode.TotalsPerType ? UiText.ModeTotals : UiText.ModeEach)}): {report.Count(LineChange.New)} uut, {report.Count(LineChange.Replaced)} asendatud, {report.Count(LineChange.Changed)} muudatust (M), {report.Count(LineChange.Cancelled)} tühistust (T), {report.Count(LineChange.Kept)} jäi, {report.Count(LineChange.Deleted)} kustutatud");
             foreach (var person in report.Persons)
             {
                 if (person.Lines.Count > 0 || person.Problems.Count > 0)
@@ -563,7 +588,7 @@ public sealed class MainForm : Form
 
                 foreach (var line in person.Lines)
                 {
-                    Log($"      {line.Key} {UiText.ActionText(line.Action)} {UiText.ChangeText(line.Change)} — {line.Source}{(line.Note is null ? "" : $" ({line.Note})")}");
+                    Log($"      {line.Key} {UiText.ActionText(line.Action)} {UiText.ChangeText(line.Change)} — {Core.Report.ReportText.SourceText(line.Source)}{(line.Note is null ? "" : $" ({line.Note})")}");
                 }
 
                 foreach (var problem in person.Problems)
@@ -951,6 +976,30 @@ public sealed class MainForm : Form
 
         _period = _services.Store.GetOrCreatePeriod(company.Id, key.Year, key.Month);
         return _period;
+    }
+
+    /// <summary>The declaration's cut, as the settings keep it.</summary>
+    private Core.Declare.DeclarationMode DeclarationMode => _settings.DeclareTotalsPerType ? Core.Declare.DeclarationMode.TotalsPerType : Core.Declare.DeclarationMode.PerPayment;
+
+    /// <summary>The Seaded menu's choice: kept in the settings at once, shown as the check mark, said in the log. The
+    /// lines follow at the next "Koosta read".</summary>
+    private void SetDeclarationMode(bool totals)
+    {
+        if (_settings.DeclareTotalsPerType == totals)
+        {
+            return;
+        }
+
+        _settings.DeclareTotalsPerType = totals;
+        SaveSettings();
+        ShowDeclarationMode();
+        Log($"{UiText.DeclareModeChanged} {(totals ? UiText.ModeTotals : UiText.ModeEach)} ({UiText.BuildLines})");
+    }
+
+    private void ShowDeclarationMode()
+    {
+        _declareEachItem.Checked = !_settings.DeclareTotalsPerType;
+        _declareTotalsItem.Checked = _settings.DeclareTotalsPerType;
     }
 
     /// <summary>"Sulge ettevõte": no company shown, so that the next import goes to the employer the files' TÖR export

@@ -23,6 +23,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string NotAllocated = "NOT_ALLOCATED";
     public const string NoPayee = "NO_PAYEE";
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
+    public const string ModeChanged = "MODE_CHANGED";
+
+    /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
+    public const string TotalsSource = "totals";
 
     /// <summary>The source text of a zero line carrying the month's minimum.</summary>
     public const string MinimumSource = "minimum";
@@ -72,8 +76,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             .ToList();
     }
 
-    /// <summary>Builds the period's lines from the review (Draft only).</summary>
-    public BuildReport Build(Guid periodId)
+    /// <summary>Builds the period's lines from the review (Draft only), cut as the mode says. Once lines of one cut are
+    /// on the server, a build in the other cut is refused: it would cancel every line and declare the month anew.</summary>
+    public BuildReport Build(Guid periodId, DeclarationMode mode = DeclarationMode.PerPayment)
     {
         var view = _workspace.Load(periodId);
         if (!view.Editable)
@@ -84,6 +89,20 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var period = view.Period;
         var persons = view.StorePersons.ToDictionary(p => p.Id);
         var standing = _store.Payments(periodId).ToList();
+        // the cut the month is declared in on the server: a line there, or the one beneath an M or R draft (a T draft is
+        // the accountant's own cancellation, on its way out); the minimum's zero line belongs to both cuts
+        var onServer = standing
+            .Where(p => p.Action != LineAction.T)
+            .Select(p => p.Status == PaymentStatus.Draft ? HistoryStanding(p) : p)
+            .Where(p => p is { OnServer: true } && p.Action != LineAction.T && p.SourceRef != MinimumSource)
+            .ToList();
+        var otherCut = onServer.FirstOrDefault(p => IsTotals(p!) != (mode == DeclarationMode.TotalsPerType));
+        if (otherCut is not null)
+        {
+            throw new DeclareException(ModeChanged, mode == DeclarationMode.TotalsPerType
+                ? $"Line {otherCut.LineNumber} on the server stands for one payment; the month was declared payment by payment. Build it that way, or cancel its lines first."
+                : $"Line {otherCut.LineNumber} on the server adds up a type; the month was declared as totals per type. Build it that way, or cancel its lines first.");
+        }
         // several keys may have stood for one source over time (a dead one, a refused one, the live one): the live one speaks for it
         var bySource = new Dictionary<string, StoredPayment>(StringComparer.Ordinal);
         foreach (var payment in standing)
@@ -102,7 +121,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             foreach (var reviewPerson in view.Persons.Where(p => !p.IsUnmatched && p.PersonId is { } id && persons.ContainsKey(id)))
             {
-                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator));
+                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode));
             }
 
             // what nobody claimed is declared no more: a draft goes, a line on the server gets its T
@@ -138,18 +157,24 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         return new BuildReport { Period = period, Persons = builds, Problems = problems };
     }
 
-    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator)
+    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode)
     {
         var name = $"{person.LastName} {person.FirstName}";
         var lines = new List<BuiltLine>();
         var problems = new List<string>();
         var declared = new List<(ReviewPayment Payment, string Source)>();
+        var refusedTypes = new HashSet<string>(StringComparer.Ordinal); // the totals cut: a type with a refused payment is not rebuilt
         foreach (var payment in reviewPerson.Payments.Where(p => p.Declare))
         {
             var source = SourceOf(payment);
             if (payment.Checks.Count > 0)
             {
                 problems.Add($"{Refused}: {payment.Reference}: {string.Join(", ", payment.Checks.Select(c => c.Code))}");
+                if (payment.TypeCode is { } refusedType)
+                {
+                    refusedTypes.Add(refusedType);
+                }
+
                 if (bySource.TryGetValue(source, out var stale) && stale.Status == PaymentStatus.Draft)
                 {
                     _store.DeleteDraft(stale.Id);
@@ -169,12 +194,47 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var monthPayments = new List<MonthPayment>();
         var references = new Dictionary<string, (string Reference, Guid? RowId, Guid? LineId)>(StringComparer.Ordinal);
-        foreach (var (payment, source) in declared)
+        if (mode == DeclarationMode.TotalsPerType)
         {
-            var type = PaymentTypes.Get(payment.TypeCode!);
-            monthPayments.Add(new MonthPayment(source, type, payment.Amount, AmountIsNet: true, payment.Date!.Value));
-            // a bank row's line is known by its row alone; only a hand line's line carries the review line's id
-            references[source] = (payment.Reference, payment.RowId, payment.RowId is null ? payment.LineId : null);
+            // one line per type: the payments of the type added up, dated by the latest of them; the line stands for the
+            // person and the type, not for a row, so the payments' references travel in its source text
+            var byType = declared.GroupBy(d => d.Payment.TypeCode!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Select(d => d.Payment).ToList(), StringComparer.Ordinal);
+            foreach (var typeCode in byType.Keys.Concat(refusedTypes).Distinct(StringComparer.Ordinal))
+            {
+                var source = TotalsKey(person.Id, typeCode);
+                if (refusedTypes.Contains(typeCode))
+                {
+                    // a refused payment in the type: what stands for the type, stands — as a refused payment's own line
+                    // does in the other cut — until the payment is put right or taken out of the declaration
+                    claimed.Add(source);
+                    if (bySource.TryGetValue(source, out var stale) && stale.Status == PaymentStatus.Draft)
+                    {
+                        _store.DeleteDraft(stale.Id);
+                        lines.Add(new BuiltLine { Key = stale.LineNumber, Section = stale.Section, Action = stale.Action, Change = LineChange.Deleted, Source = stale.SourceRef ?? "", Note = Refused });
+                    }
+                    else if (bySource.TryGetValue(source, out var kept))
+                    {
+                        lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = kept.SourceRef ?? "", Note = Refused });
+                    }
+
+                    continue;
+                }
+
+                var type = PaymentTypes.Get(typeCode);
+                var payments = byType[typeCode].OrderBy(p => p.Date).ThenBy(p => p.Reference, StringComparer.Ordinal).ToList();
+                monthPayments.Add(new MonthPayment(source, type, payments.Sum(p => p.Amount), AmountIsNet: true, payments.Max(p => p.Date!.Value)));
+                references[source] = (TotalsRef(typeCode, payments.Select(p => p.Reference)), null, null);
+            }
+        }
+        else
+        {
+            foreach (var (payment, source) in declared)
+            {
+                var type = PaymentTypes.Get(payment.TypeCode!);
+                monthPayments.Add(new MonthPayment(source, type, payment.Amount, AmountIsNet: true, payment.Date!.Value));
+                // a bank row's line is known by its row alone; only a hand line's line carries the review line's id
+                references[source] = (payment.Reference, payment.RowId, payment.RowId is null ? payment.LineId : null);
+            }
         }
 
         // a month without pay of a minimum-carrying type under a valid employment whose own type carries it: the zero line (decision 3)
@@ -413,12 +473,36 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     private static bool SameLine(PaymentLine a, PaymentLine b) =>
         JsonSerializer.Serialize(a with { Counter = 0, Action = LineAction.R }, Json) == JsonSerializer.Serialize(b with { Counter = 0, Action = LineAction.R }, Json);
 
-    /// <summary>The source a standing line stands for: its bank row, its hand line, or the month's minimum of its person.</summary>
+    /// <summary>The source a standing line stands for: its bank row, its hand line, the month's minimum of its person,
+    /// or the person's payments of one type added up.</summary>
     public static string? SourceKey(StoredPayment payment) =>
         payment.SourceRowId is { } row ? "row:" + row.ToString("N")
         : payment.ReviewLineId is { } line ? "line:" + line.ToString("N")
         : payment.SourceRef == MinimumSource && payment.PersonId is { } person ? MinimumKey(person)
+        : TotalsOf(payment.SourceRef) is { } totals && payment.PersonId is { } owner ? TotalsKey(owner, totals.TypeCode)
         : null;
+
+    /// <summary>Whether a standing line adds up a type (the totals cut) rather than standing for one payment. The
+    /// minimum's zero line belongs to both cuts.</summary>
+    public static bool IsTotals(StoredPayment payment) => TotalsOf(payment.SourceRef) is not null;
+
+    /// <summary>The source text of a totals line: "totals:&lt;type&gt;:&lt;reference; reference; …&gt;".</summary>
+    public static string TotalsRef(string typeCode, IEnumerable<string> references) => $"{TotalsSource}:{typeCode}:{string.Join("; ", references)}";
+
+    /// <summary>The type and the payments' references of a totals line's source text; null for any other source.</summary>
+    public static (string TypeCode, string References)? TotalsOf(string? sourceRef)
+    {
+        if (sourceRef is null || !sourceRef.StartsWith(TotalsSource + ":", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var rest = sourceRef[(TotalsSource.Length + 1)..];
+        var colon = rest.IndexOf(':', StringComparison.Ordinal);
+        return colon <= 0 ? null : (rest[..colon], rest[(colon + 1)..]);
+    }
+
+    private static string TotalsKey(Guid personId, string typeCode) => $"{TotalsSource}:{personId:N}:{typeCode}";
 
     private static string SourceOf(ReviewPayment payment) =>
         payment.RowId is { } row ? "row:" + row.ToString("N") : "line:" + payment.LineId!.Value.ToString("N");

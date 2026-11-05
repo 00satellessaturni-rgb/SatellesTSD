@@ -201,6 +201,19 @@ public sealed partial class SqliteStore
             throw new InvalidOperationException($"{linked} declared line(s) came from this file; it stays as their source.");
         }
 
+        // a totals line names no row, yet the rows it adds up are this file's when a period on the server lists the file
+        var totals = Scalar<long>(
+            """
+            SELECT COUNT(*) FROM payment p
+              JOIN period_import pi ON pi.period_id = p.period_id
+            WHERE pi.file_id = $file AND p.source_ref LIKE 'totals:%' AND p.status IN ('Sent', 'Accepted', 'NeedsChange', 'Review')
+            """,
+            ("$file", G(fileId)));
+        if (totals > 0)
+        {
+            throw new InvalidOperationException($"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.");
+        }
+
         var sentPeriods = Scalar<long>(
             "SELECT COUNT(*) FROM period_import pi JOIN period p ON p.id = pi.period_id WHERE pi.file_id = $file AND p.state <> $draft",
             ("$file", G(fileId)), ("$draft", PeriodState.Draft.ToString()));

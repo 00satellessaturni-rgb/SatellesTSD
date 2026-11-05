@@ -71,6 +71,9 @@ person picked, every payment of the month, one per category, and the payments wi
    checks say what would be refused.
 6. **Deklaratsioon › Koosta read**: the declared lines with their taxes, one per payment, plus the zero
    line for a valid employment without pay. Build again after every change; it reconciles in place.
+   The **Seaded** menu chooses the cut, and remembers it: one line per payment (the default), or one
+   line per person and payment type with the month's payments added up and dated by the latest of
+   them. Once a month's lines are on the server in one cut, the other is refused for that month.
 7. **Ekspordi XML…**: one file for the month into the folder you pick; the checklist that follows says
    how to upload it in e-MTA (the same payment month; a confirmed declaration opened for changes first).
 8. In e-MTA: upload the file, wait for the processing, read the outcome per line. Here: **Märgi üles

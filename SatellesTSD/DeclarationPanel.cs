@@ -171,7 +171,7 @@ public sealed class DeclarationPanel : UserControl
                 r is null ? null : r.UnemploymentEmployer,
                 r is null ? null : r.IncomeTax,
                 r is null || r.ExemptionUsed == 0 ? null : r.ExemptionUsed,
-                p.SourceRef == PeriodDeclarer.MinimumSource ? UiText.Minimum : p.SourceRef == ReviewWorkspace.ByHandSource ? UiText.ByHand : p.SourceRef ?? "",
+                Core.Report.ReportText.SourceText(p.SourceRef),
                 line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "",
                 line.Versions);
             var row = _lines.Rows[index];

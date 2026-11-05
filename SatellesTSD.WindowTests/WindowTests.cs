@@ -58,7 +58,7 @@ public class WindowTests
         Ui.Run(() => fixture.Drive(form =>
         {
             // the commands sit in the menus, grouped; the toolbar keeps what is chosen
-            Assert.Equal(["Andmebaas", "Ettevõte", "Periood", "Isik", "Tööriistad"], form.Menus.Items.Cast<ToolStripMenuItem>().Select(m => m.Text.Replace("&", "")));
+            Assert.Equal(["Andmebaas", "Ettevõte", "Periood", "Isik", "Tööriistad", "Seaded"], form.Menus.Items.Cast<ToolStripMenuItem>().Select(m => m.Text.Replace("&", "")));
             Assert.Contains(form.ImportButton, ((ToolStripMenuItem)form.Menus.Items[2]).DropDownItems.Cast<ToolStripItem>());
 
             // Maksuvaba: the amount when applied, "ei" when not, nothing on the unmatched row
@@ -137,6 +137,61 @@ public class WindowTests
             Assert.NotNull(form.View);
             Assert.Equal(3, form.PersonsGrid.Rows.Count);
         }));
+    }
+
+    [Fact]
+    public void The_Seaded_menu_chooses_the_declarations_cut_keeps_it_in_the_settings_and_the_build_follows()
+    {
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            workspace.AddHandLine(period.Id, view.Persons[0].PersonId, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad"); // a second payment of type 10
+        });
+        Ui.Run(() =>
+        {
+            fixture.Drive(form =>
+            {
+                Assert.True(form.DeclareEachItem.Checked);
+                Assert.False(form.DeclareTotalsItem.Checked);
+                form.Tabs.SelectedIndex = 1;
+                Ui.Pump();
+                var panel = form.Declaration;
+                panel.BuildButton.PerformClick();
+                Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 2, what: "the build, payment by payment");
+
+                // the totals cut chosen: kept in the settings at once, the check mark moves
+                form.DeclareTotalsItem.PerformClick();
+                Ui.Pump();
+                Assert.True(AppSettings.Load(fixture.SettingsPath).DeclareTotalsPerType);
+                Assert.True(form.DeclareTotalsItem.Checked);
+                Assert.False(form.DeclareEachItem.Checked);
+            });
+
+            // a new window on the same settings: the choice stands, and the build adds the type up
+            fixture.Drive(form =>
+            {
+                Assert.True(form.DeclareTotalsItem.Checked);
+                Assert.False(form.DeclareEachItem.Checked);
+                form.Tabs.SelectedIndex = 1;
+                Ui.Pump();
+                var panel = form.Declaration;
+                panel.BuildButton.PerformClick();
+                Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 1, what: "the build as totals");
+                var row = panel.LinesGrid.Rows[0];
+                Assert.Equal(("10", 1005.92m), (row.Cells["type"].Value, row.Cells["net"].Value));
+                Assert.Contains("20.10.2026", row.Cells["date"].Value?.ToString(), StringComparison.Ordinal);
+                Assert.StartsWith("koond, liik 10: ", row.Cells["source"].Value?.ToString(), StringComparison.Ordinal);
+
+                // and back: the totals draft goes, the two lines are made afresh
+                form.DeclareEachItem.PerformClick();
+                Ui.Pump();
+                Assert.False(AppSettings.Load(fixture.SettingsPath).DeclareTotalsPerType);
+                panel.BuildButton.PerformClick();
+                Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 2, what: "the build, payment by payment again");
+                Assert.All(panel.LinesGrid.Rows.Cast<DataGridViewRow>(), r => Assert.DoesNotContain("koond", r.Cells["source"].Value?.ToString() ?? "", StringComparison.Ordinal));
+            });
+        });
     }
 
     [Fact]

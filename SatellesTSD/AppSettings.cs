@@ -20,6 +20,10 @@ public sealed class AppSettings
     /// <summary>Where the XML files go.</summary>
     public string? ExportFolder { get; set; }
 
+    /// <summary>The declaration's cut: false = one line per payment (the default), true = one line per person and payment
+    /// type, the payments added up and dated by the latest (the Seaded menu; kept across sessions).</summary>
+    public bool DeclareTotalsPerType { get; set; }
+
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SatellesTSD", "settings.json");
 
     public static AppSettings Load(string path)

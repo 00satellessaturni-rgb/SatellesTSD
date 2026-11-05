@@ -403,7 +403,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.UnemploymentEmployer),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.IncomeTax),
                 r is null || r.ExemptionUsed == 0 ? ReportCell.Empty : ReportCell.Amount(r.ExemptionUsed),
-                ReportCell.Of(p.SourceRef == PeriodDeclarer.MinimumSource ? ReportText.Minimum : p.SourceRef == ReviewWorkspace.ByHandSource ? ReportText.ByHandSource : p.SourceRef),
+                ReportCell.Of(ReportText.SourceText(p.SourceRef)),
                 ReportCell.Of(line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : null),
                 ReportCell.Of(line.Versions.ToString(CultureInfo.InvariantCulture)),
             ]));
