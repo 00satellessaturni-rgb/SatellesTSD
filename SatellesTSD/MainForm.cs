@@ -95,8 +95,8 @@ public sealed class MainForm : Form
     private readonly PersonPanel _personPanel = new() { Dock = DockStyle.Fill };
     private readonly ListBox _log = new() { Dock = DockStyle.Fill, IntegralHeight = false, HorizontalScrollbar = true };
     private readonly Panel _logPanel = new() { Dock = DockStyle.Bottom, Height = LogDefaultHeight };
-    private readonly SplitContainer _outer = new() { Dock = DockStyle.Fill, Orientation = Orientation.Vertical };
-    private readonly SplitContainer _grids = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
+    private readonly SplitContainer _outer = new() { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, FixedPanel = FixedPanel.Panel2 }; // the card keeps its width when the window is resized
+    private readonly SplitContainer _grids = new() { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel1 }; // the persons grid keeps its height: a wrapped toolbar or the log takes from the payments
 
     /// <summary>The release version from the project file ("0.10.0"), as the title and the release folder name it.</summary>
     public static string AppVersion => typeof(MainForm).Assembly.GetName().Version is { } v ? v.ToString(3) : "0";
@@ -112,6 +112,23 @@ public sealed class MainForm : Form
         Text = TitleText();
         Size = new Size(1500, 900);
         StartPosition = FormStartPosition.CenterScreen;
+        MinimumSize = WindowLayout.MinimumSize;
+        // the size and place the window was closed with; a place no screen shows any more opens centred
+        if (WindowLayout.Fit(settings.WindowX, settings.WindowY, settings.WindowWidth, settings.WindowHeight, Screen.AllScreens.Select(s => s.WorkingArea).ToList(), WindowLayout.InvisibleFrame) is { } fit)
+        {
+            Size = fit.Size;
+            if (fit.Location is { } at)
+            {
+                StartPosition = FormStartPosition.Manual;
+                Location = at;
+            }
+
+            if (settings.WindowMaximized)
+            {
+                WindowState = FormWindowState.Maximized;
+                _lastShownState = FormWindowState.Maximized;
+            }
+        }
 
         // the menus hold the commands by their group; the toolbar below them holds what is chosen: the store, the company, the month
         var storeMenu = new ToolStripMenuItem(UiText.MenuStore);
@@ -262,6 +279,7 @@ public sealed class MainForm : Form
     internal DeclarationPanel Declaration => _declaration;
     internal PersonPanel PersonEditor => _personPanel;
     internal SplitContainer GridsSplit => _grids;
+    internal SplitContainer OuterSplit => _outer;
     internal AppServices? Services => _services;
     internal ReviewView? View => _view;
 
@@ -457,6 +475,7 @@ public sealed class MainForm : Form
         var storePath = _services?.StorePath;
         using var dialog = new UpdateDialog(ExePath, _updateCheck.Folder, release, CurrentVersion, fromStart, () =>
         {
+            KeepLayout(); // the new version opens as this one was left
             SaveSettings();
             _lookups?.Cancel();
             _services?.Dispose();
@@ -898,8 +917,14 @@ public sealed class MainForm : Form
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
-        _outer.SplitterDistance = Math.Max(400, _outer.Width - 440);
-        _grids.SplitterDistance = Math.Max(120, _grids.Height / 3);
+        // the card's width and the persons grid's height as they were left, else the defaults
+        _outer.SplitterDistance = WindowLayout.Distance(_settings.CardWidth is { } card ? _outer.Width - _outer.SplitterWidth - card : null,
+            Math.Max(400, _outer.Width - 440), _outer.Width, _outer.SplitterWidth, LeastPanel);
+        _grids.SplitterDistance = WindowLayout.Distance(_settings.PersonsGridHeight, Math.Max(120, _grids.Height / 3), _grids.Height, _grids.SplitterWidth, LeastPanel / 2);
+        // a fixed panel keeps its size only while it fits: a shorter or narrower window never pushes the other panel and
+        // the splitter out of sight
+        _outer.SizeChanged += (_, _) => FitSplitter(_outer, LeastPanel);
+        _grids.SizeChanged += (_, _) => FitSplitter(_grids, LeastPanel / 2);
         var path = _storeOverride ?? _settings.StorePath;
         if (path is null)
         {
@@ -920,6 +945,62 @@ public sealed class MainForm : Form
         BeginInvoke(async () => await CheckForUpdatesAsync(manual: false));
     }
 
+    /// <summary>The least a panel of a splitter keeps when the layout is restored.</summary>
+    private const int LeastPanel = 160;
+
+    /// <summary>The window's last state that was not minimized: what it comes back to, kept when it is closed minimized.</summary>
+    private FormWindowState _lastShownState = FormWindowState.Normal;
+
+    private void TrackShownState()
+    {
+        if (WindowState != FormWindowState.Minimized)
+        {
+            _lastShownState = WindowState;
+        }
+    }
+
+    /// <summary>Moves a splitter back inside its container when the container got too small for the fixed panel; left
+    /// alone while minimized or while the container is too small for both panels' least.</summary>
+    private void FitSplitter(SplitContainer split, int least)
+    {
+        var length = split.Orientation == Orientation.Vertical ? split.Width : split.Height;
+        if (WindowState == FormWindowState.Minimized || length <= 2 * least + split.SplitterWidth)
+        {
+            return;
+        }
+
+        var fitted = WindowLayout.Distance(split.SplitterDistance, split.SplitterDistance, length, split.SplitterWidth, least);
+        if (fitted != split.SplitterDistance)
+        {
+            split.SplitterDistance = fitted;
+        }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        TrackShownState();
+    }
+
+    /// <summary>The window's size and place and its splitters, into the settings (saved with them): the normal size of a
+    /// maximized window; nothing of the splitters from a minimized one, whose panels have no size.</summary>
+    private void KeepLayout()
+    {
+        TrackShownState();
+        var bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        if (bounds.Width > 0 && bounds.Height > 0)
+        {
+            (_settings.WindowX, _settings.WindowY, _settings.WindowWidth, _settings.WindowHeight) = (bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        }
+
+        _settings.WindowMaximized = _lastShownState == FormWindowState.Maximized; // a minimized window comes back as it was before
+        if (WindowState != FormWindowState.Minimized)
+        {
+            _settings.CardWidth = _outer.Width - _outer.SplitterDistance - _outer.SplitterWidth;
+            _settings.PersonsGridHeight = _grids.SplitterDistance;
+        }
+    }
+
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (_busy)
@@ -937,6 +1018,7 @@ public sealed class MainForm : Form
 
         if (!_handedOver)
         {
+            KeepLayout();
             SaveSettings();
         }
 

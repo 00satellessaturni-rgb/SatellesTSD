@@ -852,4 +852,98 @@ public class WindowTests
             Assert.Equal(UiText.DeclarationTotalsLine(totals, null), panel.TotalsLabel.Text);
         }));
     }
+
+    [Fact]
+    public void A_saved_place_no_screen_shows_opens_centred_with_its_size_and_a_place_half_off_its_screen_is_moved_in()
+    {
+        Rectangle[] screens = [new(0, 0, 1920, 1040), new(1920, 0, 1280, 984)];
+        Assert.Null(WindowLayout.Fit(null, null, null, null, screens)); // nothing saved: the defaults
+        Assert.Equal(((Point?)new Point(100, 50), new Size(1200, 800)), WindowLayout.Fit(100, 50, 1200, 800, screens));
+        Assert.Equal(((Point?)new Point(2000, 20), new Size(1200, 800)), WindowLayout.Fit(2000, 20, 1200, 800, screens)); // the second screen
+        // the second monitor unplugged: the size stays, the place is the screen's centre
+        Assert.Equal(((Point?)null, new Size(1200, 800)), WindowLayout.Fit(2000, 20, 1200, 800, [screens[0]]));
+        Assert.Equal(((Point?)null, new Size(1200, 800)), WindowLayout.Fit(-4000, -4000, 1200, 800, screens));
+        // larger than the screen it is on: fitted to it, and moved in so that all of it shows
+        Assert.Equal(((Point?)new Point(1920, 0), new Size(1280, 984)), WindowLayout.Fit(2500, 5, 3000, 2000, screens));
+        Assert.Equal(((Point?)new Point(720, 240), new Size(1200, 800)), WindowLayout.Fit(1000, 300, 1200, 800, [screens[0]]));
+        // never below the least size
+        Assert.Equal(((Point?)new Point(10, 10), WindowLayout.MinimumSize), WindowLayout.Fit(10, 10, 300, 200, screens));
+        Assert.Equal(((Point?)new Point(1120, 540), WindowLayout.MinimumSize), WindowLayout.Fit(1800, 900, 300, 200, [screens[0]]));
+        // laid flush against the screen's edges: Windows counts the invisible resize border in, and it comes back as left
+        Assert.Equal(((Point?)new Point(-7, 0), new Size(974, 1047)), WindowLayout.Fit(-7, 0, 974, 1047, [screens[0]], frame: 7));
+        // across two screens: moved wholly onto the one that shows most of its title bar
+        Assert.Equal(((Point?)new Point(1920, 100), new Size(1000, 700)), WindowLayout.Fit(1700, 100, 1000, 700, screens));
+        Assert.Equal(((Point?)new Point(920, 100), new Size(1000, 700)), WindowLayout.Fit(1100, 100, 1000, 700, screens));
+
+        // a splitter keeps both panels their least
+        Assert.Equal(700, WindowLayout.Distance(700, 400, 1000, 6, 160));
+        Assert.Equal(834, WindowLayout.Distance(990, 400, 1000, 6, 160));
+        Assert.Equal(160, WindowLayout.Distance(20, 400, 1000, 6, 160));
+        Assert.Equal(400, WindowLayout.Distance(null, 400, 1000, 6, 160));
+    }
+
+    [Fact]
+    public void The_windows_size_the_cards_width_and_the_persons_grids_height_are_kept_for_the_next_session()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() =>
+        {
+            fixture.Drive(form =>
+            {
+                form.Size = new Size(1000, 680); // small enough for any screen, far from the defaults
+                Ui.Pump();
+                form.OuterSplit.SplitterDistance = form.OuterSplit.Width - form.OuterSplit.SplitterWidth - 360; // the card 360 wide
+                form.GridsSplit.SplitterDistance = 200;
+                Ui.Pump();
+            });
+
+            var saved = AppSettings.Load(fixture.SettingsPath);
+            Assert.Equal((1000, 680, 360, 200, false), (saved.WindowWidth, saved.WindowHeight, saved.CardWidth, saved.PersonsGridHeight, saved.WindowMaximized));
+
+            // the next window: the fixture's place is off every screen, so the size alone is taken; the splitters as left
+            fixture.Drive(form =>
+            {
+                Assert.Equal(new Size(1000, 680), form.Size);
+                Assert.Equal(360, form.OuterSplit.Width - form.OuterSplit.SplitterDistance - form.OuterSplit.SplitterWidth);
+                Assert.Equal(200, form.GridsSplit.SplitterDistance);
+
+                // a longer status in the toolbar takes from the payments grid, never from the persons grid or the card
+                form.Height += 40;
+                Ui.Pump();
+                Assert.Equal(200, form.GridsSplit.SplitterDistance);
+                form.Height -= 40;
+
+                // closed minimized: the size as it was, the splitters kept from before, not maximized
+                form.WindowState = FormWindowState.Minimized;
+                Ui.Pump();
+            });
+
+            saved = AppSettings.Load(fixture.SettingsPath);
+            Assert.Equal((1000, 680, 360, 200, false), (saved.WindowWidth, saved.WindowHeight, saved.CardWidth, saved.PersonsGridHeight, saved.WindowMaximized));
+
+            // a tall persons grid and a wide card, then the window shrunk to its least: both splitters stay in sight
+            fixture.Drive(form =>
+            {
+                form.GridsSplit.SplitterDistance = form.GridsSplit.Height - form.GridsSplit.SplitterWidth - 90;
+                form.OuterSplit.SplitterDistance = 170;
+                Ui.Pump();
+                form.Size = WindowLayout.MinimumSize;
+                Ui.Pump();
+                var grids = form.GridsSplit;
+                Assert.True(grids.SplitterDistance <= grids.Height - grids.SplitterWidth - 80, $"{grids.SplitterDistance} of {grids.Height}");
+                Assert.True(form.OuterSplit.SplitterDistance >= 160, $"{form.OuterSplit.SplitterDistance} of {form.OuterSplit.Width}");
+            });
+        });
+    }
+
+    [Fact]
+    public void A_window_snapped_against_the_screens_edge_comes_back_as_it_was_left_with_the_systems_own_frame()
+    {
+        Assert.True(WindowLayout.InvisibleFrame >= SystemInformation.HorizontalResizeBorderThickness);
+        var frame = WindowLayout.InvisibleFrame;
+        Rectangle[] screen = [new(0, 0, 1920, 1040)];
+        // snapped to the left half and to the right half: the invisible border reaches past the working area
+        Assert.Equal(((Point?)new Point(-7, 0), new Size(974, 1047)), WindowLayout.Fit(-7, 0, 974, 1047, screen, frame));
+        Assert.Equal(((Point?)new Point(953, 0), new Size(974, 1047)), WindowLayout.Fit(953, 0, 974, 1047, screen, frame));
+    }
 }

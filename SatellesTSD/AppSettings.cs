@@ -27,6 +27,23 @@ public sealed class AppSettings
     /// <summary>The log under the window one line high instead of its default height (the Vaade menu; kept across sessions).</summary>
     public bool LogOneRow { get; set; }
 
+    /// <summary>The window's place and size when it was last closed (its normal size when it was maximized).</summary>
+    public int? WindowX { get; set; }
+
+    public int? WindowY { get; set; }
+
+    public int? WindowWidth { get; set; }
+
+    public int? WindowHeight { get; set; }
+
+    public bool WindowMaximized { get; set; }
+
+    /// <summary>The person card's width beside the grids, in pixels.</summary>
+    public int? CardWidth { get; set; }
+
+    /// <summary>The persons grid's height above the payments grid, in pixels.</summary>
+    public int? PersonsGridHeight { get; set; }
+
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SatellesTSD", "settings.json");
 
     public static AppSettings Load(string path)
