@@ -99,6 +99,45 @@ public sealed class DeclaredLine
     public int Versions { get; init; }
 }
 
+/// <summary>What the month's declaration adds up to: the net paid and the taxes the company owes MTA for it — the
+/// employer's own (SM with the minimum's increase, TTK) and those it withholds (TM, TK, KP). Counted over the lines
+/// that stand for the month: a draft, a line sent or on the server; never a refused attempt (not on the server), a
+/// cancelled key, nor a T (it takes a line back, it owes nothing).</summary>
+public sealed record DeclarationTotals(int Lines, decimal Net, decimal IncomeTax, decimal SocialTax, decimal FundedPension, decimal UnemploymentEmployee, decimal UnemploymentEmployer)
+{
+    public static readonly DeclarationTotals None = new(0, 0m, 0m, 0m, 0m, 0m, 0m);
+
+    /// <summary>The taxes to pay: TM + SM + TK + TTK + KP.</summary>
+    public decimal Taxes => IncomeTax + SocialTax + FundedPension + UnemploymentEmployee + UnemploymentEmployer;
+
+    /// <summary>Whether the line counts toward the month's totals.</summary>
+    public static bool Counts(StoredPayment payment)
+    {
+        ArgumentNullException.ThrowIfNull(payment);
+        return payment.Action != LineAction.T && payment.Result is not null && payment.Status is not (PaymentStatus.Rejected or PaymentStatus.Cancelled);
+    }
+
+    public static DeclarationTotals Of(IEnumerable<StoredPayment> payments)
+    {
+        ArgumentNullException.ThrowIfNull(payments);
+        var total = None;
+        foreach (var payment in payments.Where(Counts))
+        {
+            var r = payment.Result!;
+            total = new DeclarationTotals(
+                total.Lines + 1,
+                total.Net + (payment.NetPaid ?? r.Net),
+                total.IncomeTax + r.IncomeTax,
+                total.SocialTax + r.SocialTax,
+                total.FundedPension + r.FundedPension,
+                total.UnemploymentEmployee + r.UnemploymentEmployee,
+                total.UnemploymentEmployer + r.UnemploymentEmployer);
+        }
+
+        return total;
+    }
+}
+
 public sealed class ExportResult
 {
     public required string Path { get; init; }

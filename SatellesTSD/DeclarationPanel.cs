@@ -36,6 +36,8 @@ public sealed class DeclarationPanel : UserControl
         RowHeadersVisible = false,
         AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
     };
+    private readonly Label _totals = new() { Dock = DockStyle.Bottom, Height = 24, AutoEllipsis = true,TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 8, 0), Font = new Font(Control.DefaultFont, FontStyle.Bold) };
+    private readonly ToolTip _totalsTip = new() { AutoPopDelay = 30000 };
     private readonly ListView _submissions = new() { Dock = DockStyle.Bottom, Height = 110, View = View.Details, FullRowSelect = true, MultiSelect = false, ShowItemToolTips = true };
     private bool _filling;
 
@@ -70,6 +72,8 @@ public sealed class DeclarationPanel : UserControl
     internal Button HistoryButton => _history;
     internal ListView SubmissionsList => _submissions;
     internal TextBox LinesSearch => _search;
+    internal Label TotalsLabel => _totals;
+    internal string TotalsTip => _totalsTip.GetToolTip(_totals);
 
     /// <summary>What is typed in the search box hides every line with no cell containing it.</summary>
     private void Filter()
@@ -77,6 +81,7 @@ public sealed class DeclarationPanel : UserControl
         var needle = _search.Text.Trim();
         static bool Matches(DataGridViewRow row, string text) => row.Cells.Cast<DataGridViewCell>().Any(c => c.FormattedValue?.ToString()?.Contains(text, StringComparison.OrdinalIgnoreCase) == true);
         MainForm.FilterRows(_lines, needle, Matches);
+        ShowTotals();
         EnableLineButtons();
     }
 
@@ -86,7 +91,7 @@ public sealed class DeclarationPanel : UserControl
     public DeclarationPanel()
     {
         FeedbackTips = new GridTips(_lines, "feedback");
-        Disposed += (_, _) => FeedbackTips.Dispose();
+        Disposed += (_, _) => { FeedbackTips.Dispose(); _totalsTip.Dispose(); };
         _buttons.Controls.AddRange([_build, _export, _withdraw, _uploaded, _feedback, _confirmed, _reopen, _accept, _reject, _history]);
         foreach (var (name, header, right) in new[]
         {
@@ -120,6 +125,7 @@ public sealed class DeclarationPanel : UserControl
         _submissions.Columns.Add(UiText.Result, 100);
         _submissions.Columns.Add(UiText.Feedback, 200);
         Controls.Add(_lines);
+        Controls.Add(_totals); // docked below the lines, above the files sent
         Controls.Add(_submissions);
         Controls.Add(searchBar);
         Controls.Add(_buttons);
@@ -169,7 +175,7 @@ public sealed class DeclarationPanel : UserControl
                 line.Person is { } person ? $"{person.LastName} {person.FirstName}" : "",
                 p.Line.TypeCode ?? "",
                 UiText.Day(p.Line.DocumentDate),
-                p.NetPaid is { } net ? net : null,
+                p.NetPaid ?? r?.Net, // the net the total adds up: as paid, else the engine's
                 r is null ? null : r.Gross,
                 r is null ? null : r.SocialTax,
                 r is null || r.SocialTaxMinimumIncrease == 0 ? null : r.SocialTaxMinimumIncrease,
@@ -232,6 +238,17 @@ public sealed class DeclarationPanel : UserControl
 
         _filling = false;
         EnableButtons(lines);
+    }
+
+    /// <summary>The line under the lines: the net and the taxes the month's declaration owes (see <see
+    /// cref="DeclarationTotals"/>), and those of the lines the search leaves shown when that differs.</summary>
+    private void ShowTotals()
+    {
+        var rows = _lines.Rows.Cast<DataGridViewRow>().ToList();
+        var all = DeclarationTotals.Of(rows.Select(r => ((DeclaredLine)r.Tag!).Payment));
+        var shown = rows.Any(r => !r.Visible) ? DeclarationTotals.Of(rows.Where(r => r.Visible).Select(r => ((DeclaredLine)r.Tag!).Payment)) : null;
+        _totals.Text = rows.Count == 0 ? "" : UiText.DeclarationTotalsLine(all, shown is not null && shown != all ? shown : null);
+        _totalsTip.SetToolTip(_totals, rows.Count == 0 ? null : UiText.DeclarationTotalsTip(all));
     }
 
     private void EnableButtons(IReadOnlyList<DeclaredLine> lines)

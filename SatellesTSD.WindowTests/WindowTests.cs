@@ -1,3 +1,4 @@
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
@@ -813,5 +814,42 @@ public class WindowTests
     {
         public Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default) =>
             Task.FromResult(LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.NotJoined, null, null, []), null));
+    }
+
+    [Fact]
+    public void The_declaration_tab_adds_up_the_net_and_the_taxes_to_pay_under_the_lines()
+    {
+        using var fixture = new WindowFixture(prepare: (store, company, period, _) =>
+            new ReviewWorkspace(store).AddHandLine(period.Id, store.FindPerson(company.Id, SatellesTSD.Tests.ReviewFixtures.MariCode)!.Id, new DateOnly(2026, 10, 15), 120m, "Mari Maasikas", "haigusleht", "Haigusleht"));
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            Assert.Equal("", panel.TotalsLabel.Text); // nothing built yet
+            panel.BuildButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 2, what: "the build");
+
+            var totals = DeclarationTotals.Of(form.Services!.Store.Payments(form.View!.Period.Id));
+            Assert.Equal(1025.92m, totals.Net);
+            Assert.Equal(totals.Net, panel.LinesGrid.Rows.Cast<DataGridViewRow>().Sum(r => (decimal)r.Cells["net"].Value!)); // the column adds up to the total
+            Assert.Equal(UiText.DeclarationTotalsLine(totals, null), panel.TotalsLabel.Text);
+            Assert.Equal($"NETO KOKKU: {UiText.Money(1025.92m)}    MAKSUD KOKKU: {UiText.Money(totals.Taxes)}", panel.TotalsLabel.Text);
+            Assert.StartsWith($"MAKSUD KOKKU: {UiText.Money(totals.Taxes)} = TM {UiText.Money(totals.IncomeTax)} + SM {UiText.Money(totals.SocialTax)} + TK ", panel.TotalsTip, StringComparison.Ordinal);
+            Assert.Contains("Arvestatud 2 rida", panel.TotalsTip, StringComparison.Ordinal);
+
+            // the search leaves one line shown: its own sums beside
+            var handSource = panel.LinesGrid.Rows.Cast<DataGridViewRow>().Single(r => (decimal)r.Cells["net"].Value! == 120m).Cells["source"].Value?.ToString();
+            var salarySource = panel.LinesGrid.Rows.Cast<DataGridViewRow>().Single(r => (decimal)r.Cells["net"].Value! != 120m).Cells["source"].Value?.ToString();
+            Assert.False(string.IsNullOrEmpty(handSource) || salarySource!.Contains(handSource, StringComparison.OrdinalIgnoreCase));
+            panel.LinesSearch.Text = handSource;
+            Ui.Pump();
+            var shownRow = Assert.Single(panel.LinesGrid.Rows.Cast<DataGridViewRow>(), r => r.Visible);
+            var shown = DeclarationTotals.Of([((DeclaredLine)shownRow.Tag!).Payment]);
+            Assert.EndsWith($"(näidatud read: neto {UiText.Money(120m)}, maksud {UiText.Money(shown.Taxes)})", panel.TotalsLabel.Text, StringComparison.Ordinal);
+            panel.LinesSearch.Text = "";
+            Ui.Pump();
+            Assert.Equal(UiText.DeclarationTotalsLine(totals, null), panel.TotalsLabel.Text);
+        }));
     }
 }

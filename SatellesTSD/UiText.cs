@@ -37,6 +37,24 @@ internal static class UiText
     /// <summary>The line under the persons grid: the column's total, and the total of the rows shown when the search hides some.</summary>
     public static string SalaryTotalLine(decimal total, decimal? shown) =>
         shown is { } s ? $"{SalaryTotal}: {Money(total)} (näidatud read: {Money(s)})" : $"{SalaryTotal}: {Money(total)}";
+    public const string DeclarationNetTotal = "NETO KOKKU";
+    public const string TaxesTotal = "MAKSUD KOKKU";
+
+    /// <summary>The line under the declaration's lines: the net and the taxes to pay with their parts, and the lines the
+    /// search leaves shown when they add up to something else.</summary>
+    public static string DeclarationTotalsLine(Core.Declare.DeclarationTotals all, Core.Declare.DeclarationTotals? shown)
+    {
+        var line = $"{DeclarationNetTotal}: {Money(all.Net)}    {TaxesTotal}: {Money(all.Taxes)}"; // short, one line at any width; the parts in the tooltip
+        return shown is { } s ? $"{line}    (näidatud read: neto {Money(s.Net)}, maksud {Money(s.Taxes)})" : line;
+    }
+
+    /// <summary>The taxes' parts, and what the totals count, said over the line.</summary>
+    public static string DeclarationTotalsTip(Core.Declare.DeclarationTotals all) =>
+        $"{TaxesTotal}: {Money(all.Taxes)} = {IncomeTax} {Money(all.IncomeTax)} + {SocialTax} {Money(all.SocialTax)} + {UnemploymentEmployee} {Money(all.UnemploymentEmployee)} + {UnemploymentEmployer} {Money(all.UnemploymentEmployer)} + {FundedPension} {Money(all.FundedPension)}" + Environment.NewLine +
+        $"Arvestatud {all.Lines} rida: mustandid, saadetud ja serveris olevad read." + Environment.NewLine +
+        "Ei arvestata: MTA tagasi lükatud ja tühistatud read ning T-read (need võtavad rea tagasi)." + Environment.NewLine +
+        "Maksud: TM, SM (koos miinimumi suurendusega), TK, TTK ja KP — tööandja enda maksud ja kinnipeetud maksud kokku.";
+
     public const string Residency = "Residentsus";
     public const string Pension = "Pension";
     public const string CheckedOn = "Kontrollitud";

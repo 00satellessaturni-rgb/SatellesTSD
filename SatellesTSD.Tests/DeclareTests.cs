@@ -1041,6 +1041,48 @@ public class DeclareTests
     }
 
     [Fact]
+    public void The_declarations_totals_add_up_the_standing_lines_net_and_taxes_and_leave_out_a_T_and_a_refused_line()
+    {
+        using var box = Ready();
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 15), 120m, "Mari Maasikas", "haigusleht", "Haigusleht");
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(2, box.Lines.Count);
+
+        var totals = DeclarationTotals.Of(box.Lines);
+        var results = box.Lines.Select(l => l.Result!).ToList();
+        Assert.Equal((2, 905.92m + 120m), (totals.Lines, totals.Net));
+        Assert.Equal(results.Sum(r => r.IncomeTax), totals.IncomeTax);
+        Assert.Equal(results.Sum(r => r.SocialTax), totals.SocialTax);
+        Assert.Equal(results.Sum(r => r.UnemploymentEmployee + r.UnemploymentEmployer + r.FundedPension), totals.UnemploymentEmployee + totals.UnemploymentEmployer + totals.FundedPension);
+        Assert.Equal(results.Sum(r => r.IncomeTax + r.SocialTax + r.UnemploymentEmployee + r.UnemploymentEmployer + r.FundedPension), totals.Taxes);
+        Assert.True(totals.Taxes > 0m);
+
+        // a line refused by MTA, and a T taking a line back, owe nothing
+        var salary = box.Lines.Single(l => l.SourceRowId is not null);
+        Assert.False(DeclarationTotals.Counts(salary with { Status = PaymentStatus.Rejected }));
+        Assert.False(DeclarationTotals.Counts(salary with { Status = PaymentStatus.Cancelled }));
+        Assert.False(DeclarationTotals.Counts(salary with { Action = LineAction.T, Result = null }));
+        Assert.True(DeclarationTotals.Counts(salary with { Status = PaymentStatus.Accepted }));
+        Assert.Equal(DeclarationTotals.None, DeclarationTotals.Of([]));
+
+        // the salary taken out after the file went out: its T stands, the totals are the hand line's alone
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Contains(box.Lines, l => l.Action == LineAction.T);
+        var after = DeclarationTotals.Of(box.Lines);
+        Assert.Equal((1, 120m), (after.Lines, after.Net));
+    }
+
+    [Fact]
     public void A_non_resident_added_by_hand_counts_as_checked()
     {
         using var box = Ready();
