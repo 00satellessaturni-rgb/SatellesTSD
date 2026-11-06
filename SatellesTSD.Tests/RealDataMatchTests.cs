@@ -78,7 +78,7 @@ public class RealDataMatchTests
         }
 
         var persons = MatchPerson.FromTor(tor, year, month);
-        var result = new PeriodMatcher(MatchCatalog.Default).Run(year, month, persons, NamedAsTheReport(sources, book, otsing));
+        var result = new PeriodMatcher(WorkbookCatalog.Catalog).Run(year, month, persons, NamedAsTheReport(sources, book, otsing));
 
         // the report's rows by "Dokument [row]": every (person code, verdict text) written for the row — two persons can share one
         var expected = new Dictionary<string, List<(string Code, string Text)>>(StringComparer.Ordinal);

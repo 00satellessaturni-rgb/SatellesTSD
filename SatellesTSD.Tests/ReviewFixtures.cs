@@ -22,7 +22,7 @@ internal static class ReviewFixtures
     /// <param name="mariPaused">Mari's employment is paused (state 3, Peatatud), with no end: the entry still covers October; paused since 3 August 2026 for Lapsehoolduspuhkus, until 30 June 2027.</param>
     /// <param name="mariRestarted">Mari's contract ended on 15 October 2026 and the next one began on the 16th: two rows of her code in the month.</param>
     /// <param name="mariSecond">Mari has a second valid contract at once: a VÕS leping (600) from 6 October 2026, the day after her salary.</param>
-    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR")
+    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null)
     {
         List<object?[]> register =
         [
@@ -45,21 +45,29 @@ internal static class ReviewFixtures
             register.Add(["3", 60001010008d, "MAASIKAS", "MARI", new DateTime(2025, 1, 1), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"]);
         }
 
-        return Tables.Xlsx(
-            ("Töötajate loend", register.ToArray(), false),
-            ("LHV", [LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
-                ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", (double)-salary, null, "2026100500000001", "palk", "EUR", 48712219406d],
-                ["EE497700771001131757", 2, new DateTime(2026, 10, 6), null, null, "D", -0.38, null, null, "Teenustasu", "EUR"],
-                ["EE497700771001131757", 3, new DateTime(2026, 11, 2), "EE13", "Jaan Tamm", "D", -300d, null, "2026110200000002", "töövõtt", "EUR"],
-                ["EE497700771001131757", 4, new DateTime(2026, 10, 12), "EE14", "Kinnisvara OÜ", "D", -450d, null, "2026101200000003", "ruumide kasutamine oktoober", strangerCurrency]], false));
+        List<object?[]> statement =
+        [
+            LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
+            ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", (double)-salary, null, "2026100500000001", "palk", "EUR", 48712219406d],
+            ["EE497700771001131757", 2, new DateTime(2026, 10, 6), null, null, "D", -0.38, null, null, "Teenustasu", "EUR"],
+            ["EE497700771001131757", 3, new DateTime(2026, 11, 2), "EE13", "Jaan Tamm", "D", -300d, null, "2026110200000002", "töövõtt", "EUR"],
+            ["EE497700771001131757", 4, new DateTime(2026, 10, 12), "EE14", "Kinnisvara OÜ", "D", -450d, null, "2026101200000003", "ruumide kasutamine oktoober", strangerCurrency],
+        ];
+        if (renter is not null)
+        {
+            // the flat's rent to somebody outside the register
+            statement.Add(["EE497700771001131757", 5, new DateTime(2026, 10, 15), "EE15", renter, "D", -400d, null, "2026101500000004", "Korteri üür", "EUR", renterCode is null ? null : double.Parse(renterCode, System.Globalization.CultureInfo.InvariantCulture)]);
+        }
+
+        return Tables.Xlsx(("Töötajate loend", register.ToArray(), false), ("LHV", statement.ToArray(), false));
     }
 
-    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR")
+    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null)
     {
         var store = SqliteStore.InMemory();
         var company = store.AddCompany(registryCode, "Näidis OÜ");
         var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency);
+        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency, renter, renterCode);
         var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
         store.LinkImport(period.Id, file.Id);
         return (store, company, period, file);

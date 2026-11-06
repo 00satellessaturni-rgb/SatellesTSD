@@ -212,6 +212,45 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_Vaade_menu_hides_the_persons_grids_columns_per_source_leaving_the_salary_total_and_keeps_it()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() =>
+        {
+            fixture.Drive(form =>
+            {
+                var grid = form.PersonsGrid;
+                var sources = grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Name.StartsWith("src:", StringComparison.Ordinal)).ToList();
+                Assert.NotEmpty(sources);
+                Assert.All(sources, c => Assert.True(c.Visible));
+                Assert.False(form.SalaryOnlyItem.Checked);
+
+                grid.CurrentCell = grid.Rows[0].Cells[sources[0].Index]; // the current cell in a column about to go
+                form.SalaryOnlyItem.PerformClick();
+                Ui.Pump();
+                Assert.True(form.SalaryOnlyItem.Checked);
+                Assert.True(AppSettings.Load(fixture.SettingsPath).PersonsSalaryOnly);
+                Assert.All(sources, c => Assert.False(c.Visible));
+                Assert.True(grid.Columns["total"]!.Visible);
+                Assert.True(grid.Columns["undeclared"]!.Visible);
+                Assert.Equal(0, grid.CurrentCell?.RowIndex); // still on the person
+            });
+
+            // the next window: the columns built hidden; and shown again
+            fixture.Drive(form =>
+            {
+                var grid = form.PersonsGrid;
+                Assert.True(form.SalaryOnlyItem.Checked);
+                Assert.All(grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Name.StartsWith("src:", StringComparison.Ordinal)), c => Assert.False(c.Visible));
+                form.SalaryOnlyItem.PerformClick();
+                Ui.Pump();
+                Assert.False(AppSettings.Load(fixture.SettingsPath).PersonsSalaryOnly);
+                Assert.All(grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Name.StartsWith("src:", StringComparison.Ordinal)), c => Assert.True(c.Visible));
+            });
+        });
+    }
+
+    [Fact]
     public void The_Vaade_menu_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
     {
         using var fixture = new WindowFixture();

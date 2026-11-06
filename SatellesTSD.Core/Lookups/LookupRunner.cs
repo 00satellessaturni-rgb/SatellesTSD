@@ -82,7 +82,61 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var run = _store.LoadMatchResult(period.Id);
         var registerPerson = run?.Persons.FirstOrDefault(p => p.Key == person.RegisterKey)
             ?? (person.PersonalCode is { } code ? run?.Persons.FirstOrDefault(p => p.Person.PersonalCode == code) : null);
-        return registerPerson is null || run is null ? ControlDateOf(period) : ControlDateOf(period, PayoutDates(run, registerPerson));
+        return run is null ? ControlDateOf(period)
+            : registerPerson is not null ? ControlDateOf(period, PayoutDates(run, registerPerson))
+            : ControlDateOf(period, PaidOutside(period, run, _store.Persons(person.CompanyId)).GetValueOrDefault(person.Id) ?? []);
+    }
+
+    /// <summary>The days the persons the register does not list were paid in the month, person by person, as the review
+    /// gives them the rows: a row the accountant gave a person or a line added by hand for one, else a row nobody of the
+    /// register was found for whose payee is a person of the company by decision 108 (a rent payee).</summary>
+    private Dictionary<Guid, List<DateOnly>> PaidOutside(Period period, MatchResult run, IReadOnlyList<Person> persons)
+    {
+        var paid = new Dictionary<Guid, List<DateOnly>>();
+        var lines = _store.ReviewLines(period.Id);
+        foreach (var line in lines.Where(l => l.IsByHand && l.PersonId is not null && l.Date is { } d && d.Year == period.Year && d.Month == period.Month))
+        {
+            Add(line.PersonId!.Value, line.Date!.Value);
+        }
+
+        var storedRun = _store.MatchRun(period.Id);
+        var storedHits = storedRun is null ? [] : _store.MatchHits(storedRun.Id);
+        if (storedRun is null || storedHits.Count != run.Hits.Count)
+        {
+            return paid;
+        }
+
+        var catalog = storedRun.CatalogJson.Length > 0 ? MatchCatalog.Parse(storedRun.CatalogJson) : new MatchRunner(_store).Catalog();
+        var overlays = lines.Where(l => !l.IsByHand && l.RowId is not null).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.First());
+        for (var i = 0; i < run.Hits.Count; i++)
+        {
+            var hit = run.Hits[i];
+            if (!hit.InPeriod || hit.Row.Date is not { } date)
+            {
+                continue;
+            }
+
+            overlays.TryGetValue(storedHits[i].RowId, out var overlay);
+            var personId = overlay is { NoPerson: true } ? null
+                : overlay?.PersonId ?? (Review.PayeePersons.IsPayeeRow(hit, overlay, catalog) ? Review.PayeePersons.Find(persons, hit.Row.Counterparty!, hit.Row.CounterpartyCode)?.Id : null);
+            if (personId is { } id)
+            {
+                Add(id, date);
+            }
+        }
+
+        return paid;
+
+        void Add(Guid id, DateOnly date)
+        {
+            if (!paid.TryGetValue(id, out var list))
+            {
+                list = [];
+                paid[id] = list;
+            }
+
+            list.Add(date);
+        }
     }
 
     private static IEnumerable<DateOnly> PayoutDates(MatchResult run, MatchPerson registerPerson) =>
@@ -303,6 +357,15 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             }
 
             persons.Add((Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys), ControlDateOf(period, PayoutDates(run, matchPerson))));
+        }
+
+        // the persons the review gives rows of the month though the register does not list them (a rent payee, a row given
+        // by hand), with a code to ask by
+        var stored = _store.Persons(period.CompanyId);
+        var outside = PaidOutside(period, run, stored);
+        foreach (var other in stored.Where(p => p.PersonalCode is not null && outside.ContainsKey(p.Id) && persons.All(listed => listed.Item1.Id != p.Id)))
+        {
+            persons.Add((other, ControlDateOf(period, outside[other.Id])));
         }
 
         return persons;

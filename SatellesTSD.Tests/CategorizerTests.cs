@@ -19,6 +19,9 @@ public class CategorizerTests
     [InlineData("Avanss", "[Palgad]")]
     [InlineData("töötasu", "[Palgad]")]
     [InlineData("tasu", "[Palgad]")]
+    [InlineData("proovipäev", "[Palgad]")]
+    [InlineData("Proovipäeva tasu 12.10.2026", "[Palgad]")]
+    [InlineData("PROOVIPAEV", "[Palgad]")]
     [InlineData("Laenu tagastus", "[Laenud]")]
     [InlineData("Dividendid", "[Dividendid]")]
     [InlineData("Majandus", "[Kompensatsioon]")]
@@ -35,6 +38,13 @@ public class CategorizerTests
     [InlineData("kul. aruanne", "")]
     [InlineData("", "")]
     public void Says_the_workbooks_text_for_a_debit_in_the_employee_pass(string description, string expected) => Assert.Equal(expected, Define(description).Text);
+
+    [Fact]
+    public void A_trial_day_is_salary_in_either_pass()
+    {
+        Assert.Equal("[TÖR-väline palgad]", Define("proovipäev 3.10", pass: MatchPass.Unmatched).Text);
+        Assert.Equal("[Palgad]", Define("PROOVIPÄEVA EEST").Text);
+    }
 
     [Fact]
     public void Two_categories_matching_is_the_workbooks_error_with_every_name()

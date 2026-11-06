@@ -28,10 +28,19 @@ public static class RegisterPersons
             var nameKey = SearchPerson.NameKey(person.LastName, person.FirstName);
             return persons.FirstOrDefault(p => string.Equals(p.PersonalCode, code, StringComparison.Ordinal))
                 ?? (runKeys?.Contains(nameKey) == true ? null
-                    : persons.FirstOrDefault(p => p.PersonalCode is null && string.Equals(p.RegisterKey, nameKey, StringComparison.Ordinal)));
+                    : persons.FirstOrDefault(p => p.PersonalCode is null && string.Equals(p.RegisterKey, nameKey, StringComparison.Ordinal))
+                        ?? OnePayee(persons, person));
         }
 
-        return persons.FirstOrDefault(p => p.PersonalCode is null && SearchPerson.NameKey(p.LastName, p.FirstName) == person.Key);
+        return persons.FirstOrDefault(p => p.PersonalCode is null && SearchPerson.NameKey(p.LastName, p.FirstName) == person.Key) ?? OnePayee(persons, person);
+    }
+
+    /// <summary>The one codeless person made for a rent payee of these names (decision 108), whom the register now lists:
+    /// the same person, given the register's code and kept; two such make none.</summary>
+    private static Person? OnePayee(IReadOnlyList<Person> persons, SearchPerson person)
+    {
+        var payees = persons.Where(p => p.PersonalCode is null && PayeePersons.IsPayeeOf(p, person.LastName, person.FirstName)).Take(2).ToList();
+        return payees.Count == 1 ? payees[0] : null;
     }
 
     /// <summary>The store person of a register person, bound to the register key, created when missing.</summary>

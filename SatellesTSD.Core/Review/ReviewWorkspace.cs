@@ -96,6 +96,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
         var storePersons = _store.Persons(company.Id);
         var byId = storePersons.ToDictionary(p => p.Id);
+        var payeeKnown = storePersons.ToList();
+        var payeesChanged = false;
         var byPerson = new Dictionary<Guid, List<ReviewPayment>>();
         var unmatched = new List<ReviewPayment>();
         var leftOut = 0;
@@ -139,7 +141,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 overlays.TryGetValue(rowId, out var overlay);
                 var shared = indices.Count > 1;
                 var hit = run.Hits[indices[0]];
-                var defaultPerson = !shared && hit.PersonKey is { } key && personsByKey.TryGetValue(key, out var dp) ? dp : null;
+                var defaultPerson = !shared && hit.PersonKey is { } key && personsByKey.TryGetValue(key, out var dp) ? dp
+                    : !shared && hit.PersonKey is null ? PayeeOf(hit, overlay) : null;
                 var personId = overlay is { NoPerson: true } ? null : overlay?.PersonId ?? defaultPerson?.Id;
                 var person = personId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
                 var candidates = shared ? indices.Select(i => run.Hits[i].PersonKey).OfType<string>().Distinct().Select(k => personsByKey[k].FullName).ToList() : [];
@@ -165,6 +168,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             var person = line.PersonId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
             Place(FromHandLine(period, line, person, run is not null && person is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, catalog));
+        }
+
+        if (payeesChanged)
+        {
+            storePersons = _store.Persons(company.Id);
         }
 
         var persons = new List<ReviewPerson>();
@@ -230,6 +238,35 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
 
         List<ReviewPayment> Take(Guid id) => byPerson.Remove(id, out var list) ? list : [];
+
+        // the payee of a row nobody of the register was found for, when its category is declared on the payee's own code
+        // (Üür): a person of the company, created while the month is prepared; a month past Draft keeps its run as it was
+        Person? PayeeOf(MatchHit hit, ReviewLine? overlay)
+        {
+            if (!PayeePersons.IsPayeeRow(hit, overlay, catalog))
+            {
+                return null;
+            }
+
+            Person? payee;
+            if (period.State != PeriodState.Draft || overlay is { NoPerson: true } || overlay?.PersonId is not null)
+            {
+                // a month past Draft is read, never written: its payee as already made; nor is anybody made for a row the
+                // accountant gave a person or nobody
+                return PayeePersons.Find(payeeKnown, hit.Row.Counterparty!, hit.Row.CounterpartyCode);
+            }
+
+            payee = PayeePersons.Ensure(_store, company.Id, hit.Row.Counterparty!, hit.Row.CounterpartyCode, payeeKnown, out var changed);
+            if (payee is not null && changed)
+            {
+                payeesChanged = true;
+                payeeKnown.RemoveAll(p => p.Id == payee.Id);
+                payeeKnown.Add(payee);
+                byId[payee.Id] = payee;
+            }
+
+            return payee;
+        }
     }
 
     /// <summary>The payment's person by the accountant's word: a person, or nobody (null) — the run's person when it

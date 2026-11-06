@@ -27,6 +27,10 @@ public sealed class AppSettings
     /// <summary>The log under the window one line high instead of its default height (the Vaade menu; kept across sessions).</summary>
     public bool LogOneRow { get; set; }
 
+    /// <summary>The persons grid without its columns per source (each statement's and the hand lines' sums): only
+    /// "PALK NETO KOKKU" of the income shown (the Vaade menu; kept across sessions).</summary>
+    public bool PersonsSalaryOnly { get; set; }
+
     /// <summary>The window's place and size when it was last closed (its normal size when it was maximized).</summary>
     public int? WindowX { get; set; }
 

@@ -665,4 +665,142 @@ public class ReviewWorkspaceTests
         Assert.Null(store.Persons(company.Id).Single(p => p.Id == namesake.Id).PersonalCode);
         Assert.Equal(ReviewFixtures.JaanCode, store.Persons(company.Id).Single(p => p.Id == other.Id).PersonalCode);
     }
+    private const string RenterCode = "49001010008";
+
+    private static (SqliteStore Store, Company Company, Period Period, ReviewWorkspace Workspace) RunWithRenter(string renter = "KATI KASK", string? renterCode = null)
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: renter, renterCode: renterCode);
+        new MatchRunner(store).Run(period.Id);
+        return (store, company, period, Workspace(store));
+    }
+
+    [Fact]
+    public void The_payee_of_rent_outside_the_register_becomes_a_person_of_the_company_with_the_payment_declared_as_rent()
+    {
+        var (store, company, period, workspace) = RunWithRenter(renterCode: RenterCode);
+        using (store)
+        {
+            var view = workspace.Load(period.Id);
+            var kati = Assert.Single(view.Persons, p => p.Person?.LastName == "Kask");
+            Assert.Equal(("Kati", RenterCode, "payee:KATI KASK", false, false, (string?)null), (kati.Person!.FirstName, kati.Person.PersonalCode, kati.Person.RegisterKey, kati.Person.BasicExemptionApplied, kati.Person.SocialTaxMinimumApplies, kati.Person.TorEmploymentTypeId));
+            var rent = Assert.Single(kati.Payments);
+            Assert.Equal(("Üür", "57", true, kati.PersonId, kati.PersonId), (rent.Category, rent.TypeCode, rent.Declare, rent.DefaultPersonId, rent.PersonId));
+            Assert.DoesNotContain(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.False(kati.IsUnmatched);
+
+            // the next load finds the same person, also after the card renames her and clears the code
+            workspace.SavePerson(kati.Person with { FirstName = "Katrin" });
+            var again = workspace.Load(period.Id);
+            Assert.Single(store.Persons(company.Id), p => p.LastName == "Kask");
+            Assert.Equal("Katrin", Assert.Single(again.Persons, p => p.Person?.LastName == "Kask").Person!.FirstName);
+
+            // the accountant says the row is nobody's: it goes back to the rows nobody matched, and stays there
+            workspace.SetPerson(Assert.Single(again.Persons, p => p.Person?.LastName == "Kask").Payments[0], null);
+            var nobody = workspace.Load(period.Id);
+            Assert.DoesNotContain(nobody.Persons, p => p.Person?.LastName == "Kask");
+            var row = Assert.Single(nobody.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Equal(((Guid?)null, kati.PersonId, false), (row.PersonId, row.DefaultPersonId, row.Declare));
+            Assert.Single(store.Persons(company.Id), p => p.LastName == "Kask");
+        }
+    }
+
+    [Fact]
+    public void A_rent_payee_is_found_among_the_persons_by_the_code_or_the_names_and_never_made_for_a_legal_person()
+    {
+        // a person added by hand before, of the same names: the row is hers, nobody new is made, and she takes the statement's code
+        var (store, company, period, workspace) = RunWithRenter("KASK KATI", RenterCode);
+        using (store)
+        {
+            var added = workspace.AddPerson(company.Id, "Kati", "Kask", null, null);
+            var view = workspace.Load(period.Id);
+            var kati = Assert.Single(view.Persons, p => p.PersonId == added.Id);
+            Assert.Single(kati.Payments);
+            var stored = Assert.Single(store.Persons(company.Id), p => p.LastName == "Kask");
+            Assert.Equal((RenterCode, "payee:KASK KATI"), (stored.PersonalCode, stored.RegisterKey));
+        }
+
+        // a legal person, or one word, is nobody's
+        foreach (var payee in new[] { "Korteriühistu Kask", "KASK OÜ", "Kask" })
+        {
+            var (s, c, p, w) = RunWithRenter(payee);
+            using (s)
+            {
+                var view = w.Load(p.Id);
+                Assert.Single(view.Unmatched.Payments, r => r.Payee == payee);
+                Assert.Equal(2, s.Persons(c.Id).Count);
+            }
+        }
+
+        Assert.Equal(("Jüri-Mart", "Õun"), PayeePersons.NamesOf("JÜRI-MART ÕUN"));
+        Assert.Equal(("Mari Liis", "McKenzie"), PayeePersons.NamesOf("Mari Liis McKenzie"));
+        Assert.Null(PayeePersons.NamesOf("A1 Kask"));
+        Assert.Null(PayeePersons.NamesOf("Kask AS"));
+        Assert.Null(PayeePersons.NamesOf(null));
+    }
+
+    [Fact]
+    public void A_month_past_draft_makes_no_rent_payee_and_sick_pay_is_never_a_payees()
+    {
+        var (store, company, period, workspace) = RunWithRenter();
+        using (store)
+        {
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            var view = workspace.Load(period.Id);
+            Assert.Single(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Equal(2, store.Persons(company.Id).Count);
+        }
+
+        Assert.True(PayeePersons.Declares(MatchCatalog.Default.Find("Üür")));
+        Assert.False(PayeePersons.Declares(MatchCatalog.Default.Find("Haigusleht"))); // an employee's, found in the employee pass
+        Assert.False(PayeePersons.Declares(MatchCatalog.Default.Find("Kommunaalkulud"))); // declared on no code
+        Assert.False(PayeePersons.Declares(null));
+    }
+    [Fact]
+    public void A_rent_payee_made_in_a_draft_month_keeps_the_row_once_the_month_is_past_draft()
+    {
+        var (store, _, period, workspace) = RunWithRenter();
+        using (store)
+        {
+            var kati = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.LastName == "Kask");
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            var view = workspace.Load(period.Id);
+            Assert.Single(Assert.Single(view.Persons, p => p.PersonId == kati.PersonId).Payments);
+            Assert.DoesNotContain(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+        }
+    }
+
+    [Fact]
+    public void Two_persons_of_the_payees_names_make_nobody_the_payee_and_nobody_new()
+    {
+        var (store, company, period, workspace) = RunWithRenter();
+        using (store)
+        {
+            workspace.AddPerson(company.Id, "Kati", "Kask", null, null);
+            workspace.AddPerson(company.Id, "Kati", "Kask", "49001010008", null);
+            var view = workspace.Load(period.Id);
+            Assert.Single(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Equal(2, store.Persons(company.Id).Count(p => p.LastName == "Kask"));
+        }
+    }
+
+    [Fact]
+    public void A_register_that_lists_a_codeless_rent_payee_later_finds_the_same_person()
+    {
+        var (store, company, period, workspace) = RunWithRenter();
+        using (store)
+        {
+            workspace.Load(period.Id);
+            var kati = Assert.Single(store.Persons(company.Id), p => p.LastName == "Kask");
+            var persons = store.Persons(company.Id);
+            Assert.Equal(kati.Id, RegisterPersons.Find(persons, SearchPerson.Of("49001010008", "KASK", "KATI"))!.Id);
+            Assert.Equal(kati.Id, RegisterPersons.Find(persons, SearchPerson.Of(null, "Kask", "Kati"))!.Id);
+            Assert.Null(RegisterPersons.Find(persons, SearchPerson.Of(null, "Kask", "Mari")));
+        }
+
+        Assert.Null(PayeePersons.NamesOf("KINNISVARA O.Ü."));
+        Assert.Null(PayeePersons.NamesOf("Kask Osaühing"));
+        Assert.Null(PayeePersons.NamesOf("ООО Ромашка"));
+        Assert.Null(PayeePersons.NamesOf("Tallinna Linnavalitsus"));
+        Assert.Equal(("Kati", "Kask"), PayeePersons.NamesOf("KATI KASK"));
+    }
 }

@@ -446,4 +446,44 @@ public class LookupRunnerTests
             await Assert.ThrowsAsync<KeyNotFoundException>(() => runner.RunAsync(Guid.NewGuid()));
         }
     }
+    [Fact]
+    public async Task A_rent_payee_the_review_made_a_person_is_looked_up_on_the_day_of_the_rent()
+    {
+        const string renterCode = "49001010008";
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: "KATI KASK", renterCode: renterCode);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            new SatellesTSD.Core.Review.ReviewWorkspace(store).Load(period.Id); // the review makes her a person of the company
+            var residency = new FakeResidency();
+            var pension = new FakePension();
+            var runner = Runner(store, residency, pension);
+            await runner.RunAsync(period.Id);
+            Assert.Contains(renterCode, residency.Asked);
+            var kati = store.FindPerson(company.Id, renterCode)!;
+            Assert.Equal(new DateOnly(2026, 10, 15), runner.ControlDateFor(kati, period)); // the rent's day
+        }
+    }
+    [Fact]
+    public async Task A_person_outside_the_register_given_a_row_by_hand_is_looked_up_on_its_day_and_a_row_given_nobody_asks_nobody()
+    {
+        const string otherCode = "39001010008";
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: "KATI KASK", renterCode: "49001010008");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new SatellesTSD.Core.Review.ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            var peeter = workspace.AddPerson(company.Id, "Peeter", "Pihl", otherCode, null);
+            workspace.SetPerson(view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ"), peeter.Id);
+            workspace.SetPerson(view.Persons.Single(p => p.Person?.LastName == "Kask").Payments.Single(), null); // the rent is nobody's
+
+            var residency = new FakeResidency();
+            var runner = Runner(store, residency, new FakePension());
+            await runner.RunAsync(period.Id);
+            Assert.Contains(otherCode, residency.Asked);
+            Assert.DoesNotContain("49001010008", residency.Asked);
+            Assert.Equal(new DateOnly(2026, 10, 12), runner.ControlDateFor(peeter, period));
+        }
+    }
 }

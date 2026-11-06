@@ -235,6 +235,7 @@ internal static class UiText
     public const string MenuView = "&Vaade";
     public const string LogHeightDefault = "Logiaken: tavakõrgus";
     public const string LogHeightOneRow = "Logiaken: üks rida";
+    public const string PersonsSalaryOnly = "Isikute tabel: allikate veerud peidetud, ainult PALK NETO KOKKU";
     public const string MenuSettings = "&Seaded";
     public const string DeclareEachPayment = "Deklaratsioon: iga makse eraldi reana";
     public const string DeclareTotalsPerType = "Deklaratsioon: koond väljamakse liigi kaupa, viimase kuupäevaga";

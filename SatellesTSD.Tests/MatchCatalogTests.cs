@@ -7,6 +7,16 @@ namespace SatellesTSD.Tests;
 /// <summary>The embedded match catalog: the workbook's nine categories, its filter cells verbatim, its aliases.</summary>
 public class MatchCatalogTests
 {
+    [Fact]
+    public void The_default_is_the_workbooks_catalog_with_the_owners_additions_and_no_more()
+    {
+        var standard = MatchCatalog.Default.FilterSets["standard"];
+        var workbook = WorkbookCatalog.Catalog.FilterSets["standard"];
+        Assert.Equal(workbook["Palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["Palgad"]);
+        Assert.Equal(workbook["TÖR-väline palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["TÖR-väline palgad"]);
+        Assert.All(workbook.Keys.Where(k => k is not ("Palgad" or "TÖR-väline palgad")), k => Assert.Equal(workbook[k], standard[k]));
+    }
+
     /// <summary>The CONFIG sheet as extracted into the repository (docs/reference/workbook-vba/CONFIG-sheet.txt).</summary>
     private static string ConfigCell(string cell)
     {
@@ -41,7 +51,7 @@ public class MatchCatalogTests
     [Fact]
     public void The_filter_cells_are_the_config_sheets_verbatim()
     {
-        var catalog = MatchCatalog.Default;
+        var catalog = WorkbookCatalog.Catalog;
         var standard = catalog.FilterSets["standard"];
         var columns = new[] { ("B", "Palgad"), ("C", "Dividendid"), ("D", "Üür"), ("E", "Kommunaalkulud"), ("F", "Kompensatsioon"), ("G", "Haigusleht"), ("H", "Laenud"), ("I", "TÖR-väline palgad"), ("J", "Trahvid") };
         foreach (var (column, category) in columns)
@@ -58,7 +68,7 @@ public class MatchCatalogTests
     public void Every_layout_has_a_filter_set_matching_its_config_row()
     {
         // CONFIG filter row 58 + k belongs to layout k; rows 60–71, 73 and 74 are copies of row 58
-        var catalog = MatchCatalog.Default;
+        var catalog = WorkbookCatalog.Catalog;
         var layouts = LayoutCatalog.Default.Layouts;
         Assert.Equal(layouts.Select(l => l.Id).OrderBy(i => i), catalog.LayoutFilterSets.Keys.OrderBy(i => i));
         var columns = new[] { ("B", "Palgad"), ("C", "Dividendid"), ("D", "Üür"), ("E", "Kommunaalkulud"), ("F", "Kompensatsioon"), ("G", "Haigusleht"), ("H", "Laenud"), ("I", "TÖR-väline palgad"), ("J", "Trahvid") };
@@ -153,4 +163,13 @@ public class MatchCatalogTests
             return "";
         }
     }
+}
+
+/// <summary>The workbook's own catalog: the embedded default less the patterns the owner added since (plan item 18:
+/// "proovipäev" counts as salary), for the tests that hold the catalog to the CONFIG sheet and the workbook's reports.</summary>
+internal static class WorkbookCatalog
+{
+    public static readonly string[] OwnerAdditions = [",*proovip?ev*"];
+
+    public static MatchCatalog Catalog { get; } = MatchCatalog.Parse(OwnerAdditions.Aggregate(MatchCatalog.Default.ToJson(), (json, added) => json.Replace(added, "", StringComparison.Ordinal)));
 }

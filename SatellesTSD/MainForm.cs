@@ -67,6 +67,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
     private readonly ToolStripMenuItem _logDefaultItem = new(UiText.LogHeightDefault);
     private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow);
+    private readonly ToolStripMenuItem _salaryOnlyItem = new(UiText.PersonsSalaryOnly);
     private readonly ToolStripMenuItem _reportButton = new(UiText.ExportReport);
     private readonly ToolStripMenuItem _updateButton = new(UiText.CheckUpdates);
 
@@ -143,13 +144,15 @@ public sealed class MainForm : Form
         toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
         // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
         var viewMenu = new ToolStripMenuItem(UiText.MenuView);
-        viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem]);
+        viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
         settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem]);
         _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, viewMenu, settingsMenu]);
         _logDefaultItem.Click += (_, _) => SetLogOneRow(false);
         _logOneRowItem.Click += (_, _) => SetLogOneRow(true);
+        _salaryOnlyItem.Click += (_, _) => SetPersonsSalaryOnly(!_settings.PersonsSalaryOnly);
+        _salaryOnlyItem.Checked = _settings.PersonsSalaryOnly;
         _declareEachItem.Click += (_, _) => SetDeclarationMode(totals: false);
         _declareTotalsItem.Click += (_, _) => SetDeclarationMode(totals: true);
         ShowDeclarationMode();
@@ -267,6 +270,7 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
     internal ToolStripMenuItem LogDefaultItem => _logDefaultItem;
     internal ToolStripMenuItem LogOneRowItem => _logOneRowItem;
+    internal ToolStripMenuItem SalaryOnlyItem => _salaryOnlyItem;
     internal Panel LogPanel => _logPanel;
     internal ListBox LogList => _log;
     internal MenuStrip Menus => _menu;
@@ -1209,6 +1213,28 @@ public sealed class MainForm : Form
         ShowLogHeight();
     }
 
+    /// <summary>The Vaade menu's choice: the persons grid with or without its columns per source (only "PALK NETO
+    /// KOKKU" of the income then); kept in the settings at once, the grid's rows left as they are.</summary>
+    private void SetPersonsSalaryOnly(bool salaryOnly)
+    {
+        _settings.PersonsSalaryOnly = salaryOnly;
+        SaveSettings();
+        _salaryOnlyItem.Checked = salaryOnly;
+        if (salaryOnly && _personsGrid.CurrentCell is { } current && _personsGrid.Columns[current.ColumnIndex].Name.StartsWith("src:", StringComparison.Ordinal)
+            && _personsGrid.Columns["total"] is { } total)
+        {
+            _personsGrid.CurrentCell = _personsGrid.Rows[current.RowIndex].Cells[total.Index]; // the person stays selected
+        }
+
+        foreach (DataGridViewColumn column in _personsGrid.Columns)
+        {
+            if (column.Name.StartsWith("src:", StringComparison.Ordinal))
+            {
+                column.Visible = !salaryOnly;
+            }
+        }
+    }
+
     private void ShowLogHeight()
     {
         _logDefaultItem.Checked = !_settings.LogOneRow;
@@ -1347,7 +1373,9 @@ public sealed class MainForm : Form
         _personsGrid.Columns.Add(exemption);
         foreach (var source in _view.Sources)
         {
-            _personsGrid.Columns.Add(Column("src:" + source, source == ReviewWorkspace.ByHandSource ? UiText.ByHand : source, money: true));
+            var sourceColumn = Column("src:" + source, source == ReviewWorkspace.ByHandSource ? UiText.ByHand : source, money: true);
+            sourceColumn.Visible = !_settings.PersonsSalaryOnly; // the Vaade menu's choice
+            _personsGrid.Columns.Add(sourceColumn);
         }
 
         _personsGrid.Columns.Add(Column("total", UiText.SalaryTotal, money: true));
