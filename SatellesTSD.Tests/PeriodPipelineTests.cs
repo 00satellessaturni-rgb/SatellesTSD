@@ -335,6 +335,22 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void A_register_without_an_employer_code_is_imported_and_the_log_says_it_was_not_checked()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var bytes = Tables.Xlsx(("Töötajate loend", [TorHeaders.All.ToArray<object?>(),
+                ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, null, "Näidis OÜ"]], false));
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            Assert.Null(pipeline.EmployerOf([("tor.xlsx", bytes)])); // nothing to find the company by: the company shown takes the file
+            var outcome = pipeline.ImportFile(period.Id, "tor.xlsx", bytes);
+            Assert.True(outcome.Succeeded, outcome.Error);
+            Assert.Contains(outcome.Messages, m => m.StartsWith("sheet 'Töötajate loend'", StringComparison.Ordinal) && m.Contains("no employer registry code", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public void A_hidden_sheet_is_read_and_said()
     {
         var (store, _, period) = Setup();

@@ -136,9 +136,13 @@ public class TorParserTests
         Assert.Equal(2, detection.HeaderRowNo);
         Assert.Equal(["Uus veerg"], detection.Unknown);
         Assert.Equal([TorHeaders.TorId, TorHeaders.TerminationId, TorHeaders.Termination, TorHeaders.EmployerCode], detection.MissingOptional);
-        var entry = Assert.Single(TorParser.Parse(sheet, detection).Entries);
+        var parsed = TorParser.Parse(sheet, detection);
+        var entry = Assert.Single(parsed.Entries);
         Assert.Equal(("MARI", "MAASIKAS", "48712219406", "Näidis OÜ"), (entry.FirstName, entry.LastName, entry.PersonalCode, entry.EmployerName));
         Assert.Null(entry.TorId);
+        var notChecked = Assert.Single(parsed.Problems, p => p.Code == TorParser.NoEmployerCode); // the column absent: the export cannot be checked (decision 134)
+        Assert.Null(notChecked.RowNo);
+        Assert.Contains("missing or empty", notChecked.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -188,12 +192,21 @@ public class TorParserTests
         Assert.DoesNotContain(tor.Problems, p => p.Code == TorParser.SeveralEmployers);
         Assert.Equal(["10235688"], tor.EmployerCodes);
 
-        // the names count only when no row has a code: a spelling apart is one employer, another name two
+        var someCodeless = Assert.Single(tor.Problems, p => p.Code == TorParser.NoEmployerCode); // the one row without a code: unchecked, said as such
+        Assert.StartsWith("1 row(s) carry no employer registry code", someCodeless.Message, StringComparison.Ordinal);
+
+        // the names count only when no row has a code: a spelling apart is one employer, another name two; and without a
+        // code the export cannot be checked against the company, which is said (decision 134)
         var sameName = Tables.Sheet(
             TorHeaders.All.ToArray(),
             Full("1", "48712219406", "MAASIKAS", "MARI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Näidis OÜ"),
             Full("2", "38810140309", "TAMM", "JAAN", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "NÄIDIS OÜ"));
-        Assert.DoesNotContain(TorParser.Parse(sameName, TorParser.Detect(sameName, out _)!).Problems, p => p.Code == TorParser.SeveralEmployers);
+        var codeless = TorParser.Parse(sameName, TorParser.Detect(sameName, out _)!);
+        Assert.DoesNotContain(codeless.Problems, p => p.Code == TorParser.SeveralEmployers);
+        var notChecked = Assert.Single(codeless.Problems, p => p.Code == TorParser.NoEmployerCode);
+        Assert.Null(notChecked.RowNo); // the sheet's, so the import log carries it in full
+        Assert.Contains("cannot be checked against the company", notChecked.Message, StringComparison.Ordinal);
+        Assert.Empty(codeless.EmployerCodes);
         var twoNames = Tables.Sheet(
             TorHeaders.All.ToArray(),
             Full("1", "48712219406", "MAASIKAS", "MARI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Näidis OÜ"),

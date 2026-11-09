@@ -174,6 +174,9 @@ public static class TorParser
 {
     public const string EmployerMismatch = "EMPLOYER_MISMATCH";
     public const string SeveralEmployers = "SEVERAL_EMPLOYERS";
+
+    /// <summary>No row of the export carries an employer registry code: the employer checks have nothing to go by (decision 134).</summary>
+    public const string NoEmployerCode = "NO_EMPLOYER_CODE";
     public const string NoCode = "NO_CODE";
     public const string NoName = "NO_NAME";
     /// <summary>Columns the register does not write: a copy the workbook made ("TOR kontroll"), or a newer register.</summary>
@@ -291,6 +294,17 @@ public static class TorParser
         if (employers.Count > 1)
         {
             problems.Add(new ImportProblem(null, SeveralEmployers, "The export names several employers: " + string.Join(", ", employers) + "."));
+        }
+
+        // without a code the employer checks (the import's, the search's) have nothing to go by: said, not refused (decision 134)
+        var codeless = entries.Count(e => string.IsNullOrWhiteSpace(e.EmployerCode));
+        if (codes.Count == 0 && entries.Count > 0)
+        {
+            problems.Add(new ImportProblem(null, NoEmployerCode, $"The export carries no employer registry code (column '{TorHeaders.EmployerCode}' missing or empty): it cannot be checked against the company, and goes to the company shown."));
+        }
+        else if (codeless > 0)
+        {
+            problems.Add(new ImportProblem(null, NoEmployerCode, $"{codeless} row(s) carry no employer registry code: they cannot be checked against the company and are taken as its own."));
         }
 
         if (detection.Unknown.Count > 0)
