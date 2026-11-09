@@ -65,6 +65,8 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
     private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
+    private readonly ToolStripMenuItem _importLayoutsItem = new(UiText.ImportLayouts);
+    private readonly ToolStripMenuItem _layoutsItem = new(UiText.Layouts);
     private readonly ToolStripMenuItem _logDefaultItem = new(UiText.LogHeightDefault);
     private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow);
     private readonly ToolStripMenuItem _salaryOnlyItem = new(UiText.PersonsSalaryOnly);
@@ -147,7 +149,9 @@ public sealed class MainForm : Form
         viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
-        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem]);
+        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem, new ToolStripSeparator(), _importLayoutsItem, _layoutsItem]);
+        _importLayoutsItem.Click += (_, _) => ImportLayouts();
+        _layoutsItem.Click += (_, _) => ShowLayouts();
         _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, viewMenu, settingsMenu]);
         _logDefaultItem.Click += (_, _) => SetLogOneRow(false);
         _logOneRowItem.Click += (_, _) => SetLogOneRow(true);
@@ -268,6 +272,8 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem DeclareEachItem => _declareEachItem;
 
     internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
+    internal ToolStripMenuItem ImportLayoutsItem => _importLayoutsItem;
+    internal ToolStripMenuItem LayoutsItem => _layoutsItem;
     internal ToolStripMenuItem LogDefaultItem => _logDefaultItem;
     internal ToolStripMenuItem LogOneRowItem => _logOneRowItem;
     internal ToolStripMenuItem SalaryOnlyItem => _salaryOnlyItem;
@@ -1850,6 +1856,7 @@ public sealed class MainForm : Form
         _updateSeparator.Visible = UpdatesEnabled;
         _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
         _declareEachItem.Enabled = _declareTotalsItem.Enabled = !_busy; // the review follows the cut: never switched under a run
+        _importLayoutsItem.Enabled = _layoutsItem.Enabled = !_busy && _services is not null; // the layouts live in the store
         UseWaitCursor = _busy;
     }
 
@@ -2352,6 +2359,42 @@ public sealed class MainForm : Form
         }
 
         ReloadView(edited.Id);
+    }
+
+    /// <summary>The owner's statement layouts from a JSON file, saved through the store and read by from now on (decision 136).</summary>
+    private void ImportLayouts()
+    {
+        if (_services is null || _busy)
+        {
+            return;
+        }
+
+        using var dialog = new OpenFileDialog { Filter = UiText.LayoutFilter, CheckFileExists = true, InitialDirectory = ImportFolder() };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var ids = _services.Pipeline.ImportLayouts(File.ReadAllText(dialog.FileName));
+            Log(UiText.LayoutsImported(ids));
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+    }
+
+    private void ShowLayouts()
+    {
+        if (_services is null || _busy)
+        {
+            return;
+        }
+
+        using var dialog = new LayoutsDialog(_services, Log);
+        dialog.ShowDialog(this);
     }
 
     private void ShowFiles()

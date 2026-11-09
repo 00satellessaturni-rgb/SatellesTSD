@@ -113,5 +113,9 @@ public interface IImportStore : IDisposable
     /// <summary>Saves an override; refused when the layout, or the catalog it would be merged into, cannot be used.</summary>
     void SaveLayout(StatementLayout layout);
 
+    /// <summary>Saves several overrides as one: the catalog they would be merged into is checked once, whole, so a file that
+    /// moves one layout's header row to another is saved in any order; refused whole when it cannot be used (decision 136).</summary>
+    void SaveLayouts(IReadOnlyList<StatementLayout> layouts);
+
     void DeleteLayout(string layoutId);
 }

@@ -382,6 +382,60 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void The_owners_layouts_come_from_a_json_file_read_the_next_import_and_go_when_deleted()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, new Importer(LayoutCatalog.Default, new ExcelTableReader()));
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            var renamed = lhv with { Headers = lhv.Headers.Select(h => h == lhv.Roles.Amount ? "Summa EUR" : h).ToList(), Roles = lhv.Roles with { Amount = "Summa EUR" } }; // the bank renamed a column
+            var bytes = Tables.Xlsx("LHV", renamed.Headers.ToArray<object?>(), ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"]);
+
+            var before = pipeline.ImportFile(period.Id, "uus.xlsx", bytes);
+            Assert.False(before.Succeeded); // no layout has the new header row
+            Assert.Contains(before.Messages, m => m.StartsWith("sheet 'LHV': ", StringComparison.Ordinal) && m.Contains("layout", StringComparison.Ordinal)); // the nearest layout named, the row not read
+
+            // the owner's layout from a file, as an array or one object; a malformed, an incomplete and a colliding one are refused whole
+            Assert.Contains("not valid JSON", Assert.Throws<ImportException>(() => pipeline.ImportLayouts("{ not json")).Message);
+            Assert.Contains("holds no layout", Assert.Throws<ImportException>(() => pipeline.ImportLayouts("[]")).Message);
+            Assert.Contains("cannot be used", Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed with { Headers = [] }]))).Message);
+            Assert.Contains("header row", Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed, LayoutCatalog.Default.Find("swedbank-et")! with { Id = "swed-copy" }]))).Message); // the second has a built-in header row: none saved
+            Assert.Contains("repeats an id", Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed, renamed]))).Message);
+            Assert.Contains("empty entry", Assert.Throws<ImportException>(() => pipeline.ImportLayouts("[null]")).Message);
+            Assert.Empty(pipeline.OwnerLayouts());
+
+            // one file moves a layout's header row and gives the old row to a new layout: saved whole, in either order
+            var oldRow = lhv with { Id = "lhv-old" };
+            Assert.Equal(["lhv-old", "lhv-et-short"], pipeline.ImportLayouts(LayoutCatalog.ToJson([oldRow, renamed])));
+            Assert.Equal(2, pipeline.OwnerLayouts().Count);
+            pipeline.DeleteLayout("lhv-old");
+            pipeline.DeleteLayout("lhv-et-short");
+
+            // the layouts in force written out are the shape the import takes back
+            var exported = LayoutCatalog.ParseLayouts(pipeline.ExportLayouts());
+            Assert.Equal(LayoutCatalog.Default.Layouts.Count, exported.Count);
+
+            Assert.Equal(["lhv-et-short"], pipeline.ImportLayouts("﻿" + LayoutCatalog.ToJson([renamed])));
+            Assert.Equal(["lhv-et-short"], pipeline.OwnerLayouts().Select(l => l.Id));
+            Assert.Equal(renamed.Headers, pipeline.Catalog.Find("lhv-et-short")!.Headers);
+            var after = pipeline.ImportFile(period.Id, "uus.xlsx", bytes);
+            Assert.True(after.Succeeded, after.Error); // read by the owner's layout, no restart
+            Assert.Equal("lhv-et-short", store.Sheets(after.File!.Id)[0].LayoutId);
+            Assert.Single(store.Imports(company.Id));
+
+            // one object too; and a deleted layout gives the built-in one back for the next reading
+            Assert.Equal(["old-lhv"], pipeline.ImportLayouts(LayoutCatalog.ToJson(lhv with { Id = "old-lhv", Headers = lhv.Headers.Select(h => h == lhv.Roles.Amount ? "Summa (vana)" : h).ToList(), Roles = lhv.Roles with { Amount = "Summa (vana)" } })));
+            Assert.Equal(2, pipeline.OwnerLayouts().Count);
+            pipeline.DeleteLayout("old-lhv");
+            pipeline.DeleteLayout("lhv-et-short");
+            Assert.Empty(pipeline.OwnerLayouts());
+            Assert.Equal(lhv.Headers, pipeline.Catalog.Find("lhv-et-short")!.Headers);
+            Assert.False(pipeline.ImportFile(period.Id, "uus2.xlsx", Tables.Xlsx("LHV", renamed.Headers.ToArray<object?>(), ["EE497700771001131757", 2, new DateTime(2026, 10, 6), "EE12", "Mari Maasikas", "D", -1d, null, "2026100600000002", "x", "EUR"])).Succeeded);
+        }
+    }
+
+    [Fact]
     public void A_hidden_sheet_is_read_and_said()
     {
         var (store, _, period) = Setup();

@@ -54,7 +54,13 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
 (import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
 (the report, the calculator), **Vaade** (the log one line high; the persons grid showing only PALK NETO KOKKU
-of the sources) and **Seaded** (the declaration's cut, step 6); the toolbar keeps the company and the month. Every table sorts on a header
+of the sources) and **Seaded** (the declaration's cut, step 6; your own statement layouts: **Impordi väljavõtte
+paigutused…** reads a `.json` file holding one layout or a list of them, and the files are read by them at
+once, a stored file by **Loe uuesti** in Failid; **Väljavõtte paigutused…** lists every layout in force, writes
+them all to a file with **Salvesta paigutused faili…** — the shape to start from: copy the nearest layout, change
+the header, keep its id so the search's filters still apply to it — and deletes one of yours, the built-in
+coming back);
+the toolbar keeps the company and the month. Every table sorts on a header
 click and has an **Otsi:** box that hides the rows without the text. The payments table has tabs: the
 person picked, every payment of the month, one per category, and the payments without a category.
 

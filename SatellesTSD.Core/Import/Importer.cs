@@ -81,6 +81,12 @@ public sealed class Importer
         _headerSearchRows = headerSearchRows;
     }
 
+    /// <summary>The layouts this importer reads statements by.</summary>
+    public LayoutCatalog Catalog => _catalog;
+
+    /// <summary>The same reader with other layouts (the owner's changed through the store, decision 136).</summary>
+    public Importer WithCatalog(LayoutCatalog catalog) => new(catalog, _excelReader, _headerSearchRows);
+
     public ParsedImport Read(string fileName, byte[] content, Encoding? csvEncoding = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);

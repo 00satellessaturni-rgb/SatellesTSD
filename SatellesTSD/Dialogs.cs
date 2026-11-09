@@ -1,4 +1,5 @@
 using System.Globalization;
+using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
@@ -228,6 +229,109 @@ public sealed class HandLineDialog : FieldDialog
 
 /// <summary>The files the period's run reads, and the way to take one away (the run goes with it, the decisions on
 /// that file's rows too).</summary>
+/// <summary>The owner's statement layouts saved over the built-in catalog (decision 136): listed, and one taken back.</summary>
+public sealed class LayoutsDialog : Form
+{
+    private readonly AppServices _services;
+    private readonly Action<string> _log;
+    private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
+    private readonly Button _delete = new() { Text = UiText.DeleteLayout, AutoSize = true, Enabled = false };
+    private readonly Button _save = new() { Text = UiText.SaveLayouts, AutoSize = true };
+    private readonly Label _none = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(6), Text = UiText.NoOwnerLayouts, Visible = false };
+
+    public LayoutsDialog(AppServices services, Action<string> log)
+    {
+        _services = services ?? throw new ArgumentNullException(nameof(services));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        Text = UiText.LayoutsTitle;
+        Size = new Size(640, 320);
+        StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        _list.Columns.Add(UiText.LayoutId, 180);
+        _list.Columns.Add(UiText.LayoutBank, 140);
+        _list.Columns.Add(UiText.Kind, 80);
+        _list.Columns.Add(UiText.LayoutHeaders, 70);
+        _list.Columns.Add(UiText.LayoutStanding, 150);
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
+        var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };
+        buttons.Controls.AddRange([close, _delete, _save]);
+        Controls.Add(_list);
+        Controls.Add(_none);
+        Controls.Add(buttons);
+        AcceptButton = close;
+        _list.SelectedIndexChanged += (_, _) => _delete.Enabled = _list.SelectedItems.Count > 0 && _list.SelectedItems[0].Tag is StatementLayout own && IsOwn(own);
+        _delete.Click += (_, _) => Delete();
+        _save.Click += (_, _) => Save();
+        Fill();
+    }
+
+    internal ListView List => _list;
+    internal Button DeleteButton => _delete;
+    internal Button SaveButton => _save;
+
+    private bool IsOwn(StatementLayout layout) => _services.Pipeline.OwnerLayouts().Any(l => l.Id == layout.Id);
+
+    /// <summary>Every layout in force: the owner's first (new, or over a built-in one), then the built-in ones as read.</summary>
+    private void Fill()
+    {
+        _list.Items.Clear();
+        var own = _services.Pipeline.OwnerLayouts().Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var layout in _services.Pipeline.Catalog.Layouts.OrderBy(l => own.Contains(l.Id) ? 0 : 1).ThenBy(l => l.Id, StringComparer.Ordinal))
+        {
+            var standing = !own.Contains(layout.Id) ? UiText.LayoutBuiltIn : LayoutCatalog.Default.Find(layout.Id) is null ? UiText.LayoutNew : UiText.LayoutOverrides;
+            _list.Items.Add(new ListViewItem([layout.Id, layout.Bank, layout.Kind.ToString(), layout.Headers.Count.ToString(CultureInfo.InvariantCulture), standing])
+            {
+                Tag = layout,
+                ForeColor = own.Contains(layout.Id) ? SystemColors.WindowText : SystemColors.GrayText,
+            });
+        }
+
+        _none.Visible = own.Count == 0;
+        _delete.Enabled = false;
+    }
+
+    /// <summary>The layouts in force written to a JSON file: the shape the import takes, so the owner changes a copy of the nearest one.</summary>
+    private void Save()
+    {
+        using var dialog = new SaveFileDialog { Filter = UiText.LayoutFilter, FileName = "paigutused.json", DefaultExt = "json" };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(dialog.FileName, _services.Pipeline.ExportLayouts(), new System.Text.UTF8Encoding(false));
+            _log(UiText.LayoutsSaved(dialog.FileName, _services.Pipeline.Catalog.Layouts.Count));
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void Delete()
+    {
+        if (_list.SelectedItems.Count == 0 || _list.SelectedItems[0].Tag is not StatementLayout layout
+            || MessageBox.Show(this, UiText.DeleteLayoutConfirm(layout.Id), UiText.DeleteLayout, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            _services.Pipeline.DeleteLayout(layout.Id);
+            _log($"{UiText.DeleteLayout}: {layout.Id}");
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        Fill();
+    }
+}
+
 public sealed class FilesDialog : Form
 {
     private readonly AppServices _services;

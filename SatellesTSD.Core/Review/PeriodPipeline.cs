@@ -65,7 +65,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     public const string NothingRecognised = "Nothing in the file was recognised.";
 
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
-    private readonly Importer _importer = importer ?? throw new ArgumentNullException(nameof(importer));
+    private Importer _importer = importer ?? throw new ArgumentNullException(nameof(importer));
 
     public bool HasLookups => residency is not null && pension is not null;
 
@@ -341,6 +341,64 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
         return deleted;
     }
+
+    /// <summary>The statement layouts the owner saved over the built-in catalog (decision 136).</summary>
+    public IReadOnlyList<StatementLayout> OwnerLayouts() => _store.Layouts();
+
+    /// <summary>The layouts the files are read by now: the built-in catalog with the owner's over it.</summary>
+    public LayoutCatalog Catalog => _importer.Catalog;
+
+    /// <summary>Saves the layouts of a JSON text — one layout, or an array of them — through the store, which refuses a layout
+    /// that lacks what a layout needs or whose header row another layout already has (none is saved then), and reads the
+    /// files by them from now on (decision 136). The ids saved are returned.</summary>
+    public IReadOnlyList<string> ImportLayouts(string json)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+        var text = json.TrimStart('﻿', ' ', '\t', '\r', '\n');
+        List<StatementLayout> layouts;
+        try
+        {
+            layouts = text.StartsWith('[') ? LayoutCatalog.ParseLayouts(text).ToList() : [LayoutCatalog.FromJson(text)];
+        }
+        catch (System.Text.Json.JsonException e)
+        {
+            throw new ImportException($"The layouts file is not valid JSON: {e.Message}", e);
+        }
+
+        if (layouts.Count == 0 || layouts.Any(l => l is null))
+        {
+            throw new ImportException(layouts.Count == 0 ? "The layouts file holds no layout." : "The layouts file holds an empty entry (null) among its layouts.");
+        }
+
+        var problems = layouts.SelectMany(l => l.Problems().Select(p => $"{l.Id}: {p}")).ToList();
+        if (problems.Count > 0)
+        {
+            throw new ImportException("The layouts cannot be used:\n" + string.Join("\n", problems));
+        }
+
+        var repeated = layouts.GroupBy(l => l.Id, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => $"'{g.Key}' {g.Count()} times").ToList();
+        if (repeated.Count > 0)
+        {
+            throw new ImportException($"The layouts file repeats an id ({string.Join(", ", repeated)}): one layout per id.");
+        }
+
+        _store.SaveLayouts(layouts); // whole or not at all, in any order
+        RefreshImporter();
+        return layouts.Select(l => l.Id).ToList();
+    }
+
+    /// <summary>Every layout in force as a JSON text (the built-in ones with the owner's over them): what the owner starts a
+    /// layout of their own from, the shape the import takes back.</summary>
+    public string ExportLayouts() => LayoutCatalog.ToJson(_importer.Catalog.Layouts);
+
+    /// <summary>Forgets a layout the owner saved: a built-in one of the same id comes back; refused when the catalog would then collide.</summary>
+    public void DeleteLayout(string layoutId)
+    {
+        _store.DeleteLayout(layoutId);
+        RefreshImporter();
+    }
+
+    private void RefreshImporter() => _importer = _importer.WithCatalog(LayoutCatalog.Default.WithOverrides(_store.Layouts()));
 
     /// <summary>The company's files no period lists any more (unlinked everywhere, or left when a month was cleared).</summary>
     public IReadOnlyList<ImportFile> UnlistedFiles(Guid companyId)

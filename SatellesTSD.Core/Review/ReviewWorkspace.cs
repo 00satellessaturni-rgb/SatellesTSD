@@ -125,9 +125,13 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var byPerson = new Dictionary<Guid, List<ReviewPayment>>();
         var unmatched = new List<ReviewPayment>();
         var leftOut = 0;
-        // the sources whose layout only assumes the direction (the currency column read as the marker)
+        // the sources whose layout only assumes the direction (the currency column read as the marker): by the layout the sheet
+        // was read with (its snapshot, decision 14), since the owner's layouts may change under a run (136)
         var layouts = LayoutCatalog.Default.WithOverrides(_store.Layouts());
-        var assumed = run?.Sources.Where(s => layouts.Find(s.LayoutId)?.DirectionIsAssumed() == true).Select(s => s.Name).ToHashSet(StringComparer.Ordinal) ?? [];
+        var sheetsById = files.SelectMany(f => _store.Sheets(f.Id)).ToDictionary(s => s.Id);
+        var assumed = run?.Sources
+            .Where(s => (s.SheetId is { } sheetId && sheetsById.TryGetValue(sheetId, out var sheet) && sheet.Layout is { } snapshot ? snapshot : layouts.Find(s.LayoutId))?.DirectionIsAssumed() == true)
+            .Select(s => s.Name).ToHashSet(StringComparer.Ordinal) ?? [];
         if (run is not null)
         {
             if (storedHits.Count != run.Hits.Count)

@@ -421,6 +421,37 @@ public sealed partial class SqliteStore
         tx.Commit();
     }
 
+    public void SaveLayouts(IReadOnlyList<StatementLayout> layouts)
+    {
+        ArgumentNullException.ThrowIfNull(layouts);
+        var problems = layouts.SelectMany(l => l.Problems().Select(p => $"{l.Id}: {p}")).ToList();
+        if (problems.Count > 0)
+        {
+            throw new ImportException("The layouts cannot be saved:\n" + string.Join("\n", problems));
+        }
+
+        var ids = layouts.Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
+        using var tx = Tx();
+        try
+        {
+            // the whole batch over what stays: checked once, so the order within the file does not matter
+            LayoutCatalog.Default.WithOverrides(Layouts().Where(l => !ids.Contains(l.Id)).Concat(layouts));
+        }
+        catch (ImportException e)
+        {
+            throw new ImportException("The layouts cannot be saved:\n" + e.Message, e);
+        }
+
+        var at = T(Now());
+        foreach (var layout in layouts)
+        {
+            Exec("INSERT INTO statement_layout (id, json, updated_at) VALUES ($id, $json, $at) ON CONFLICT(id) DO UPDATE SET json = $json, updated_at = $at",
+                ("$id", layout.Id), ("$json", LayoutCatalog.ToJson(layout)), ("$at", at));
+        }
+
+        tx.Commit();
+    }
+
     public void DeleteLayout(string layoutId)
     {
         using var tx = Tx();
