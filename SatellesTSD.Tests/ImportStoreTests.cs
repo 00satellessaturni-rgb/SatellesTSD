@@ -1,5 +1,6 @@
 using System.Text;
 using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
@@ -175,7 +176,11 @@ public class ImportStoreTests
             Assert.Equal(bankRow.Id, replaced.SourceRowId); // a replacement without a row keeps the draft's
 
             var removal = Assert.Throws<InvalidOperationException>(() => store.RemoveImport(file.Id));
-            Assert.Contains("1 declared line", removal.Message);
+            Assert.Contains("1 draft line", removal.Message); // a draft is said as one, not as a declared line
+            Assert.Contains("1 draft line", Assert.Throws<InvalidOperationException>(() => store.ReplaceImport(file.Id, Importer.Read("palgad.xlsx", bytes), bytes)).Message); // a re-read neither
+            store.AddSubmission(period.Id, "tsd.xml", "uid-1", [replaced.Id], DateTime.UtcNow);
+            Assert.Contains("1 declared line", Assert.Throws<InvalidOperationException>(() => store.ReplaceImport(file.Id, Importer.Read("palgad.xlsx", bytes), bytes)).Message);
+            store.WithdrawSubmission(store.Submissions(period.Id).Single().Id);
 
             store.LinkImport(period.Id, file.Id);
             store.DeleteDraft(replaced.Id);
@@ -278,6 +283,33 @@ public class ImportStoreTests
             var correction = store.AddImport(company.Id, Importer.Read("parandus.xlsx", later), later);
             store.LinkImport(period.Id, correction.Id); // a correction run may still record a new file
             Assert.Equal([file.Id, correction.Id], store.PeriodImports(period.Id).Select(f => f.Id));
+        }
+    }
+
+    [Fact]
+    public void A_re_read_is_refused_by_a_run_a_month_past_draft_and_bytes_that_are_not_the_files()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var bytes = MixedWorkbook();
+            var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
+            store.LinkImport(period.Id, file.Id);
+            var other = ReviewFixtures.Workbook(salary: 1000m);
+            Assert.Throws<ArgumentException>(() => store.ReplaceImport(file.Id, Importer.Read("teine.xlsx", other), other)); // another file's bytes
+
+            new MatchRunner(store).Run(period.Id);
+            Assert.Contains("match run", Assert.Throws<InvalidOperationException>(() => store.ReplaceImport(file.Id, Importer.Read("palgad.xlsx", bytes), bytes)).Message);
+            store.ClearMatchRun(period.Id);
+
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Contains("past Draft", Assert.Throws<InvalidOperationException>(() => store.ReplaceImport(file.Id, Importer.Read("palgad.xlsx", bytes), bytes)).Message);
+            store.SetPeriodState(period.Id, PeriodState.Draft, DateTime.UtcNow);
+
+            var replaced = store.ReplaceImport(file.Id, Importer.Read("palgad.xlsx", bytes), bytes);
+            Assert.Equal((0, 0), (replaced.Carried, replaced.Dropped));
+            Assert.Equal([replaced.File.Id], store.PeriodImports(period.Id).Select(f => f.Id));
+            Assert.Equal(3, store.StatementRows(store.Sheets(replaced.File.Id)[1].Id).Count);
         }
     }
 

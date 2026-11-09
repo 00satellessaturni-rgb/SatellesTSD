@@ -42,6 +42,9 @@ public sealed record ImportSheet(
 /// <summary>A statement row in the store; the id is what a declared line points at.</summary>
 public sealed record StoredStatementRow(Guid Id, Guid SheetId, StatementRow Row);
 
+/// <summary>What a re-read of a stored file left: the new file, the decisions carried to rows read again, the decisions dropped.</summary>
+public sealed record ImportReplacement(ImportFile File, int Carried, int Dropped);
+
 /// <summary>A TÖR row in the store.</summary>
 public sealed record StoredTorEntry(Guid Id, Guid SheetId, Guid CompanyId, TorEntry Entry);
 
@@ -96,6 +99,13 @@ public interface IImportStore : IDisposable
     /// <summary>Removes a file with its sheets and rows. Refused while a declared line points at one of its rows, or
     /// while a period past Draft lists it among the files of its run.</summary>
     void RemoveImport(Guid fileId);
+
+    /// <summary>Puts a fresh reading of a stored file (the same bytes, read with the layouts in force) in the stored one's
+    /// place: the new file takes the old one's place in every period's list of files (the link order kept), the review's
+    /// decisions follow their rows by fingerprint (the n-th row of a fingerprint within a sheet), and a decision whose
+    /// row is not read again goes. Refused while a declared line (past Draft), a draft, a run or a period past Draft
+    /// holds the old reading; the caller clears the runs and the drafts of the months that list the file first.</summary>
+    ImportReplacement ReplaceImport(Guid fileId, ParsedImport import, byte[] content);
 
     /// <summary>The owner's layout overrides, to merge over <see cref="LayoutCatalog.Default"/>.</summary>
     IReadOnlyList<StatementLayout> Layouts();

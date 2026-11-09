@@ -201,6 +201,140 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void A_file_read_again_keeps_its_place_and_the_decisions_on_the_rows_read_again_and_says_what_went()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var first = pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            var secondBytes = Tables.Xlsx("LHV", LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(), ["EE497700771001131757", 1, new DateTime(2026, 10, 20), "EE12", "Mari Maasikas", "D", -100d, null, "2026102000000009", "lisatasu", "EUR", 48712219406d]);
+            var second = pipeline.ImportFile(period.Id, "teine.xlsx", secondBytes).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var view = workspace.Load(period.Id);
+            var salary = view.Persons[0].Payments.Single(p => p.Source == ReviewFixtures.Source && !p.IsByHand);
+            workspace.SetNote(salary, "kontrollitud");
+            var fee = view.Unmatched.Payments.Single(p => p.Source == ReviewFixtures.Source && p.Amount == 0.38m);
+            workspace.SetCategory(fee, "Üür");
+            workspace.AddHandLine(period.Id, view.Persons[0].PersonId, new DateOnly(2026, 10, 25), 50m, "Mari Maasikas", "käsitsi", "Palgad");
+            workspace.SavePerson(view.Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            new PeriodDeclarer(store, TaxRates.Year2026).Build(period.Id); // drafts from both files' rows and the hand line
+            var firstRows = store.Sheets(first.Id).SelectMany(s => store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+            var secondRows = store.Sheets(second.Id).SelectMany(s => store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+            Assert.Contains(store.Payments(period.Id), p => p.SourceRowId is { } r && firstRows.Contains(r));
+            var others = store.Payments(period.Id).Where(p => p.SourceRowId is not { } r || !firstRows.Contains(r)).Select(p => p.Id).ToList();
+            Assert.Contains(store.Payments(period.Id), p => p.SourceRowId is { } r && secondRows.Contains(r));
+
+            var outcome = pipeline.RereadFile(period.Id, first.Id);
+            Assert.True(outcome.Succeeded, outcome.Error);
+            Assert.Equal((2, 0, 1, 1), (outcome.Carried, outcome.Dropped, outcome.RunsCleared.Count, outcome.DraftsDeleted));
+            Assert.NotEqual(first.Id, outcome.File!.Id);
+            Assert.Equal(first.ImportedAt, outcome.File.ImportedAt); // the day it came in stays its record
+            Assert.Equal([outcome.File.Id, second.Id], store.PeriodImports(period.Id).Select(f => f.Id)); // its place kept: it still holds the originals (decision 86)
+            Assert.Equal(2, store.Imports(company.Id).Count);
+            Assert.Null(store.LoadMatchResult(period.Id)); // searched again
+            Assert.True(workspace.Load(period.Id).RunIsStale);
+            Assert.Equal(others, store.Payments(period.Id).Select(p => p.Id)); // only the drafts from the old rows went; the next build makes them again
+            Assert.Single(store.ReviewLines(period.Id), l => l.IsByHand); // the hand line is nobody's row: untouched
+            pipeline.RunMatch(period.Id);
+            var again = workspace.Load(period.Id);
+            Assert.Equal("kontrollitud", again.Persons[0].Payments.Single(p => p.Source == ReviewFixtures.Source && !p.IsByHand).Note);
+            Assert.Equal("Üür", again.Unmatched.Payments.Single(p => p.Source == ReviewFixtures.Source && p.Amount == 0.38m).Category);
+
+            // read again with a layout that reads the columns otherwise: the fingerprints differ, the decisions go, and it is counted
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            var swapped = lhv with { Roles = lhv.Roles with { Counterparty = lhv.Roles.Description, Description = lhv.Roles.Counterparty } };
+            var changed = new PeriodPipeline(store, new Importer(LayoutCatalog.Default.WithOverrides([swapped]), new ExcelTableReader()));
+            var dropped = changed.RereadFile(period.Id, outcome.File.Id);
+            Assert.True(dropped.Succeeded, dropped.Error);
+            Assert.Equal((0, 2), (dropped.Carried, dropped.Dropped));
+            Assert.Single(store.ReviewLines(period.Id), l => l.IsByHand);
+            Assert.Equal([dropped.File!.Id, second.Id], store.PeriodImports(period.Id).Select(f => f.Id));
+
+            // a month past Draft that lists the file refuses the re-read
+            var november = store.GetOrCreatePeriod(company.Id, 2026, 11);
+            store.LinkImport(november.Id, dropped.File.Id);
+            store.SetPeriodState(november.Id, PeriodState.Exported, DateTime.UtcNow);
+            var refused = pipeline.RereadFile(period.Id, dropped.File.Id);
+            Assert.False(refused.Succeeded);
+            Assert.Contains("2026-11", refused.Error);
+        }
+    }
+
+    [Fact]
+    public void Two_identical_rows_keep_their_own_decisions_through_a_re_read()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var headers = LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>();
+            var bytes = Tables.Xlsx("LHV", headers,
+                ["EE497700771001131757", 1, new DateTime(2026, 10, 6), null, null, "D", -0.38, null, null, "Teenustasu", "EUR"],
+                ["EE497700771001131757", 2, new DateTime(2026, 10, 6), null, null, "D", -0.38, null, null, "Teenustasu", "EUR"],
+                ["EE497700771001131757", 3, new DateTime(2026, 10, 12), "EE14", "Kinnisvara OÜ", "D", -450d, null, "2026101200000003", "ruumide kasutamine", "EUR"]); // a named row after them: the payee-less rows before the last named row are listed (decision 29)
+            var file = pipeline.ImportFile(period.Id, "tasud.xlsx", bytes).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var rows = workspace.Load(period.Id).Unmatched.Payments.Where(p => p.Amount == 0.38m).OrderBy(p => p.RowNo).ToList();
+            Assert.Equal(2, rows.Count);
+            workspace.SetCategory(rows[0], "Üür");
+            workspace.SetCategory(rows[1], "Kommunaalkulud");
+
+            var outcome = pipeline.RereadFile(period.Id, file.Id);
+            Assert.True(outcome.Succeeded, outcome.Error);
+            Assert.Equal((2, 0), (outcome.Carried, outcome.Dropped));
+            pipeline.RunMatch(period.Id);
+            var again = workspace.Load(period.Id).Unmatched.Payments.Where(p => p.Amount == 0.38m).OrderBy(p => p.RowNo).ToList();
+            Assert.Equal(["Üür", "Kommunaalkulud"], again.Select(p => p.Category)); // the n-th row of a fingerprint keeps the n-th decision
+        }
+    }
+
+    [Fact]
+    public void A_file_is_taken_out_of_the_store_from_the_one_period_that_lists_it_or_from_no_period_at_all()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var file = pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var view = workspace.Load(period.Id);
+            workspace.SavePerson(view.Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            new PeriodDeclarer(store, TaxRates.Year2026).Build(period.Id);
+            Assert.NotEmpty(store.Payments(period.Id));
+            var november = store.GetOrCreatePeriod(company.Id, 2026, 11);
+            store.LinkImport(november.Id, file.Id);
+
+            store.SetPeriodState(november.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Contains("cannot be taken out", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, file.Id)).Message); // a declared month's record for good
+            store.SetPeriodState(november.Id, PeriodState.Draft, DateTime.UtcNow);
+            Assert.Contains("2026-11", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, file.Id)).Message); // listed in another Draft: taken out there first
+            store.UnlinkImport(november.Id, file.Id);
+            Assert.Contains("match run", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, file.Id)).Message); // the run took it: the second word, as for an unlink
+            Assert.NotNull(store.LoadMatchResult(period.Id)); // a refusal costs no search
+            Assert.Single(store.PeriodImports(period.Id));
+
+            pipeline.RemoveFile(period.Id, file.Id, clearRun: true); // the run, the drafts from the file's rows and the file go together
+            Assert.Empty(store.Imports(company.Id));
+            Assert.Empty(store.PeriodImports(period.Id));
+            Assert.Empty(store.Payments(period.Id));
+            Assert.Null(store.LoadMatchResult(period.Id));
+            Assert.Throws<KeyNotFoundException>(() => pipeline.RemoveFile(period.Id, file.Id));
+
+            // a file no period lists any more (unlinked in another month) is listed as such and taken out from any Draft month
+            var stray = pipeline.ImportFile(november.Id, "teine.xlsx", ReviewFixtures.Workbook(salary: 1000m)).File!;
+            pipeline.UnlinkFile(november.Id, stray.Id);
+            Assert.Equal([stray.Id], pipeline.UnlistedFiles(company.Id).Select(f => f.Id));
+            pipeline.RemoveFile(period.Id, stray.Id);
+            Assert.Empty(pipeline.UnlistedFiles(company.Id));
+            Assert.Empty(store.Imports(company.Id));
+        }
+    }
+
+    [Fact]
     public void A_hidden_sheet_is_read_and_said()
     {
         var (store, _, period) = Setup();

@@ -193,6 +193,28 @@ internal static class UiText
     public const string RunReplacesRun = "Perioodi otsingu tulemus asendatakse uuega; tehtud otsused jäävad alles. Jätkata?";
     public const string UnlinkConfirm = "Eemaldada fail perioodi failide hulgast? Selle faili ridade otsused kustuvad.";
     public const string UnlinkClearsRun = "Perioodi otsingu tulemus kasutab seda faili. Otsingu tulemus kustutatakse ja fail eemaldatakse. Jätkata?";
+    public const string Reread = "Loe uuesti";
+    public const string RereadConfirm = "Lugeda fail uuesti praeguste paigutuste ja lugejaga? Ridade otsused kantakse üle sama sisuga ridadele. Igas mustandkuus, mis faili kasutab, kustutatakse otsingu tulemus ja faili ridadest koostatud read — pärast „Otsi maksed“ ja „Koosta read“ uuesti.";
+    public const string RemoveFile = "Eemalda fail";
+    public const string RemoveFileConfirm = "Eemaldada fail andmebaasist? Fail kaob perioodi failide hulgast; selle ridade otsused ja neist koostatud read kustuvad.";
+    public const string Unlisted = "sidumata";
+    public static string RereadDone(string fileName, int carried, int dropped, int draftsDeleted, IReadOnlyList<string> runsCleared)
+    {
+        var parts = new List<string> { $"{Count(carried, "otsus", "otsust")} üle kantud", $"{Count(dropped, "otsus", "otsust")} kustunud (rida ei loetud enam samamoodi)" };
+        if (draftsDeleted > 0)
+        {
+            parts.Add($"{Count(draftsDeleted, "koostatud rida", "koostatud rida")} kustutatud");
+        }
+
+        if (runsCleared.Count > 0)
+        {
+            parts.Add($"otsingu tulemus kustutatud: {string.Join(", ", runsCleared)} — „Otsi maksed“ uuesti");
+        }
+
+        return $"{Reread}: {fileName}: {string.Join("; ", parts)}.";
+    }
+
+    private static string Count(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
     public const string RemoveLineConfirm = "Eemaldada käsitsi lisatud rida?";
     public static string LookupProgress(int done, int total) => $"Päringud: {done} / {total}";
 

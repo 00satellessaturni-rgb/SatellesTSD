@@ -29,6 +29,31 @@ public sealed class ImportOutcome
     public bool Succeeded => File is not null && Error is null;
 }
 
+/// <summary>What a re-read of a stored file left (decision 131): the new file in the old one's place, the decisions carried and
+/// dropped, the months whose search was cleared — or why it was refused.</summary>
+public sealed class RereadOutcome
+{
+    public required string FileName { get; init; }
+
+    public ImportFile? File { get; init; }
+
+    public IReadOnlyList<string> Messages { get; init; } = [];
+
+    public int Carried { get; init; }
+
+    public int Dropped { get; init; }
+
+    /// <summary>The draft lines built from the file's rows that went (in any Draft month); the next build makes them again.</summary>
+    public int DraftsDeleted { get; init; }
+
+    /// <summary>The months ("2026-10") whose search was cleared because it read the old rows.</summary>
+    public IReadOnlyList<string> RunsCleared { get; init; } = [];
+
+    public string? Error { get; init; }
+
+    public bool Succeeded => File is not null && Error is null;
+}
+
 /// <summary>The employer a TÖR export names: its registry code and name.</summary>
 public sealed record Employer(string RegistryCode, string Name);
 
@@ -112,38 +137,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
             return new ImportOutcome { FileName = fileName, Error = e.Message };
         }
 
-        var messages = new List<string>();
-        foreach (var sheet in parsed.Sheets)
-        {
-            var label = sheet.Name is { Length: > 0 } name ? $"sheet '{name}'" : $"sheet {sheet.Index + 1}";
-            if (!sheet.Recognised)
-            {
-                messages.Add($"{label}: {sheet.Message}");
-                continue;
-            }
-
-            if (sheet.Hidden)
-            {
-                messages.Add($"{label}: the sheet is hidden in the workbook; it was read all the same.");
-            }
-
-            if (sheet.Tor is { } tor && TorParser.CheckEmployer(tor, company.RegistryCode) is { } mismatch)
-            {
-                messages.Add($"{label}: {mismatch.Message}");
-            }
-
-            foreach (var problem in sheet.Problems.Where(p => p.RowNo is null))
-            {
-                messages.Add($"{label}: {problem.Message}");
-            }
-
-            var rowProblems = sheet.Problems.Count(p => p.RowNo is not null);
-            if (rowProblems > 0)
-            {
-                messages.Add($"{label}: {rowProblems} row(s) with a problem.");
-            }
-        }
-
+        var messages = SheetMessages(parsed, company);
         if (!parsed.HasData)
         {
             return new ImportOutcome { FileName = fileName, Messages = messages, Error = NothingRecognised };
@@ -177,6 +171,172 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
         return new ImportOutcome { FileName = fileName, File = file, Kind = parsed.Kind, AlreadyImported = already, Linked = true, Messages = messages };
     }
+
+    /// <summary>Sheet by sheet, what the import log says of a reading: what was not recognised and why, a hidden sheet, a
+    /// register of another employer, the sheet's problems, the rows with a problem.</summary>
+    private static List<string> SheetMessages(ParsedImport parsed, Company company)
+    {
+        var messages = new List<string>();
+        foreach (var sheet in parsed.Sheets)
+        {
+            var label = sheet.Name is { Length: > 0 } name ? $"sheet '{name}'" : $"sheet {sheet.Index + 1}";
+            if (!sheet.Recognised)
+            {
+                messages.Add($"{label}: {sheet.Message}");
+                continue;
+            }
+
+            if (sheet.Hidden)
+            {
+                messages.Add($"{label}: the sheet is hidden in the workbook; it was read all the same.");
+            }
+
+            if (sheet.Tor is { } tor && TorParser.CheckEmployer(tor, company.RegistryCode) is { } mismatch)
+            {
+                messages.Add($"{label}: {mismatch.Message}");
+            }
+
+            foreach (var problem in sheet.Problems.Where(p => p.RowNo is null))
+            {
+                messages.Add($"{label}: {problem.Message}");
+            }
+
+            var rowProblems = sheet.Problems.Count(p => p.RowNo is not null);
+            if (rowProblems > 0)
+            {
+                messages.Add($"{label}: {rowProblems} row(s) with a problem.");
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>Reads a stored file again, with the layouts and the parser in force, and puts the new reading in the old
+    /// one's place (decision 131): the file keeps its place among the period's files, the review's decisions follow the
+    /// rows read again by fingerprint, and a decision whose row is not read again is dropped and counted. Every month
+    /// that lists the file must be a Draft; their runs are cleared (the months are searched again) and their drafts
+    /// built from the file's rows go (the next build makes them again). A line on the server from the file refuses.</summary>
+    public RereadOutcome RereadFile(Guid periodId, Guid fileId)
+    {
+        var period = FindPeriod(periodId);
+        RequireDraft(period);
+        var company = _store.Companies().First(c => c.Id == period.CompanyId);
+        var file = _store.PeriodImports(periodId).FirstOrDefault(f => f.Id == fileId)
+            ?? throw new KeyNotFoundException("The file is not among the period's files.");
+        var content = _store.ImportContent(fileId) ?? throw new KeyNotFoundException($"The bytes of {file.FileName} are not in the store.");
+        ParsedImport parsed;
+        try
+        {
+            parsed = _importer.Read(file.FileName, content);
+        }
+        catch (ImportException e)
+        {
+            return new RereadOutcome { FileName = file.FileName, Error = e.Message };
+        }
+
+        var messages = SheetMessages(parsed, company);
+        if (!parsed.HasData)
+        {
+            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = NothingRecognised };
+        }
+
+        var periods = _store.Periods(period.CompanyId);
+        var listing = periods.Where(p => _store.PeriodImports(p.Id).Any(f => f.Id == fileId)).ToList();
+        if (listing.Where(p => p.State != PeriodState.Draft).ToList() is { Count: > 0 } locked)
+        {
+            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = $"The file is among the files of {string.Join(", ", locked.Select(MonthOf))}, past Draft (exported or declared): its reading stays as their record and is not read again." };
+        }
+
+        ImportReplacement? replaced = null;
+        var cleared = new List<string>();
+        var draftsDeleted = 0;
+        try
+        {
+            _store.InTransaction(() =>
+            {
+                foreach (var month in listing.Where(m => _store.LoadMatchResult(m.Id) is not null))
+                {
+                    _store.ClearMatchRun(month.Id); // the search read the old rows: made again over the new ones
+                    cleared.Add(MonthOf(month));
+                }
+
+                draftsDeleted = DeleteDraftsFrom(fileId, periods); // built from the old rows, in any Draft month; the next build makes them again
+                replaced = _store.ReplaceImport(fileId, parsed, content);
+            });
+        }
+        catch (Exception e) when (e is ImportException or InvalidOperationException or ArgumentException or KeyNotFoundException)
+        {
+            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = e.Message };
+        }
+
+        return new RereadOutcome { FileName = file.FileName, File = replaced!.File, Messages = messages, Carried = replaced.Carried, Dropped = replaced.Dropped, DraftsDeleted = draftsDeleted, RunsCleared = cleared };
+    }
+
+    /// <summary>Takes a file out of the store (decision 132): out of this period's files (the period's decisions on its rows go,
+    /// as with an unlink; the run that took it goes only with <paramref name="clearRun"/>, the accountant's second word), its
+    /// drafts in any Draft month go, then the file itself, with the store's own refusals (a line on the server). A file no
+    /// period lists any more goes straight out. Refused while another period lists the file: a month past Draft keeps it as
+    /// its record for good, a Draft month gives it up first.</summary>
+    public void RemoveFile(Guid periodId, Guid fileId, bool clearRun = false)
+    {
+        var period = FindPeriod(periodId);
+        RequireDraft(period);
+        var periods = _store.Periods(period.CompanyId);
+        var others = periods.Where(p => p.Id != periodId && _store.PeriodImports(p.Id).Any(f => f.Id == fileId)).ToList();
+        if (others.Where(p => p.State != PeriodState.Draft).ToList() is { Count: > 0 } locked)
+        {
+            throw new InvalidOperationException($"The file is among the files of {string.Join(", ", locked.Select(MonthOf))}, past Draft (exported or declared): it stays as their record and cannot be taken out.");
+        }
+
+        if (others.Count > 0)
+        {
+            throw new InvalidOperationException($"{others.Count} other Draft period(s) list this file ({string.Join(", ", others.Select(MonthOf))}); take it out of their files first.");
+        }
+
+        var listedHere = _store.PeriodImports(periodId).Any(f => f.Id == fileId);
+        _store.InTransaction(() =>
+        {
+            if (listedHere)
+            {
+                if (clearRun && _store.LoadMatchResult(periodId) is not null)
+                {
+                    _store.ClearMatchRun(periodId);
+                }
+
+                _store.UnlinkImport(periodId, fileId); // refuses while the run holds the file and the word was not given
+            }
+
+            DeleteDraftsFrom(fileId, periods);
+            _store.RemoveImport(fileId);
+        });
+    }
+
+    /// <summary>The Draft payments built from the file's rows, in every Draft month of the company (a month that no longer
+    /// lists the file may still hold them): deleted, the number told. The next build makes them again.</summary>
+    private int DeleteDraftsFrom(Guid fileId, IReadOnlyList<Period> periods)
+    {
+        var rows = _store.Sheets(fileId).SelectMany(s => _store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+        var deleted = 0;
+        foreach (var month in periods.Where(p => p.State == PeriodState.Draft))
+        {
+            foreach (var draft in _store.Payments(month.Id).Where(l => l.Status == PaymentStatus.Draft && l.SourceRowId is { } row && rows.Contains(row)))
+            {
+                _store.DeleteDraft(draft.Id);
+                deleted++;
+            }
+        }
+
+        return deleted;
+    }
+
+    /// <summary>The company's files no period lists any more (unlinked everywhere, or left when a month was cleared).</summary>
+    public IReadOnlyList<ImportFile> UnlistedFiles(Guid companyId)
+    {
+        var listed = _store.Periods(companyId).SelectMany(p => _store.PeriodImports(p.Id)).Select(f => f.Id).ToHashSet();
+        return _store.Imports(companyId).Where(f => !listed.Contains(f.Id)).ToList();
+    }
+
+    private static string MonthOf(Period period) => $"{period.Year}-{period.Month:00}";
 
     /// <summary>Runs and stores the period's matching (a re-run replaces the run; the review's decisions stand, keyed by row).</summary>
     public MatchResult RunMatch(Guid periodId)

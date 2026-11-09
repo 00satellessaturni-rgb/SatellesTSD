@@ -35,7 +35,16 @@ public sealed partial class SqliteStore
             throw new ImportException($"{import.FileName} was already imported on {earlier.ImportedAt:yyyy-MM-dd HH:mm} as {earlier.FileName}.");
         }
 
-        var file = new ImportFile(Guid.NewGuid(), companyId, kind, import.FileName, import.Format, sha256, content.LongLength, Now(), Clean(notes), import.Encoding);
+        var file = InsertImport(companyId, import, content, notes, sha256);
+        tx.Commit();
+        return file;
+    }
+
+    /// <summary>The file row, its recognised sheets and their rows, within the caller's transaction.</summary>
+    private ImportFile InsertImport(Guid companyId, ParsedImport import, byte[] content, string? notes, string sha256, DateTime? importedAt = null)
+    {
+        var kind = import.Kind!.Value;
+        var file = new ImportFile(Guid.NewGuid(), companyId, kind, import.FileName, import.Format, sha256, content.LongLength, importedAt ?? Now(), Clean(notes), import.Encoding);
         Exec(
             """
             INSERT INTO import_file (id, company_id, kind, file_name, format, sha256, size, imported_at, encoding, notes, content)
@@ -68,8 +77,138 @@ public sealed partial class SqliteStore
             }
         }
 
-        tx.Commit();
         return file;
+    }
+
+    public ImportReplacement ReplaceImport(Guid fileId, ParsedImport import, byte[] content)
+    {
+        ArgumentNullException.ThrowIfNull(import);
+        ArgumentNullException.ThrowIfNull(content);
+        if (import.Kind is null)
+        {
+            throw new ImportException($"{import.FileName} has no recognised sheet; nothing to store.");
+        }
+
+        var sha256 = Importer.Sha256Of(content);
+        if (content.LongLength != import.Size || !string.Equals(sha256, import.Sha256?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"{import.FileName}: the parsed import does not belong to these bytes (size or hash differ).", nameof(content));
+        }
+
+        using var tx = Tx();
+        var old = Query(ImportFileSelect + " WHERE import_file.id = $id", ReadImportFile, ("$id", G(fileId))).SingleOrDefault()
+            ?? throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+        if (!string.Equals(old.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"{import.FileName}: the bytes are not the stored file's.", nameof(content));
+        }
+
+        // the guards of a removal: what stands on the server, or was drafted, or was searched, from the old reading
+        var declared = Scalar<long>(
+            """
+            SELECT COUNT(*) FROM payment p
+              JOIN statement_row r ON r.id = p.source_row_id
+              JOIN import_sheet s ON s.id = r.sheet_id
+            WHERE s.file_id = $file AND p.status <> $draft
+            """,
+            ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
+        if (declared > 0)
+        {
+            throw new InvalidOperationException($"{declared} declared line(s) came from this file; it stays as their source.");
+        }
+
+        var drafts = Scalar<long>(
+            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file",
+            ("$file", G(fileId)));
+        if (drafts > 0)
+        {
+            throw new InvalidOperationException($"{drafts} draft line(s) point at this file's rows; they go before the file is read again.");
+        }
+
+        var totals = Scalar<long>(
+            """
+            SELECT COUNT(*) FROM payment p
+              JOIN period_import pi ON pi.period_id = p.period_id
+            WHERE pi.file_id = $file AND p.source_ref LIKE 'totals:%' AND p.status IN ('Sent', 'Accepted', 'NeedsChange', 'Review')
+            """,
+            ("$file", G(fileId)));
+        if (totals > 0)
+        {
+            throw new InvalidOperationException($"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.");
+        }
+
+        var sentPeriods = Scalar<long>(
+            "SELECT COUNT(*) FROM period_import pi JOIN period p ON p.id = pi.period_id WHERE pi.file_id = $file AND p.state <> $draft",
+            ("$file", G(fileId)), ("$draft", PeriodState.Draft.ToString()));
+        if (sentPeriods > 0)
+        {
+            throw new InvalidOperationException($"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.");
+        }
+
+        var runs = RunsUsing(fileId);
+        if (runs > 0)
+        {
+            throw new InvalidOperationException($"{runs} match run(s) took this file; clear them first.");
+        }
+
+        // the old rows by sheet and fingerprint (the n-th row of a fingerprint within the sheet), and the decisions on them
+        var oldKeys = RowKeys(fileId);
+        var decisions = Query(
+            """
+            SELECT id, row_id FROM review_line WHERE row_id IN (
+                SELECT r.id FROM statement_row r JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file)
+            """,
+            r => (LineId: Guid.Parse(r.GetString(0)), RowId: Guid.Parse(r.GetString(1))), ("$file", G(fileId)));
+
+        // the old file steps aside (its hash freed), the new one takes its place in every period's list — the link order kept
+        Exec("UPDATE import_file SET sha256 = $gone WHERE id = $id", ("$gone", "replaced:" + G(fileId)), ("$id", G(fileId)));
+        var file = InsertImport(old.CompanyId, import, content, old.Notes, sha256, old.ImportedAt); // the day the file came in is its record, not the day of the re-read
+        Exec("UPDATE period_import SET file_id = $new WHERE file_id = $old", ("$new", G(file.Id)), ("$old", G(fileId)));
+
+        // the decisions follow their rows; one whose row is not read again goes
+        var newRows = RowKeys(file.Id).ToDictionary(k => k.Value, k => k.Key);
+        var carried = 0;
+        var dropped = 0;
+        foreach (var (lineId, rowId) in decisions)
+        {
+            if (oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out var target))
+            {
+                Exec("UPDATE review_line SET row_id = $row WHERE id = $id", ("$row", G(target)), ("$id", G(lineId)));
+                carried++;
+            }
+            else
+            {
+                Exec("DELETE FROM review_line WHERE id = $id", ("$id", G(lineId)));
+                dropped++;
+            }
+        }
+
+        // the old reading goes
+        Exec("DELETE FROM statement_row WHERE sheet_id IN (SELECT id FROM import_sheet WHERE file_id = $file)", ("$file", G(fileId)));
+        Exec("DELETE FROM tor_entry WHERE sheet_id IN (SELECT id FROM import_sheet WHERE file_id = $file)", ("$file", G(fileId)));
+        Exec("DELETE FROM import_sheet WHERE file_id = $file", ("$file", G(fileId)));
+        Exec("DELETE FROM import_file WHERE id = $file", ("$file", G(fileId)));
+        tx.Commit();
+        return new ImportReplacement(file, carried, dropped);
+    }
+
+    /// <summary>Every statement row of a file by the key a re-read finds it again under: the sheet's index, the row's
+    /// fingerprint, and its ordinal among the sheet's rows of that fingerprint (two identical fees stay two).</summary>
+    private Dictionary<Guid, (int Sheet, string Hash, int Ordinal)> RowKeys(Guid fileId)
+    {
+        var keys = new Dictionary<Guid, (int, string, int)>();
+        foreach (var sheet in Sheets(fileId).Where(s => s.Kind == SheetKind.Statement))
+        {
+            var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var row in StatementRows(sheet.Id).OrderBy(r => r.Row.RowNo))
+            {
+                var ordinal = seen.GetValueOrDefault(row.Row.RowHash);
+                seen[row.Row.RowHash] = ordinal + 1;
+                keys[row.Id] = (sheet.SheetIndex, row.Row.RowHash, ordinal);
+            }
+        }
+
+        return keys;
     }
 
     private void InsertSheet(Guid id, Guid fileId, ImportedSheet sheet, SheetKind kind, string? layoutId, string? layoutJson, int headerRowNo, IReadOnlyList<string> headers,
@@ -188,17 +327,25 @@ public sealed partial class SqliteStore
     public void RemoveImport(Guid fileId)
     {
         using var tx = Tx();
-        var linked = Scalar<long>(
+        var declared = Scalar<long>(
             """
             SELECT COUNT(*) FROM payment p
               JOIN statement_row r ON r.id = p.source_row_id
               JOIN import_sheet s ON s.id = r.sheet_id
-            WHERE s.file_id = $file
+            WHERE s.file_id = $file AND p.status <> $draft
             """,
-            ("$file", G(fileId)));
-        if (linked > 0)
+            ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
+        if (declared > 0)
         {
-            throw new InvalidOperationException($"{linked} declared line(s) came from this file; it stays as their source.");
+            throw new InvalidOperationException($"{declared} declared line(s) came from this file; it stays as their source.");
+        }
+
+        var drafts = Scalar<long>(
+            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file",
+            ("$file", G(fileId)));
+        if (drafts > 0)
+        {
+            throw new InvalidOperationException($"{drafts} draft line(s) point at this file's rows; they go before the file does.");
         }
 
         // a totals line names no row, yet the rows it adds up are this file's when a period on the server lists the file

@@ -234,7 +234,10 @@ public sealed class FilesDialog : Form
     private readonly Action<string> _log;
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
     private readonly Button _unlink = new() { Text = UiText.Unlink, AutoSize = true, Enabled = false };
+    private readonly Button _reread = new() { Text = UiText.Reread, AutoSize = true, Enabled = false };
+    private readonly Button _remove = new() { Text = UiText.RemoveFile, AutoSize = true, Enabled = false };
     private readonly Guid _periodId;
+    private readonly Guid _companyId;
     private readonly bool _editable;
 
     public FilesDialog(AppServices services, ReviewView view, Action<string> log)
@@ -243,6 +246,7 @@ public sealed class FilesDialog : Form
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _periodId = view.Period.Id;
+        _companyId = view.Company.Id;
         _editable = view.Editable;
         Text = UiText.FilesTitle;
         Size = new Size(700, 360);
@@ -253,30 +257,122 @@ public sealed class FilesDialog : Form
         _list.Columns.Add(UiText.ImportedAt, 140);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
         var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };
-        buttons.Controls.AddRange([close, _unlink]);
+        buttons.Controls.AddRange([close, _remove, _reread, _unlink]);
         Controls.Add(_list);
         Controls.Add(buttons);
         AcceptButton = close;
-        _list.SelectedIndexChanged += (_, _) => _unlink.Enabled = _editable && _list.SelectedItems.Count > 0;
+        _list.SelectedIndexChanged += (_, _) => EnableButtons();
         _unlink.Click += (_, _) => Unlink();
+        _reread.Click += (_, _) => Reread();
+        _remove.Click += (_, _) => Remove();
+        Fill();
+    }
+
+    // the window tests' seams
+    internal Button UnlinkButton => _unlink;
+    internal Button RereadButton => _reread;
+    internal Button RemoveButton => _remove;
+    internal ListView List => _list;
+
+    private ImportFile? Selected => _list.SelectedItems.Count == 0 ? null : _list.SelectedItems[0].Tag as ImportFile;
+
+    /// <summary>The file read again with the layouts in force (decision 131): what it left is logged, a refusal shown.</summary>
+    private void Reread()
+    {
+        if (Selected is not { } file || MessageBox.Show(this, UiText.RereadConfirm, UiText.Reread, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var outcome = _services.Pipeline.RereadFile(_periodId, file.Id);
+            foreach (var message in outcome.Messages)
+            {
+                _log($"{UiText.Reread}: {file.FileName}: {message}");
+            }
+
+            if (outcome.Succeeded)
+            {
+                _log(UiText.RereadDone(file.FileName, outcome.Carried, outcome.Dropped, outcome.DraftsDeleted, outcome.RunsCleared));
+            }
+            else
+            {
+                _log($"{UiText.Reread}: {file.FileName}: {outcome.Error}");
+                MessageBox.Show(this, outcome.Error, UiText.Reread, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        Fill();
+    }
+
+    /// <summary>The file taken out of the store (decision 132): out of the period's files first, with the run's second word as
+    /// for an unlink, then out of the store with its own refusals.</summary>
+    private void Remove()
+    {
+        if (Selected is not { } file || MessageBox.Show(this, UiText.RemoveFileConfirm, UiText.RemoveFile, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            try
+            {
+                _services.Pipeline.RemoveFile(_periodId, file.Id);
+            }
+            catch (InvalidOperationException e) when (e.Message.Contains("match run", StringComparison.Ordinal))
+            {
+                if (MessageBox.Show(this, UiText.UnlinkClearsRun, UiText.RemoveFile, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                _services.Pipeline.RemoveFile(_periodId, file.Id, clearRun: true); // the run goes in the same transaction: a refusal costs no search
+            }
+
+            _log($"{UiText.RemoveFile}: {file.FileName}");
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
         Fill();
     }
 
     private void Fill()
     {
         _list.Items.Clear();
-        foreach (var file in _services.Store.PeriodImports(_periodId))
+        var linked = _services.Store.PeriodImports(_periodId);
+        foreach (var file in linked)
         {
-            var item = new ListViewItem([file.FileName, file.Kind.ToString(), file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file };
-            _list.Items.Add(item);
+            _list.Items.Add(new ListViewItem([file.FileName, file.Kind.ToString(), file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file });
         }
 
-        _unlink.Enabled = false;
+        // the company's files no period lists any more, after the period's own: the one place they can be taken out of the store
+        foreach (var file in _services.Pipeline.UnlistedFiles(_companyId))
+        {
+            _list.Items.Add(new ListViewItem([file.FileName, $"{file.Kind} ({UiText.Unlisted})", file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file, ForeColor = SystemColors.GrayText });
+        }
+
+        EnableButtons();
+    }
+
+    private void EnableButtons()
+    {
+        var listed = Selected is { } file && _services.Store.PeriodImports(_periodId).Any(f => f.Id == file.Id);
+        _unlink.Enabled = _reread.Enabled = _editable && listed;
+        _remove.Enabled = _editable && Selected is not null;
     }
 
     private void Unlink()
     {
-        if (_list.SelectedItems.Count == 0 || _list.SelectedItems[0].Tag is not ImportFile file)
+        if (Selected is not { } file)
         {
             return;
         }
