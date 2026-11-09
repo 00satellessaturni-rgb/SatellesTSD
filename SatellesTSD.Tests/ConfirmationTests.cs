@@ -155,7 +155,13 @@ public class ConfirmationTests
         Assert.Equal([true, false, true, false, false, false, false, true], confirmation.Sections.Select(s => s.HasData));
         Assert.Equal(TaxTotalCodes.All, confirmation.TaxSums.Select(t => t.TaxType));
         Assert.Equal(50m, confirmation.TaxSums.Single(t => t.TaxType == "114").Amount);
+        Assert.Equal(PayeeId.Ariregistrikood, confirmation.TaxablePersonIdentifierType);
         Assert.Empty(SchemaValidation.Validate(ConfirmationXsd, ConfirmationWriter.Serialize(confirmation)));
+
+        // a payer in MTA's non-resident register carries the label its declaration file carries (decision 139)
+        var mrr = ConfirmDeclaration.ForTsd("65758008", 2026, 10, new HashSet<string> { "PAYMENTS" }, totals, registryCodeType: PayeeId.MrrKood);
+        Assert.Equal(PayeeId.MrrKood, mrr.TaxablePersonIdentifierType);
+        Assert.Empty(SchemaValidation.Validate(ConfirmationXsd, ConfirmationWriter.Serialize(mrr)));
 
         totals.Remove("114");
         Assert.Throws<ArgumentException>(() => ConfirmDeclaration.ForTsd("10235688", 2026, 10, new HashSet<string> { "PAYMENTS" }, totals));

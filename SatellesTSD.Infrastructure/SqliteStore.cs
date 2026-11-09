@@ -104,8 +104,11 @@ public sealed partial class SqliteStore : IStore
     {
         ArgumentNullException.ThrowIfNull(company);
         using var tx = Tx();
-        var changed = Exec("UPDATE company SET registry_code = $code, name = $name, notes = $notes WHERE id = $id",
-            ("$id", G(company.Id)), ("$code", company.RegistryCode.Trim()), ("$name", company.Name.Trim()), ("$notes", Clean(company.Notes)));
+        var changed = HasPayerColumn
+            ? Exec("UPDATE company SET registry_code = $code, name = $name, notes = $notes, payer_code_type = $payer WHERE id = $id",
+                ("$id", G(company.Id)), ("$code", company.RegistryCode.Trim()), ("$name", company.Name.Trim()), ("$notes", Clean(company.Notes)), ("$payer", Clean(company.PayerCodeType)))
+            : Exec("UPDATE company SET registry_code = $code, name = $name, notes = $notes WHERE id = $id",
+                ("$id", G(company.Id)), ("$code", company.RegistryCode.Trim()), ("$name", company.Name.Trim()), ("$notes", Clean(company.Notes)));
         if (changed == 0)
         {
             throw new KeyNotFoundException($"Company {company.Id} is not in the store.");
@@ -114,9 +117,16 @@ public sealed partial class SqliteStore : IStore
         tx.Commit();
     }
 
-    private const string CompanySelect = "SELECT id, registry_code, name, notes FROM company";
+    private bool? _hasPayerColumn;
 
-    private static Company ReadCompany(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), r.GetString(1), r.GetString(2), Str(r, 3));
+    /// <summary>Whether the company table carries the v10 column: a store opened at an older version (the upgrade tests) has none.</summary>
+    private bool HasPayerColumn => _hasPayerColumn ??= Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('company') WHERE name = 'payer_code_type'") > 0;
+
+    private string CompanySelect => HasPayerColumn
+        ? "SELECT id, registry_code, name, notes, payer_code_type FROM company"
+        : "SELECT id, registry_code, name, notes, NULL AS payer_code_type FROM company";
+
+    private static Company ReadCompany(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), r.GetString(1), r.GetString(2), Str(r, 3), Str(r, 4));
 
     // ---------------------------------------------------------------- persons
 
@@ -853,6 +863,7 @@ public sealed partial class SqliteStore : IStore
         }
 
         tx.Commit();
+        _hasPayerColumn = null; // the columns may have changed
     }
 
     private string? _openedPath;
@@ -1189,6 +1200,11 @@ public sealed partial class SqliteStore : IStore
         // v9 — the control date the lookups last set a person's residency or pension for, so a build of another month says so.
         """
         ALTER TABLE person ADD COLUMN facts_control_date TEXT;
+        """,
+
+        // v10 — how the file labels the company's code (ARIREGISTRIKOOD or MRR_KOOD) when the card says; null leaves it to the code's shape.
+        """
+        ALTER TABLE company ADD COLUMN payer_code_type TEXT;
         """,
     ];
 

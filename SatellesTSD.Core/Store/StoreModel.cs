@@ -22,7 +22,8 @@ public enum DeclarationChoice
 }
 
 /// <summary>A client company the firm declares for.</summary>
-public sealed record Company(Guid Id, string RegistryCode, string Name, string? Notes = null);
+/// <param name="PayerCodeType">How the file labels the company's code (ARIREGISTRIKOOD or MRR_KOOD), when the card says; null for the code's shape to decide (decision 139).</param>
+public sealed record Company(Guid Id, string RegistryCode, string Name, string? Notes = null, string? PayerCodeType = null);
 
 /// <summary>A payee of one company with the facts the engine needs, as the accountant last established them. The
 /// "checked on" dates say how fresh the two lookups are. <see cref="FactsFor"/> turns the row into the month's

@@ -52,6 +52,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _newStoreButton = new(UiText.NewStore);
     private readonly ToolStripMenuItem _closeButton = new(UiText.Close);
     private readonly ToolStripMenuItem _newCompanyButton = new(UiText.NewCompany);
+    private readonly ToolStripMenuItem _editCompanyButton = new(UiText.EditCompany);
     private readonly ToolStripMenuItem _closeCompanyButton = new(UiText.CloseCompany);
     private readonly Label _salaryTotal = new() { Dock = DockStyle.Bottom, Height = 24, TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 8, 0), Font = new Font(Control.DefaultFont, FontStyle.Bold) };
     private readonly ToolStripMenuItem _importButton = new(UiText.ImportFiles);
@@ -137,7 +138,8 @@ public sealed class MainForm : Form
         var storeMenu = new ToolStripMenuItem(UiText.MenuStore);
         storeMenu.DropDownItems.AddRange([_openStoreButton, _newStoreButton, _updateSeparator, _updateButton, new ToolStripSeparator(), _closeButton]);
         var companyMenu = new ToolStripMenuItem(UiText.MenuCompany);
-        companyMenu.DropDownItems.AddRange([_newCompanyButton, _filesButton, new ToolStripSeparator(), _closeCompanyButton]);
+        companyMenu.DropDownItems.AddRange([_newCompanyButton, _editCompanyButton, _filesButton, new ToolStripSeparator(), _closeCompanyButton]);
+        _editCompanyButton.Click += (_, _) => EditCompany();
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
         periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
@@ -1345,7 +1347,41 @@ public sealed class MainForm : Form
             }
 
             var company = _services.Store.AddCompany(dialog.RegistryCode, dialog.CompanyTitle);
+            if (dialog.PayerCodeType is { } type)
+            {
+                company = company with { PayerCodeType = type };
+                _services.Store.UpdateCompany(company);
+            }
+
+            Log(UiText.CompanySaved(company.Name, company.RegistryCode, Core.Xbrl.PayerCodes.DescriptionOf(company.RegistryCode, company.PayerCodeType)));
             _settings.LastCompany = company.RegistryCode;
+            FillCompanies();
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+    }
+
+    /// <summary>The company shown, changed on its card: the name and how the file labels its code (decision 139).</summary>
+    private void EditCompany()
+    {
+        if (_services is null || SelectedCompany is not { } company)
+        {
+            return;
+        }
+
+        using var dialog = new CompanyDialog(company);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            var changed = company with { Name = dialog.CompanyTitle, PayerCodeType = dialog.PayerCodeType };
+            _services.Store.UpdateCompany(changed);
+            Log(UiText.CompanySaved(changed.Name, changed.RegistryCode, Core.Xbrl.PayerCodes.DescriptionOf(changed.RegistryCode, changed.PayerCodeType)));
             FillCompanies();
         }
         catch (Exception e)
@@ -1841,6 +1877,7 @@ public sealed class MainForm : Form
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
         _closeCompanyButton.Enabled = !_busy && hasCompany;
+        _editCompanyButton.Enabled = !_busy && hasCompany;
         _openStoreButton.Enabled = !_busy;
         _newStoreButton.Enabled = !_busy;
         _companyBox.Enabled = !_busy;

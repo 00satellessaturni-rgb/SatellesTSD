@@ -316,4 +316,30 @@ public class XbrlGlTests
         Assert.Equal("T", sub.Element(XbrlGlWriter.GlCor + "accountSubID")!.Value);
         Assert.Equal(XbrlGlWriter.ActionClassifier, sub.Element(XbrlGlWriter.GlCor + "accountSubType")!.Value);
     }
+
+    [Fact]
+    public void The_payers_code_is_labelled_by_its_shape_unless_the_card_says_and_the_label_is_written_and_read_back()
+    {
+        // an Äriregister code: eight digits beginning with 1, 7, 8 or 9; anything else is MTA's non-resident register code (decision 139)
+        Assert.Equal(PayeeId.Ariregistrikood, PayerCodes.DescriptionOf("10235688"));
+        Assert.Equal(PayeeId.Ariregistrikood, PayerCodes.DescriptionOf(" 90001234 "));
+        Assert.Equal(PayeeId.MrrKood, PayerCodes.DescriptionOf("65758008")); // a Lithuanian MB registered with MTA
+        Assert.Equal(PayeeId.MrrKood, PayerCodes.DescriptionOf("A0003689779"));
+        Assert.Equal(PayeeId.MrrKood, PayerCodes.DescriptionOf("1023568")); // seven digits are no Äriregister code
+        Assert.Equal(PayeeId.Isikukood, PayerCodes.DescriptionOf("48304052720")); // a FIE under their personal code
+        Assert.Equal(PayeeId.MrrKood, PayerCodes.DescriptionOf("98304052720")); // eleven digits beginning with 9: no Estonian personal code
+        Assert.Equal(PayeeId.Ariregistrikood, PayerCodes.DescriptionOf("65758008", PayeeId.Ariregistrikood)); // the card's word wins
+        Assert.Equal(PayeeId.MrrKood, PayerCodes.DescriptionOf("10235688", PayeeId.MrrKood));
+        Assert.Equal(PayeeId.Isikukood, PayerCodes.DescriptionOf("10235688", PayeeId.Isikukood));
+        Assert.Equal(PayeeId.Ariregistrikood, PayerCodes.DescriptionOf("10235688", "nonsense")); // a word the file does not know is no word
+
+        var section = new SectionEntries(Section.EE0201001, null, []);
+        var declaration = Empty(section) with { RegistryCode = "65758008", RegistryCodeType = PayeeId.MrrKood };
+        var written = XbrlGlWriter.Write(declaration);
+        var identifiers = written.Root!.Element(XbrlGlWriter.GlCor + "accountingEntries")!.Element(XbrlGlWriter.GlCor + "entityInformation")!.Element(XbrlGlWriter.GlBus + "organizationIdentifiers")!;
+        Assert.Equal("65758008", identifiers.Element(XbrlGlWriter.GlBus + "organizationIdentifier")!.Value);
+        Assert.Equal("MRR_KOOD", identifiers.Element(XbrlGlWriter.GlBus + "organizationDescription")!.Value);
+        Assert.Equal(PayeeId.MrrKood, XbrlGlReader.Read(written).RegistryCodeType); // read back as written
+        Assert.Equal(PayeeId.Ariregistrikood, XbrlGlReader.Read(XbrlGlWriter.Write(Empty(section))).RegistryCodeType); // the default stays the Äriregister label
+    }
 }

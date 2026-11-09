@@ -5,6 +5,7 @@ using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
+using SatellesTSD.Core.Xbrl;
 
 namespace SatellesTSD;
 
@@ -73,17 +74,39 @@ public sealed class CompanyDialog : FieldDialog
 {
     private readonly TextBox _code = new();
     private readonly TextBox _name = new();
+    private readonly ComboBox _payerType = new() { DropDownStyle = ComboBoxStyle.DropDownList };
 
-    public CompanyDialog() : base(UiText.NewCompanyTitle)
+    public CompanyDialog() : this(null)
+    {
+    }
+
+    /// <summary>A new company, or an existing one to change: its name and how the file labels its code (decision 139); the
+    /// registry code of an existing company stays, the declarations made carry it.</summary>
+    public CompanyDialog(Company? existing) : base(existing is null ? UiText.NewCompanyTitle : UiText.EditCompanyTitle)
     {
         Field(UiText.Name, _name);
         Field(UiText.RegistryCode, _code);
+        _payerType.Items.AddRange([UiText.PayerCodeAuto, UiText.PayerCodeRegistry, UiText.PayerCodePersonal, UiText.PayerCodeMrr]);
+        _payerType.SelectedIndex = existing?.PayerCodeType switch { PayeeId.Ariregistrikood => 1, PayeeId.Isikukood => 2, PayeeId.MrrKood => 3, _ => 0 };
+        _payerType.DropDownWidth = _payerType.Items.Cast<string>().Max(item => TextRenderer.MeasureText(item, _payerType.Font).Width) + 24; // the open list shows the whole text
+        Field(UiText.PayerCodeType, _payerType);
         Buttons();
+        if (existing is not null)
+        {
+            _name.Text = existing.Name;
+            _code.Text = existing.RegistryCode;
+            _code.ReadOnly = true;
+        }
     }
 
     public string RegistryCode => _code.Text.Trim();
 
     public string CompanyTitle => _name.Text.Trim();
+
+    /// <summary>The card's word on the code's label in the file: null for the code's shape to decide.</summary>
+    public string? PayerCodeType => _payerType.SelectedIndex switch { 1 => PayeeId.Ariregistrikood, 2 => PayeeId.Isikukood, 3 => PayeeId.MrrKood, _ => null };
+
+    internal ComboBox PayerTypeBox => _payerType;
 
     protected override bool Accept()
     {

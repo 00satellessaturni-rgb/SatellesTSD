@@ -80,7 +80,8 @@ public sealed record ConfirmDeclaration(
         IReadOnlySet<string> sectionsWithData,
         IReadOnlyDictionary<string, decimal> totals,
         string? personCode = null,
-        string? declarationText = null)
+        string? declarationText = null,
+        string registryCodeType = PayeeId.Ariregistrikood)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(registryCode);
         ArgumentNullException.ThrowIfNull(sectionsWithData);
@@ -99,7 +100,7 @@ public sealed record ConfirmDeclaration(
 
         var sections = TsdSections.All.Select(s => new SectionItem(s, sectionsWithData.Contains(s))).ToList();
         var sums = TaxTotalCodes.All.Select(code => new TaxSum(code, totals[code])).ToList();
-        return new ConfirmDeclaration(personCode, declarationText ?? DefaultText, registryCode, PayeeId.Ariregistrikood, DeclarationKind.TSD, month, year, sections, sums);
+        return new ConfirmDeclaration(personCode, declarationText ?? DefaultText, registryCode, registryCodeType, DeclarationKind.TSD, month, year, sections, sums); // the code's label as the declaration file carries it (decision 139)
     }
 }
 

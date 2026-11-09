@@ -182,6 +182,14 @@ internal static class UiText
     public const string AddLineTitle = "Lisa makse käsitsi";
     public const string NewPersonTitle = "Uus isik";
     public const string NewCompanyTitle = "Uus ettevõte";
+    public const string EditCompany = "Muuda ettevõtet…";
+    public const string EditCompanyTitle = "Ettevõte";
+    public const string PayerCodeType = "Koodi liik failis";
+    public const string PayerCodeAuto = "koodi kuju järgi (8 numbrit = äriregister, 11 = isikukood, muu = MRR)";
+    public const string PayerCodeRegistry = "ARIREGISTRIKOOD — Äriregistri kood";
+    public const string PayerCodePersonal = "ISIKUKOOD — FIE isikukood";
+    public const string PayerCodeMrr = "MRR_KOOD — MTA mitteresidendi registri kood";
+    public static string CompanySaved(string name, string code, string type) => $"{EditCompanyTitle}: {name} ({code}), koodi liik failis {type}.";
     public const string FilesTitle = "Perioodi failid";
     public const string Unlink = "Eemalda perioodist";
     public const string ImportedAt = "Imporditud";

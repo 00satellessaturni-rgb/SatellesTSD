@@ -967,6 +967,43 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_company_in_MTAs_non_resident_register_is_labelled_MRR_KOOD_in_the_file_unless_its_card_says_otherwise()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        var result = box.Submitter.Export(box.Period.Id, box.Folder);
+        Assert.Equal("ARIREGISTRIKOOD", OrganizationDescription(result.Path)); // an eight-digit code beginning with 1: the Äriregister's
+        Assert.Equal(PayeeId.Ariregistrikood, result.Declaration.RegistryCodeType);
+
+        // the card says the company is in MTA's non-resident register (a Lithuanian MB, say): the file labels the code MRR_KOOD, and the schema takes it
+        box.Submitter.Withdraw(result.Submission.Id);
+        box.Store.UpdateCompany(box.Company with { PayerCodeType = PayeeId.MrrKood });
+        var mrr = box.Submitter.Export(box.Period.Id, box.Folder);
+        Assert.Empty(new XbrlGlValidator(SchemaRoot).ValidateFile(mrr.Path));
+        Assert.Equal("MRR_KOOD", OrganizationDescription(mrr.Path));
+        Assert.Equal(PayeeId.MrrKood, mrr.Declaration.RegistryCodeType);
+
+        // the case e-MTA refused: a company whose code is MTA's non-resident register code, nothing said on the card — the shape decides
+        using var foreign = SqliteStore.InMemory();
+        var company = foreign.AddCompany("65758008", "MB Pavyzdys");
+        var period = foreign.GetOrCreatePeriod(company.Id, 2026, 10);
+        var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
+        var workspace = new ReviewWorkspace(foreign, TaxRates.Year2026, clock);
+        var kati = workspace.AddPerson(company.Id, "Kati", "Kask", "60001010008", "1");
+        workspace.SavePerson(kati with { FundedPensionMember = false }, confirmResidency: true, confirmPension: true);
+        workspace.AddHandLine(period.Id, kati.Id, new DateOnly(2026, 10, 20), 1000m, "Kati Kask", "palk", "Palgad");
+        new PeriodDeclarer(foreign, TaxRates.Year2026, clock).Build(period.Id);
+        var exported = new PeriodSubmitter(foreign, SchemaRoot, clock).Export(period.Id, box.Folder);
+        Assert.Empty(new XbrlGlValidator(SchemaRoot).ValidateFile(exported.Path));
+        Assert.Equal("MRR_KOOD", OrganizationDescription(exported.Path));
+        Assert.Equal("65758008", System.Xml.Linq.XDocument.Load(exported.Path).Root!.Element(XbrlGlWriter.GlCor + "accountingEntries")!.Element(XbrlGlWriter.GlCor + "entityInformation")!.Element(XbrlGlWriter.GlBus + "organizationIdentifiers")!.Element(XbrlGlWriter.GlBus + "organizationIdentifier")!.Value);
+
+        static string OrganizationDescription(string path) =>
+            System.Xml.Linq.XDocument.Load(path).Root!.Element(XbrlGlWriter.GlCor + "accountingEntries")!.Element(XbrlGlWriter.GlCor + "entityInformation")!
+                .Element(XbrlGlWriter.GlBus + "organizationIdentifiers")!.Element(XbrlGlWriter.GlBus + "organizationDescription")!.Value;
+    }
+
+    [Fact]
     public void The_cut_the_drafts_were_built_with_is_read_from_them()
     {
         using var box = Ready();

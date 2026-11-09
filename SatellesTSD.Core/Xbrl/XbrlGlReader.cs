@@ -50,7 +50,8 @@ public static class XbrlGlReader
             Creator: Required(info, GlBus + "creator").Value.Trim(),
             SourceApplication: Required(info, GlBus + "sourceApplication").Value.Trim(),
             EntriesComment: info.Element(GlCor + "entriesComment")?.Value.Trim(),
-            Sections: sections);
+            Sections: sections,
+            RegistryCodeType: entries.Element(GlCor + "entityInformation")?.Element(GlBus + "organizationIdentifiers")?.Element(GlBus + "organizationDescription")?.Value.Trim() is { Length: > 0 } type ? type : PayeeId.Ariregistrikood);
     }
 
     private static SectionEntries ReadSection(XElement header, HashSet<string> moneyUnits)

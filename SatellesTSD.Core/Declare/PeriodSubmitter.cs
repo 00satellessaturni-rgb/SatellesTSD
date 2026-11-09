@@ -76,7 +76,8 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         }
         var now = _clock.GetLocalNow();
         var uniqueId = Declaration.MakeUniqueId(company.RegistryCode, now.DateTime);
-        var declaration = new Declaration(company.RegistryCode, period.Year, period.Month, DateOnly.FromDateTime(now.DateTime), uniqueId, company.Name, SourceApplication, null, sections).WithCounters();
+        var declaration = new Declaration(company.RegistryCode, period.Year, period.Month, DateOnly.FromDateTime(now.DateTime), uniqueId, company.Name, SourceApplication, null, sections,
+            PayerCodes.DescriptionOf(company.RegistryCode, company.PayerCodeType)).WithCounters();
         var problems = DeclarationValidator.Validate(declaration);
         if (problems.Count > 0)
         {

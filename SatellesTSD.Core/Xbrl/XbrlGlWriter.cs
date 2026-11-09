@@ -79,7 +79,7 @@ public static class XbrlGlWriter
                 new XElement(GlCor + "entityInformation",
                     new XElement(GlBus + "organizationIdentifiers",
                         Fact(GlBus + "organizationIdentifier", declaration.RegistryCode),
-                        Fact(GlBus + "organizationDescription", "ARIREGISTRIKOOD"))),
+                        Fact(GlBus + "organizationDescription", declaration.RegistryCodeType))), // ARIREGISTRIKOOD, or MRR_KOOD for a payer in MTA's non-resident register (decision 139)
                 declaration.Sections.Select(WriteSection)));
 
         return new XDocument(new XDeclaration("1.0", "UTF-8", null), root);

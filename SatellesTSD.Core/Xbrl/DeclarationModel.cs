@@ -41,6 +41,27 @@ public sealed record PayeeId(string Code, string Description)
     public static PayeeId Registry(string registryCode) => new(registryCode, Ariregistrikood);
 }
 
+/// <summary>The payer's code as the file labels it (gl-bus:organizationDescription, decision 139): an Äriregister code is
+/// eight digits beginning with 1, 7, 8 or 9; an Estonian personal code (a FIE's) eleven digits beginning with 1 to 6; any
+/// other code is MTA's non-resident register code (a Lithuanian MB's, say) — unless the company card says which.</summary>
+public static class PayerCodes
+{
+    public static readonly IReadOnlyList<string> Labels = [PayeeId.Ariregistrikood, PayeeId.Isikukood, PayeeId.MrrKood];
+
+    public static bool LooksEstonianRegistry(string registryCode) =>
+        registryCode?.Trim() is { Length: 8 } code && code.All(char.IsAsciiDigit) && code[0] is '1' or '7' or '8' or '9';
+
+    public static bool LooksEstonianPersonal(string registryCode) =>
+        registryCode?.Trim() is { Length: 11 } code && code.All(char.IsAsciiDigit) && code[0] is >= '1' and <= '6';
+
+    /// <param name="chosen">The company card's own word (one of <see cref="Labels"/>), which wins over the code's shape; null for the shape.</param>
+    public static string DescriptionOf(string registryCode, string? chosen = null) =>
+        chosen is not null && Labels.Contains(chosen) ? chosen
+        : LooksEstonianRegistry(registryCode) ? PayeeId.Ariregistrikood
+        : LooksEstonianPersonal(registryCode) ? PayeeId.Isikukood
+        : PayeeId.MrrKood;
+}
+
 /// <summary>A SYNDMUS2017ap event block: TSD01 (arvestuse kuupäev) on every payment, TSD02 on refunds.</summary>
 public sealed record MeasurableEvent(string Id, DateOnly Start, DateOnly? End = null)
 {
@@ -108,7 +129,8 @@ public sealed record Declaration(
     string Creator,
     string SourceApplication,
     string? EntriesComment,
-    IReadOnlyList<SectionEntries> Sections)
+    IReadOnlyList<SectionEntries> Sections,
+    string RegistryCodeType = PayeeId.Ariregistrikood)
 {
     public DateOnly PeriodStart => new(Year, Month, 1);
 

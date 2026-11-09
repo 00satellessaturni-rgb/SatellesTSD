@@ -44,6 +44,11 @@ public class SqliteStoreTests
         {
             Assert.Equal(company, store.FindCompany("10235688"));
             Assert.Null(store.FindCompany("99999999"));
+            Assert.Null(company.PayerCodeType); // the code's shape decides until the card says
+            store.UpdateCompany(company with { PayerCodeType = "MRR_KOOD" });
+            Assert.Equal("MRR_KOOD", store.FindCompany("10235688")!.PayerCodeType);
+            store.UpdateCompany(company with { PayerCodeType = " " });
+            Assert.Null(store.FindCompany("10235688")!.PayerCodeType); // blank is no word
             Assert.Equal(person, store.FindPerson(company.Id, "48712219406"));
             Assert.Equal(person, Assert.Single(store.Persons(company.Id)));
 
