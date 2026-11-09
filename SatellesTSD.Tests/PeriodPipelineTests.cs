@@ -351,6 +351,37 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void The_import_log_names_a_payment_row_above_the_header_and_the_readers_warning_and_counts_the_rest_by_kind()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+
+            // a headerless block pasted above an export with its header (SEB): the row above the header is named
+            var seb = LayoutCatalog.Default.Find("seb-et")!;
+            var pasted = Tables.Xlsx("SEB",
+                ["EE591010220215133228", "TT", "02.10.2026", "EE497700771001131757", "StopFire OÜ", "LHVBEE22", "H", "D", "500,00", "", "RO4262101896L02", "Reserv SEB", "0", "EUR", ""],
+                seb.Headers.ToArray<object?>(),
+                ["EE591010220215133228", "TM168358936", "01.10.2026", "", "AS SEB PANK", "EEUHEE2X", "H", "C", "1,01", "", "RO4248947827L02", "intresside väljamakse EUR", "0", "EUR", ""],
+                ["EE591010220215133228", "TM168358937", "eile", "", "AS SEB PANK", "EEUHEE2X", "H", "C", "palju", "", "RO4248947827L03", "intress", "0", "EUR", ""]); // a bad date and a bad amount: counted by kind
+            var outcome = pipeline.ImportFile(period.Id, "seb.xlsx", pasted);
+            Assert.True(outcome.Succeeded, outcome.Error);
+            Assert.Contains(outcome.Messages, m => m.StartsWith("sheet 'SEB': Row 1 sits above the header row", StringComparison.Ordinal));
+            Assert.Contains("sheet 'SEB': 1 row(s) with a problem (BAD_AMOUNT 1, BAD_DATE 1).", outcome.Messages); // one row, two faults: counted as one row
+            Assert.DoesNotContain(outcome.Messages, m => m.Contains("Row 4", StringComparison.Ordinal)); // the bad row is not named: it shows in the grid
+
+            // a CSV whose quote is never closed: the reader's word reaches the log
+            var headers = string.Join(",", LayoutCatalog.Default.Find("lhv-et-short")!.Headers);
+            var csv = Encoding.UTF8.GetBytes(headers + "\n" + "EE497700771001131757,1,2026-10-05,EE12,Mari Maasikas,D,-905.92,,2026100500000001,palk,EUR\n" + "EE497700771001131757,2,2026-10-06,EE13,\"Jaan Tamm,D,-300,,,töövõtt,EUR\n");
+            var warned = pipeline.ImportFile(period.Id, "lhv.csv", csv);
+            Assert.True(warned.Succeeded, warned.Error);
+            Assert.StartsWith("a quote opened at record", warned.Messages[0], StringComparison.Ordinal); // the file's own word first, without the file's name (the log names it)
+            Assert.Contains("never closed", warned.Messages[0], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void A_hidden_sheet_is_read_and_said()
     {
         var (store, _, period) = Setup();

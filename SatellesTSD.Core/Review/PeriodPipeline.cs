@@ -172,8 +172,9 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         return new ImportOutcome { FileName = fileName, File = file, Kind = parsed.Kind, AlreadyImported = already, Linked = true, Messages = messages };
     }
 
-    /// <summary>Sheet by sheet, what the import log says of a reading: what was not recognised and why, a hidden sheet, a
-    /// register of another employer, the sheet's problems, the rows with a problem.</summary>
+    /// <summary>What the import log says of a reading (decision 135): the reader's own warnings first; then sheet by sheet
+    /// what was not recognised and why, a hidden sheet, a register of another employer, the sheet's problems, every
+    /// payment-looking row above the header by name, and the other row problems counted by kind.</summary>
     private static List<string> SheetMessages(ParsedImport parsed, Company company)
     {
         var messages = new List<string>();
@@ -201,13 +202,25 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
                 messages.Add($"{label}: {problem.Message}");
             }
 
-            var rowProblems = sheet.Problems.Count(p => p.RowNo is not null);
-            if (rowProblems > 0)
+            // a row above the header that reads as a payment is named one by one — it is the one a hand-made export can hide
+            // (decision 135); the other row problems show on their rows in the grid, so they are counted by kind
+            foreach (var above in sheet.Problems.Where(p => p.RowNo is not null && p.Code == ImportProblem.AboveHeader))
             {
-                messages.Add($"{label}: {rowProblems} row(s) with a problem.");
+                messages.Add($"{label}: {above.Message}");
+            }
+
+            var rowProblems = sheet.Problems.Where(p => p.RowNo is not null && p.Code != ImportProblem.AboveHeader).ToList();
+            if (rowProblems.Count > 0)
+            {
+                var byKind = rowProblems.GroupBy(p => p.Code, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Key} {g.Count()}");
+                messages.Add($"{label}: {rowProblems.Select(p => p.RowNo).Distinct().Count()} row(s) with a problem ({string.Join(", ", byKind)}).");
             }
         }
 
+        // what the reader had to make do with (a quote never closed in a CSV): the file's own word, before any sheet's; the
+        // reader names the file, the log does too, so the name is taken off here
+        var prefix = parsed.FileName + ": ";
+        messages.InsertRange(0, parsed.Warnings.Select(w => w.StartsWith(prefix, StringComparison.Ordinal) ? w[prefix.Length..] : w));
         return messages;
     }
 
