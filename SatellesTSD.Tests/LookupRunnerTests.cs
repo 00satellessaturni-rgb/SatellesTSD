@@ -478,6 +478,65 @@ public class LookupRunnerTests
         }
     }
     [Fact]
+    public async Task A_register_persons_control_date_follows_the_review_not_the_searchs_raw_hits()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup();
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new SatellesTSD.Core.Review.ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            var residency = new FakeResidency { Answers = { [ReviewFixtures.MariCode] = LookupResult<ResidencyFinding>.Found(Resident(), null), [ReviewFixtures.JaanCode] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { [ReviewFixtures.MariCode] = LookupResult<PensionFinding>.Found(NotJoined, null), [ReviewFixtures.JaanCode] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            var runner = Runner(store, residency, pension, new LookupOptions(TimeSpan.Zero, Force: true));
+            var mari = store.FindPerson(company.Id, ReviewFixtures.MariCode)!;
+            Assert.Equal(new DateOnly(2026, 10, 5), runner.ControlDateFor(mari, period)); // the salary's day, as the search gave it
+
+            // the salary given to nobody: no payout of hers stands, the month's last day
+            var salary = view.Persons[0].Payments.Single(p => !p.IsByHand);
+            workspace.SetPerson(salary, null);
+            Assert.Equal(new DateOnly(2026, 10, 31), runner.ControlDateFor(mari, period));
+
+            // a row the accountant gave her, and a line added by hand: the latest of what stands
+            workspace.SetPerson(view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ"), mari.Id); // the 12th
+            Assert.Equal(new DateOnly(2026, 10, 12), runner.ControlDateFor(mari, period));
+            workspace.AddHandLine(period.Id, mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+            Assert.Equal(new DateOnly(2026, 10, 20), runner.ControlDateFor(mari, period));
+
+            // the batch asks on the same day
+            await runner.RunAsync(period.Id);
+            Assert.Contains(ReviewFixtures.MariCode, residency.Asked);
+            var records = store.Lookups(mari.Id);
+            Assert.Equal(2, records.Count); // the residency and the pension
+            Assert.All(records, r => Assert.Equal(new DateOnly(2026, 10, 20), r.ControlDate));
+
+            // the hand line taken away: the row given to her dates the lookup again
+            workspace.RemoveHandLine(period.Id, workspace.Load(period.Id).Persons[0].Payments.Single(p => p.IsByHand).LineId!.Value);
+            Assert.Equal(new DateOnly(2026, 10, 12), runner.ControlDateFor(mari, period));
+        }
+    }
+
+    [Fact]
+    public void A_row_the_search_found_for_two_persons_dates_nobody_until_the_accountant_names_one()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: true); // a twin of the first person by name: the salary row is theirs both
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new SatellesTSD.Core.Review.ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            var runner = Runner(store, new FakeResidency(), new FakePension());
+            var mari = store.FindPerson(company.Id, ReviewFixtures.MariCode)!;
+            var twin = store.FindPerson(company.Id, ReviewFixtures.TwinCode)!;
+            var shared = view.Unmatched.Payments.Single(p => p.IsShared);
+            Assert.Equal((new DateOnly(2026, 10, 31), new DateOnly(2026, 10, 31)), (runner.ControlDateFor(mari, period), runner.ControlDateFor(twin, period))); // nobody's row dates nobody
+
+            workspace.SetPerson(shared, mari.Id);
+            Assert.Equal((new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 31)), (runner.ControlDateFor(mari, period), runner.ControlDateFor(twin, period)));
+        }
+    }
+
+    [Fact]
     public async Task A_person_outside_the_register_given_a_row_by_hand_is_looked_up_on_its_day_and_a_row_given_nobody_asks_nobody()
     {
         const string otherCode = "39001010008";
