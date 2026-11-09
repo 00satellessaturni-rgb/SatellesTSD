@@ -379,6 +379,40 @@ public class DeclareTests
     }
 
     [Fact]
+    public void No_zero_line_is_built_under_a_code_that_is_no_personal_code_and_one_standing_goes()
+    {
+        // the zero line never passes the review's checks, so the declarer refuses the code itself (decision 142)
+        using var box = Ready(minimum: true);
+        var mariId = box.Mari.Id;
+        Person Mari() => box.Store.Persons(box.Company.Id).Single(p => p.Id == mariId);
+
+        // the zero line drafted while the code was valid (the salary unticked), then the code found wrong: the draft goes
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+        box.Store.UpdatePerson(Mari() with { PersonalCode = "AB123456" }); // past the card, which would refuse it
+        var withdrawn = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(withdrawn.Persons, p => p.PersonId == mariId);
+        Assert.Equal(1, withdrawn.Count(LineChange.Deleted));
+        Assert.Equal((LineChange.Deleted, ReviewChecks.CodeInvalid), (mari.Lines.Single().Change, mari.Lines.Single().Note));
+        Assert.Contains(mari.Problems, p => p.StartsWith($"{ReviewChecks.CodeInvalid}:", StringComparison.Ordinal) && p.Contains("'AB123456'", StringComparison.Ordinal));
+        Assert.Empty(box.Lines);
+
+        // the salary ticked too: refused, and still no zero line
+        box.Workspace.SetDeclare(box.Salary, true);
+        var report = box.Declarer.Build(box.Period.Id);
+        mari = Assert.Single(report.Persons, p => p.PersonId == mariId);
+        Assert.Contains(mari.Problems, p => p.StartsWith($"{PeriodDeclarer.Refused}:", StringComparison.Ordinal) && p.Contains(ReviewChecks.CodeInvalid, StringComparison.Ordinal)); // the salary
+        Assert.Contains(mari.Problems, p => p.StartsWith($"{ReviewChecks.CodeInvalid}:", StringComparison.Ordinal)); // the zero line
+        Assert.Empty(box.Lines);
+
+        // the code corrected: the salary and no zero line beside it, as before
+        box.Store.UpdatePerson(Mari() with { PersonalCode = ReviewFixtures.MariCode });
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal("10", Assert.Single(box.Lines).Line.TypeCode);
+    }
+
+    [Fact]
     public void The_file_is_written_validated_recorded_and_the_lines_follow_the_period_through_its_states()
     {
         using var box = Ready();

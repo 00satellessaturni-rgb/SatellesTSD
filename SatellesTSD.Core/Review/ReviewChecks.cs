@@ -4,8 +4,8 @@ using SatellesTSD.Core.Tax;
 namespace SatellesTSD.Core.Review;
 
 /// <summary>What the review refuses before S8 ever computes a line: the reasons a payment cannot be declared as it
-/// stands — its own (no person, no payee id, residency never checked, no type, another month, an amount that counts
-/// as nothing) and then the engine's (<see cref="PaymentChecks"/>) for the type and the person's facts of the year.</summary>
+/// stands — its own (no person, no payee id, a code that is no personal code, residency never checked, no type, another
+/// month, an amount that counts as nothing, money in, a copied row) and then the engine's (<see cref="PaymentChecks"/>) for the type and the person's facts of the year.</summary>
 public static class ReviewChecks
 {
     public const string NoPerson = "NO_PERSON";
@@ -20,6 +20,20 @@ public static class ReviewChecks
 
     /// <summary>Money that came in (a credit row) is no payout, whatever category it was given (decision 141).</summary>
     public const string MoneyIn = "MONEY_IN";
+
+    /// <summary>The person's code is no Estonian personal code (a foreign identifier in the register's code column, say):
+    /// the line would name a payee e-MTA cannot know, so the payment is refused as such, a residency set by hand
+    /// notwithstanding (decision 142). The card's save refuses the same code under the same name.</summary>
+    public const string CodeInvalid = "CODE_INVALID";
+
+    /// <summary>The person's code when one stands and it is no Estonian personal code (decision 142), else null. The review's
+    /// refusal and the declarer's guard decide by this one test, so no line is ever built under such a code.</summary>
+    public static string? InvalidCode(Person person)
+    {
+        ArgumentNullException.ThrowIfNull(person);
+        var code = person.PersonalCode?.Trim();
+        return !string.IsNullOrEmpty(code) && !Import.PersonalCode.LooksValid(code) ? code : null;
+    }
 
     /// <summary>Whether an amount is in euros: the statement names no currency (the banks' euro accounts), or names the euro.</summary>
     public static bool IsEuro(string? currency) =>
@@ -54,6 +68,11 @@ public static class ReviewChecks
             if (person.PayeeId is null)
             {
                 refusals.Add(new Refusal(NoPayeeId, "The person has neither an Estonian personal code nor an MTA non-resident code."));
+            }
+            else if (InvalidCode(person) is { } invalid)
+            {
+                // the declaration would name the person by this code (Person.PayeeId takes it before the MRR code)
+                refusals.Add(new Refusal(CodeInvalid, $"The person's code '{invalid}' is not an Estonian personal code (eleven digits with a real birth date); correct it on the card, or clear it and give the MTA non-resident code. A residency set by hand does not stand in for it."));
             }
 
             if (person.ResidencyCheckedOn is null)

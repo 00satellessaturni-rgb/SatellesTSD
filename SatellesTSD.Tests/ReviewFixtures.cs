@@ -22,13 +22,14 @@ internal static class ReviewFixtures
     /// <param name="mariPaused">Mari's employment is paused (state 3, Peatatud), with no end: the entry still covers October; paused since 3 August 2026 for Lapsehoolduspuhkus, until 30 June 2027.</param>
     /// <param name="mariRestarted">Mari's contract ended on 15 October 2026 and the next one began on the 16th: two rows of her code in the month.</param>
     /// <param name="mariSecond">Mari has a second valid contract at once: a VÕS leping (600) from 6 October 2026, the day after her salary.</param>
-    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D")
+    /// <param name="jaanCode">Jaan's register code as text, when not his personal code: a foreign identifier in the code column, say.</param>
+    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null)
     {
         List<object?[]> register =
         [
             TorHeaders.All.ToArray<object?>(),
             ["1", 48712219406d, "MAASIKAS", "MARI", mariRestarted ? new DateTime(2026, 10, 16) : new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : mariPaused ? 3 : 2, mariEnded ? "Lõpetatud" : mariPaused ? "Peatatud" : "Kehtiv", mariEnded ? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", mariPaused ? new DateTime(2026, 8, 3) : null, mariPaused ? 2 : null, mariPaused ? "Lapsehoolduspuhkus" : null, mariPaused ? new DateTime(2027, 6, 30) : null, null, null, null, null, 10235688, "Näidis OÜ"],
-            ["2", jaanCodeless ? null : 38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 600, "VÕS leping", 4, "Lõpetatud", new DateTime(2026, 9, 30), null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
+            ["2", jaanCodeless ? null : jaanCode ?? (object)38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 600, "VÕS leping", 4, "Lõpetatud", new DateTime(2026, 9, 30), null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
         ];
         if (mariSecond)
         {
@@ -62,12 +63,12 @@ internal static class ReviewFixtures
         return Tables.Xlsx(("Töötajate loend", register.ToArray(), false), ("LHV", statement.ToArray(), false));
     }
 
-    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D")
+    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null)
     {
         var store = SqliteStore.InMemory();
         var company = store.AddCompany(registryCode, "Näidis OÜ");
         var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency, renter, renterCode, renterDirection);
+        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency, renter, renterCode, renterDirection, jaanCode);
         var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
         store.LinkImport(period.Id, file.Id);
         return (store, company, period, file);

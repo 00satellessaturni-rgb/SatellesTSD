@@ -6,6 +6,7 @@ using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 using SatellesTSD.Core.Tax;
+using SatellesTSD.Core.Xbrl;
 using SatellesTSD.Infrastructure;
 
 namespace SatellesTSD.Tests;
@@ -831,6 +832,136 @@ public class ReviewWorkspaceTests
             var ticked = workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.PersonId).Payments.Single(p => p.Payee == "KATI KASK");
             Assert.Contains(ticked.Checks, c => c.Code == ReviewChecks.MoneyIn); // refused when ticked all the same
         }
+    }
+
+    [Fact]
+    public void A_register_code_that_is_no_personal_code_refuses_the_persons_payments_until_the_card_corrects_it()
+    {
+        // a foreign identifier in the register's code column: stored as it came, so the person stays one with their register row
+        var (store, company, period, _) = ReviewFixtures.Setup(jaanCode: "AB123456");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            ReviewPerson Jaan() => workspace.Load(period.Id).Persons.Single(p => p.Person?.LastName == "TAMM");
+            var jaan = Jaan();
+            Assert.Equal("AB123456", jaan.PersonalCode);
+            workspace.SetDeclare(Assert.Single(jaan.Payments), true); // the checks are computed for declared payments (decision 44)
+            var next = Assert.Single(Jaan().Payments);
+            Assert.Equal([ReviewChecks.CodeInvalid, ReviewChecks.ResidencyNotChecked, ReviewChecks.NotInPeriod, ReviewChecks.NoType], next.Checks.Select(c => c.Code));
+            Assert.Contains("'AB123456'", next.Checks[0].Message);
+
+            // the residency set by hand (an earlier version's card, say) does not stand in for the code; a payment of the month is refused the same
+            store.UpdatePerson(jaan.Person! with { Residency = Residency.NonResident, ResidenceCountry = "LV", ResidencySource = LookupSource.Manual, ResidencyCheckedOn = Today });
+            workspace.AddHandLine(period.Id, jaan.PersonId, new DateOnly(2026, 10, 20), 150m, "Jaan Tamm", category: "Palgad");
+            jaan = Jaan();
+            Assert.Equal(2, jaan.Payments.Count);
+            Assert.All(jaan.Payments, p => Assert.True(p.Declare));
+            Assert.All(jaan.Payments, p => Assert.Contains(ReviewChecks.CodeInvalid, p.Checks.Select(c => c.Code)));
+            Assert.All(jaan.Payments, p => Assert.DoesNotContain(ReviewChecks.ResidencyNotChecked, p.Checks.Select(c => c.Code)));
+            ReviewPayment Hand() => Jaan().Payments.Single(p => p.IsByHand);
+            Assert.Equal([ReviewChecks.CodeInvalid], Hand().Checks.Select(c => c.Code)); // the code is all that stands in the October payment's way
+            var refused = Assert.Single(jaan.Undeclared, u => u.Payment.IsByHand);
+            Assert.Equal((Undeclared.Refused, false), (refused.Reason, refused.ByChoice)); // the review's own error, not the accountant's choice
+            Assert.Contains(ReviewChecks.CodeInvalid, refused.Codes);
+
+            // the MRR code beside it changes nothing: the declaration would still name the person by the code that stands
+            store.UpdatePerson(Jaan().Person! with { MrrCode = "12345678" });
+            Assert.All(Jaan().Payments, p => Assert.Contains(ReviewChecks.CodeInvalid, p.Checks.Select(c => c.Code)));
+
+            // the card refuses to save the code as it is, under the same name, and takes a corrected one or none
+            Assert.Equal(ReviewChecks.CodeInvalid, Assert.Throws<ReviewException>(() => workspace.SavePerson(Jaan().Person! with { Notes = "x" })).Code);
+            workspace.SavePerson(Jaan().Person! with { PersonalCode = ReviewFixtures.JaanCode });
+            jaan = Jaan();
+            Assert.Equal((ReviewFixtures.JaanCode, 2), (jaan.PersonalCode, jaan.Payments.Count)); // the person stays one, with their payments
+            Assert.All(jaan.Payments, p => Assert.DoesNotContain(ReviewChecks.CodeInvalid, p.Blockers.Select(c => c.Code)));
+            Assert.Equal((true, 0), (Hand().Declare, Hand().Checks.Count)); // the October payment can be built now
+            Assert.Equal(1, store.Persons(company.Id).Count(p => p.LastName == "TAMM")); // no second person made from the register row
+            workspace.SavePerson(jaan.Person! with { PersonalCode = null });
+            jaan = Jaan();
+            Assert.Equal(PayeeId.Mrr("12345678"), jaan.Person!.PayeeId); // named by the MRR code now
+            Assert.All(jaan.Payments, p => Assert.DoesNotContain(ReviewChecks.NoPayeeId, p.Blockers.Select(c => c.Code)));
+            Assert.All(jaan.Payments, p => Assert.DoesNotContain(ReviewChecks.CodeInvalid, p.Blockers.Select(c => c.Code)));
+            jaan = Jaan(); // the next load does not write the register's code back: the person is bound to its key
+            Assert.Equal((2, (string?)null, "AB123456"), (jaan.Payments.Count, jaan.Person!.PersonalCode, jaan.PersonalCode)); // the grid shows the register's code where the card has none
+        }
+    }
+
+    [Fact]
+    public void A_wrong_check_digit_is_no_invalid_code()
+    {
+        // the workbook never enforced the check digit (decision 142 keeps that): the shape and the birth date decide
+        var (store, company, period, _) = ReviewFixtures.Setup(jaanCode: "38810140300");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            var jaan = workspace.Load(period.Id).Persons.Single(p => p.Person?.LastName == "TAMM");
+            Assert.Equal("38810140300", jaan.PersonalCode);
+            Assert.False(PersonalCode.ChecksumValid(jaan.PersonalCode));
+            Assert.All(jaan.Payments, p => Assert.DoesNotContain(ReviewChecks.CodeInvalid, p.Blockers.Select(c => c.Code)));
+            Assert.Null(ReviewChecks.InvalidCode(jaan.Person!));
+            Assert.Equal("AB123456", ReviewChecks.InvalidCode(jaan.Person! with { PersonalCode = " AB123456 " }));
+            Assert.Null(ReviewChecks.InvalidCode(jaan.Person! with { PersonalCode = "  " }));
+        }
+    }
+
+    [Fact]
+    public void A_codeless_register_person_is_not_given_a_code_that_is_no_personal_code()
+    {
+        using var store = SqliteStore.InMemory();
+        var company = store.AddCompany("10235688", "Näidis OÜ");
+        TorEntry Entry(string? code) => new(1, "1", code, "JAAN", "TAMM", "LV", new DateOnly(2024, 1, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+        var nameKey = SearchPerson.NameKey("TAMM", "JAAN");
+        var codeless = new MatchPerson(new SearchPerson(nameKey, "TAMM", "JAAN", null), [Entry(null)], Entry(null), 0);
+        var foreign = new MatchPerson(new SearchPerson("AB123456", "TAMM", "JAAN", "AB123456"), [Entry("AB123456")], Entry("AB123456"), 0);
+
+        // October's register wrote no code and the card gave the MRR code; November's writes a foreign identifier in the
+        // code column: the same person, still named by the MRR code — the identifier is not adopted
+        var october = RegisterPersons.Ensure(store, company.Id, codeless);
+        store.UpdatePerson(october with { MrrCode = "12345678" });
+        var november = RegisterPersons.Ensure(store, company.Id, foreign);
+        Assert.Equal(october.Id, november.Id);
+        var stored = Assert.Single(store.Persons(company.Id));
+        Assert.Equal((nameKey, (string?)null, "12345678"), (stored.RegisterKey, stored.PersonalCode, stored.MrrCode));
+        Assert.Equal(october.Id, RegisterPersons.Ensure(store, company.Id, foreign).Id); // and the next load neither
+        Assert.Single(store.Persons(company.Id));
+    }
+
+    [Fact]
+    public void A_codeless_person_one_register_row_stands_for_is_not_handed_to_a_namesake_row_of_the_same_run()
+    {
+        using var store = SqliteStore.InMemory();
+        var company = store.AddCompany("10235688", "Näidis OÜ");
+        TorEntry Entry(string? code) => new(1, "1", code, "JAAN", "TAMM", "EE", new DateOnly(2024, 1, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+        MatchPerson Row(string? code) => new(new SearchPerson(code ?? SearchPerson.NameKey("TAMM", "JAAN"), "TAMM", "JAAN", code), [Entry(code)], Entry(code), 0);
+        var person = RegisterPersons.Ensure(store, company.Id, Row(null)); // a codeless row first
+
+        // a later run lists three namesakes: a foreign identifier, the personal code, another foreign identifier — the
+        // codeless person is the first row's (left codeless) and nobody else's; the others get persons of their own
+        var taken = new HashSet<Guid>();
+        Person Given(string code)
+        {
+            var given = RegisterPersons.Ensure(store, company.Id, Row(code), taken: taken);
+            taken.Add(given.Id);
+            return given;
+        }
+
+        var foreign = Given("AB123456");
+        var coded = Given(ReviewFixtures.JaanCode);
+        var other = Given("CD987654");
+        Assert.Equal(person.Id, foreign.Id);
+        Assert.Null(store.Persons(company.Id).Single(p => p.Id == person.Id).PersonalCode);
+        Assert.NotEqual(person.Id, coded.Id);
+        Assert.Equal((ReviewFixtures.JaanCode, ReviewFixtures.JaanCode), (coded.PersonalCode, coded.RegisterKey));
+        Assert.NotEqual(person.Id, other.Id);
+        Assert.Equal(("CD987654", "CD987654"), (other.PersonalCode, other.RegisterKey)); // bound to its key; the review refuses its payments with CODE_INVALID until the card corrects it
+        Assert.Equal(3, store.Persons(company.Id).Count);
+
+        // the next load, the same way round: the same persons, nobody made
+        taken.Clear();
+        Assert.Equal([person.Id, coded.Id, other.Id], new[] { Given("AB123456").Id, Given(ReviewFixtures.JaanCode).Id, Given("CD987654").Id });
+        Assert.Equal(3, store.Persons(company.Id).Count);
     }
 
     [Fact]

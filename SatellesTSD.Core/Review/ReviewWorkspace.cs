@@ -16,7 +16,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     public const string PeriodNotDraft = "PERIOD_NOT_DRAFT";
     public const string PersonExists = "PERSON_EXISTS";
     public const string NameMissing = "NAME_MISSING";
-    public const string CodeInvalid = "CODE_INVALID";
+    public const string CodeInvalid = ReviewChecks.CodeInvalid; // the card's save and the review's refusal name the fault alike
     public const string LineMissing = "LINE_MISSING";
 
     /// <summary>The source name of the lines added by hand.</summary>
@@ -90,10 +90,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             var known = _store.Persons(company.Id);
             var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+            var taken = new HashSet<Guid>(); // a person one row stands for is not handed to a namesake row too (decision 142)
             foreach (var registerPerson in run.Persons)
             {
-                var person = RegisterPersons.Ensure(_store, company.Id, registerPerson, known, runKeys);
+                var person = RegisterPersons.Ensure(_store, company.Id, registerPerson, known, runKeys, taken);
                 personsByKey[registerPerson.Key] = person;
+                taken.Add(person.Id);
                 if (!known.Any(p => p.Id == person.Id && p.RegisterKey == person.RegisterKey && p.PersonalCode == person.PersonalCode))
                 {
                     known = _store.Persons(company.Id);

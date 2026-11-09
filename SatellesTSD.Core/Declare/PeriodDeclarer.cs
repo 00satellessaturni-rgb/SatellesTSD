@@ -446,6 +446,35 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
         }
 
+        if (ReviewChecks.InvalidCode(person) is { } invalidCode)
+        {
+            // the zero line never passes the review's checks: the same refusal here, so no line is built under a code
+            // e-MTA cannot know (decision 142). A draft standing under it (built before the code was found wrong) goes,
+            // since the export takes every draft; a line on the server stands, nothing is cancelled.
+            problems.Add($"{ReviewChecks.CodeInvalid}: the person's code '{invalidCode}' is not an Estonian personal code; nothing built under it — a draft standing under it is withdrawn, a line on the server stands. Correct the code on the card.");
+            foreach (var source in monthPayments.Select(m => m.Key))
+            {
+                claimed.Add(source);
+                if (!bySource.TryGetValue(source, out var held))
+                {
+                    continue;
+                }
+
+                var reference = references.TryGetValue(source, out var known) ? known.Reference : source;
+                if (held.Status == PaymentStatus.Draft)
+                {
+                    _store.DeleteDraft(held.Id);
+                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = reference, Note = ReviewChecks.CodeInvalid });
+                }
+                else
+                {
+                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = reference, Note = ReviewChecks.CodeInvalid });
+                }
+            }
+
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+        }
+
         var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
         var facts = person.FactsFor(period.Year, share);
         var fromRegisters = person.ResidencySource == LookupSource.Emta || person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;

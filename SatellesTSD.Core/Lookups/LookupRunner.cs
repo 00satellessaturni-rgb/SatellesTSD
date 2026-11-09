@@ -95,11 +95,13 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     {
         var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         var ids = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var taken = new HashSet<Guid>(); // as the review hands them out: one row's person is not a namesake row's too
         foreach (var registerPerson in run.Persons)
         {
-            if (Review.RegisterPersons.Find(persons, registerPerson.Person, runKeys) is { } found)
+            if (Review.RegisterPersons.Find(persons, registerPerson.Person, runKeys, taken) is { } found)
             {
                 ids[registerPerson.Key] = found.Id;
+                taken.Add(found.Id);
             }
         }
 
@@ -400,6 +402,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
         var known = _store.Persons(period.CompanyId);
         var asked = new List<Person>();
+        var taken = new HashSet<Guid>(); // as the review hands them out: one row's person is not a namesake row's too
         foreach (var matchPerson in run.Persons)
         {
             Person ensured;
@@ -407,7 +410,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             {
                 // listed without a code: asked by the code the card gave the store person the row stands for, when there is
                 // one; nobody is made here for a codeless row (the review makes them when the month is opened)
-                var card = Review.RegisterPersons.Find(known, matchPerson.Person, runKeys);
+                var card = Review.RegisterPersons.Find(known, matchPerson.Person, runKeys, taken);
+                if (card is not null)
+                {
+                    taken.Add(card.Id);
+                }
+
                 if (string.IsNullOrWhiteSpace(card?.PersonalCode))
                 {
                     problems.Add($"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
@@ -418,7 +426,8 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             }
             else
             {
-                ensured = Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys);
+                ensured = Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys, taken: taken);
+                taken.Add(ensured.Id);
             }
 
             asked.Add(ensured);

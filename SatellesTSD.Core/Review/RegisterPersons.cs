@@ -12,7 +12,10 @@ public static class RegisterPersons
 {
     /// <param name="runKeys">The register keys of the run the person comes from: a codeless row of these names still in it
     /// is that person's, so a coded namesake beside it is not given the codeless person.</param>
-    public static Person? Find(IReadOnlyList<Person> persons, SearchPerson person, IReadOnlySet<string>? runKeys = null)
+    /// <param name="taken">The store persons this run has already given to another of its rows: a codeless person stays
+    /// codeless when the row's code is no personal code (decision 142), so the fallbacks by names never hand them to a
+    /// namesake row of the same run too — that row gets a person of its own.</param>
+    public static Person? Find(IReadOnlyList<Person> persons, SearchPerson person, IReadOnlySet<string>? runKeys = null, IReadOnlySet<Guid>? taken = null)
     {
         ArgumentNullException.ThrowIfNull(persons);
         ArgumentNullException.ThrowIfNull(person);
@@ -21,6 +24,7 @@ public static class RegisterPersons
             return bound;
         }
 
+        bool Free(Person p) => taken?.Contains(p.Id) != true;
         if (person.PersonalCode is { } code)
         {
             // by the code; else the person a codeless register row of the same names made (bound to that names key), so a
@@ -29,36 +33,39 @@ public static class RegisterPersons
             var nameKey = SearchPerson.NameKey(person.LastName, person.FirstName);
             return persons.FirstOrDefault(p => string.Equals(p.PersonalCode, code, StringComparison.Ordinal))
                 ?? (runKeys?.Contains(nameKey) == true ? null
-                    : persons.FirstOrDefault(p => p.PersonalCode is null && string.Equals(p.RegisterKey, nameKey, StringComparison.Ordinal))
-                        ?? OnePayee(persons, person));
+                    : persons.FirstOrDefault(p => Free(p) && p.PersonalCode is null && string.Equals(p.RegisterKey, nameKey, StringComparison.Ordinal))
+                        ?? OnePayee(persons, person, taken));
         }
 
-        return persons.FirstOrDefault(p => p.PersonalCode is null && SearchPerson.NameKey(p.LastName, p.FirstName) == person.Key) ?? OnePayee(persons, person);
+        return persons.FirstOrDefault(p => Free(p) && p.PersonalCode is null && SearchPerson.NameKey(p.LastName, p.FirstName) == person.Key) ?? OnePayee(persons, person, taken);
     }
 
     /// <summary>The one codeless person made for a rent payee of these names (decision 108), whom the register now lists:
-    /// the same person, given the register's code and kept; two such make none.</summary>
-    private static Person? OnePayee(IReadOnlyList<Person> persons, SearchPerson person)
+    /// the same person, given the register's code and kept; two such make none, and one another row of the run took too.</summary>
+    private static Person? OnePayee(IReadOnlyList<Person> persons, SearchPerson person, IReadOnlySet<Guid>? taken)
     {
         var payees = persons.Where(p => p.PersonalCode is null && PayeePersons.IsPayeeOf(p, person.LastName, person.FirstName)).Take(2).ToList();
-        return payees.Count == 1 ? payees[0] : null;
+        return payees.Count == 1 && taken?.Contains(payees[0].Id) != true ? payees[0] : null;
     }
 
     /// <summary>The store person of a register person, bound to the register key, created when missing.</summary>
     /// <param name="persons">The company's persons as already read, to spare a query; read afresh when null.</param>
     /// <param name="runKeys">The register keys of the run (see <see cref="Find"/>).</param>
-    public static Person Ensure(IStore store, Guid companyId, MatchPerson registerPerson, IReadOnlyList<Person>? persons = null, IReadOnlySet<string>? runKeys = null)
+    /// <param name="taken">The store persons this run has already given to another of its rows (see <see cref="Find"/>).</param>
+    public static Person Ensure(IStore store, Guid companyId, MatchPerson registerPerson, IReadOnlyList<Person>? persons = null, IReadOnlySet<string>? runKeys = null, IReadOnlySet<Guid>? taken = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(registerPerson);
         var key = registerPerson.Key;
-        if (Find(persons ?? store.Persons(companyId), registerPerson.Person, runKeys) is { } found)
+        if (Find(persons ?? store.Persons(companyId), registerPerson.Person, runKeys, taken) is { } found)
         {
-            if (found.PersonalCode is null && registerPerson.Person.PersonalCode is { } code && !string.Equals(found.RegisterKey, key, StringComparison.Ordinal))
+            if (found.PersonalCode is null && PayeePersons.CodeOf(registerPerson.Person.PersonalCode) is { } code && !string.Equals(found.RegisterKey, key, StringComparison.Ordinal))
             {
                 // a codeless person the register now writes with the code: the code is theirs from now on (the payee, the
                 // lookups); the binding to the names stays, so the earlier month still finds them. A person bound to this
-                // very key whose code the accountant cleared on the card keeps it cleared.
+                // very key whose code the accountant cleared on the card keeps it cleared. A code that is no personal code
+                // (a foreign identifier in the column) is not adopted: the person stays named by the MRR code, or by
+                // nothing, and a code cleared on the card stays cleared (decision 142).
                 found = found with { PersonalCode = code };
                 store.UpdatePerson(found);
             }
