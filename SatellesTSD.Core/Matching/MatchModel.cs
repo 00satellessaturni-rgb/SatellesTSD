@@ -136,6 +136,10 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
 
     /// <summary>Register rows whose employer code is not the company's were left out of the run (a shared export, decision 133).</summary>
     public const string OtherEmployer = "OTHER_EMPLOYER";
+
+    /// <summary>A person the card declares as if employed ("kaasa") whom the month's register does not list and who has no
+    /// payment: shown, nothing built (decision 137).</summary>
+    public const string IncludedWithoutRow = "INCLUDED_NO_ROW";
 }
 
 /// <summary>One row of the workbook's "Otsingu kontroll": a statement row with the person it was found for (or none),

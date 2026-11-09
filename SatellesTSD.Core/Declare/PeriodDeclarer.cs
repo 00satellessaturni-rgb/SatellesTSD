@@ -247,6 +247,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             foreach (var reviewPerson in view.Persons.Where(p => !p.IsUnmatched && p.PersonId is { } id && persons.ContainsKey(id)))
             {
+                if (reviewPerson.Register is null && reviewPerson.Payments.Count == 0)
+                {
+                    // "kaasa" on the card, no register row and no payment this month (decision 137): shown in the review, nothing built
+                    problems.Add($"{Included}: {persons[reviewPerson.PersonId!.Value].LastName} {persons[reviewPerson.PersonId!.Value].FirstName}: declared as if employed on the card, but the month's register has no row and no payment was found; no line is built for the person (a line standing from before is undone as usual).");
+                    continue;
+                }
+
                 builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode));
             }
 

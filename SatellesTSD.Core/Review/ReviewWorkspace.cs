@@ -265,6 +265,19 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             persons.Add(Make(null, byId[id], null, Take(id), ProblemsOf(id), catalog, false, TotalsPerType));
         }
 
+        // a person the card declares as if employed ("kaasa") whom the month's register does not list and who has no payment:
+        // shown with the word, nothing built for them (decision 137) — a forgotten "kaasa" declares no minimum for one who left.
+        // Only in a Draft that was searched: before the search the register is not known, and a month declared is read as it was
+        if (run is not null && period.State == PeriodState.Draft)
+        {
+            foreach (var included in storePersons.Where(p => p.Declaration == DeclarationChoice.Include && persons.All(listed => listed.PersonId != p.Id))
+                .OrderBy(p => p.LastName, StringComparer.OrdinalIgnoreCase).ThenBy(p => p.FirstName, StringComparer.OrdinalIgnoreCase))
+            {
+                var said = new MatchProblem(MatchProblem.IncludedWithoutRow, "Declared as if employed on the card (kaasa), but the month's register lists no row for the person and no payment was found: nothing is built this month. Set the card's Deklareerimine to \"reeglite järgi\" if the employment has ended.");
+                persons.Add(Make(null, included, null, [], [said, .. ProblemsOf(included.Id)], catalog, false, TotalsPerType));
+            }
+        }
+
         persons.Add(Make(null, null, null, unmatched, unmatchedProblems, catalog, true, TotalsPerType));
 
         var sources = run?.Sources.Select(s => s.Name).ToList() ?? [];

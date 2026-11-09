@@ -750,6 +750,43 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_kaasa_person_the_register_does_not_list_and_nobody_paid_is_shown_with_the_word_and_nothing_is_built()
+    {
+        using var box = Ready();
+        var kati = box.Workspace.AddPerson(box.Company.Id, "Kati", "Kask", "60001010008", "1");
+        box.Workspace.SavePerson(kati with { Declaration = DeclarationChoice.Include, FundedPensionMember = false }, confirmResidency: true, confirmPension: true); // facts checked: a zero line could be built for her
+
+        // listed in the review with the word, no payments; the build makes no line for her and says so (decision 137)
+        var shown = Assert.Single(box.Workspace.Load(box.Period.Id).Persons, p => p.PersonId == kati.Id);
+        Assert.Empty(shown.Payments);
+        Assert.Null(shown.Register);
+        Assert.Contains(shown.Problems, p => p.Code == MatchProblem.IncludedWithoutRow);
+        var report = box.Declarer.Build(box.Period.Id);
+        Assert.DoesNotContain(report.Persons, p => p.PersonId == kati.Id);
+        Assert.Contains(report.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal) && p.Contains("Kask Kati", StringComparison.Ordinal) && p.Contains("no line is built", StringComparison.Ordinal));
+        Assert.DoesNotContain(report.Persons.SelectMany(p => p.Problems).Concat(report.Problems), p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal)); // no zero line, no minimum
+        Assert.DoesNotContain(box.Lines, l => l.PersonId == kati.Id);
+        Assert.DoesNotContain(new ReportBuilder(box.Store, box.Workspace, box.Declarer).Build(box.Period.Id).Sheet(ReportText.InterimSheet)!.Rows, r => r.Cells.Count > 1 && r.Cells[1].Text == "Kask"); // not a row of the Vahearuanne either
+
+        // a month past Draft, or one not yet searched, lists nobody by the card alone
+        box.Store.SetPeriodState(box.Period.Id, PeriodState.Exported, DateTime.UtcNow);
+        Assert.DoesNotContain(box.Workspace.Load(box.Period.Id).Persons, p => p.PersonId == kati.Id);
+        box.Store.SetPeriodState(box.Period.Id, PeriodState.Draft, DateTime.UtcNow);
+
+        // the card set back to Auto: not listed any more
+        box.Workspace.SavePerson(box.Store.Persons(box.Company.Id).Single(p => p.Id == kati.Id) with { Declaration = DeclarationChoice.Auto });
+        Assert.DoesNotContain(box.Workspace.Load(box.Period.Id).Persons, p => p.PersonId == kati.Id);
+
+        // a "kaasa" person with a hand line is built as before: the word is for the one nobody paid
+        box.Workspace.SavePerson(box.Store.Persons(box.Company.Id).Single(p => p.Id == kati.Id) with { Declaration = DeclarationChoice.Include, FundedPensionMember = false }, confirmResidency: true, confirmPension: true);
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 20), 100m, "Kati Kask", "tasu", "Palgad");
+        var paid = Assert.Single(box.Workspace.Load(box.Period.Id).Persons, p => p.PersonId == kati.Id);
+        Assert.DoesNotContain(paid.Problems, p => p.Code == MatchProblem.IncludedWithoutRow);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Contains(box.Lines, l => l.PersonId == kati.Id);
+    }
+
+    [Fact]
     public void A_refused_salary_whose_sent_line_stands_gets_no_zero_line_beside_it_so_the_minimum_is_never_declared_twice()
     {
         using var box = Ready(minimum: true, salary: 300m);

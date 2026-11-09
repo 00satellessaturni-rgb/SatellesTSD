@@ -82,7 +82,9 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
         header.AddRange([ReportText.SalaryTotal, ReportText.TaxFree, ReportText.Residency, ReportText.Pension, ReportText.ControlDate, ReportText.EmploymentStart, ReportText.EmploymentType, ReportText.EntryState, ReportText.EmploymentEnd]);
         header.AddRange([ReportText.PauseStart, ReportText.PauseEnd, ReportText.DeclarationChoice, ReportText.Undeclared]); // the grid's newer columns, after the workbook's
         rows.Add(ReportRow.Headers(header.ToArray()));
-        foreach (var person in view.Persons.Where(p => !p.IsUnmatched))
+        // a "kaasa" person the month knows nothing of (no register row, no payment; decision 137) is the grid's word to the
+        // accountant, not a row of the report that goes out
+        foreach (var person in view.Persons.Where(p => !p.IsUnmatched && !(p.Register is null && p.Payments.Count == 0)))
         {
             var cells = new List<ReportCell> { ReportCell.Identifier(person.PersonalCode), ReportCell.Of(person.LastName), ReportCell.Of(person.FirstName) };
             cells.AddRange(sources.Select(s => person.SalaryBySource.TryGetValue(s, out var sum) ? ReportCell.Amount(sum) : ReportCell.Empty));
