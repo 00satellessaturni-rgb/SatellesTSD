@@ -17,10 +17,12 @@ public sealed class MatchRunner(IStore store)
         return saved is null ? MatchCatalog.Default : MatchCatalog.Parse(saved);
     }
 
-    /// <summary>The persons and sources a run of the period would see, without running or storing anything.</summary>
-    public (IReadOnlyList<MatchPerson> Persons, IReadOnlyList<MatchSource> Sources, Guid? TorSheetId) Prepare(Guid periodId)
+    /// <summary>The persons and sources a run of the period would see, without running or storing anything, and what the
+    /// run says of the register itself: the rows of another employer left out (decision 133).</summary>
+    public (IReadOnlyList<MatchPerson> Persons, IReadOnlyList<MatchSource> Sources, Guid? TorSheetId, IReadOnlyList<MatchProblem> Problems) Prepare(Guid periodId)
     {
         var period = FindPeriod(periodId);
+        var company = _store.Companies().First(c => c.Id == period.CompanyId);
         var files = _store.PeriodImports(periodId);
         if (files.Count == 0)
         {
@@ -50,16 +52,41 @@ public sealed class MatchRunner(IStore store)
         }
 
         var tor = torSheets.SingleOrDefault();
-        var entries = tor is null ? [] : _store.TorEntries(period.CompanyId, tor.FileId).Where(e => e.SheetId == tor.Id).Select(e => e.Entry).ToList();
-        return (MatchPerson.FromTor(entries, period.Year, period.Month), MatchSource.Order(sources), tor?.Id);
+        var all = tor is null ? [] : _store.TorEntries(period.CompanyId, tor.FileId).Where(e => e.SheetId == tor.Id).Select(e => e.Entry).ToList();
+
+        // a shared export may carry another employer's rows: they are not this company's persons — left out, and said once
+        // (a row without a code is taken as the company's: the import checks the export's employer by the coded rows)
+        var problems = new List<MatchProblem>();
+        var strangers = all.Where(e => IsOtherEmployer(e, company)).ToList();
+        if (strangers.Count > 0)
+        {
+            var employers = strangers.GroupBy(e => e.EmployerCode!.Trim(), StringComparer.Ordinal)
+                .Select(g => $"{g.Key} {g.Select(e => e.EmployerName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? ""}".Trim()).ToList();
+            var rows = strangers.Select(e => e.RowNo).OrderBy(n => n).ToList();
+            var rowText = string.Join(", ", rows.Take(10)) + (rows.Count > 10 ? $" and {rows.Count - 10} more" : "");
+            problems.Add(new MatchProblem(MatchProblem.OtherEmployer,
+                $"Register row{(rows.Count == 1 ? "" : "s")} {rowText} {(rows.Count == 1 ? "is" : "are")} of {(employers.Count == 1 ? "another employer" : "other employers")} ({string.Join("; ", employers)}), not of {company.RegistryCode}: left out, not this company's persons."));
+        }
+
+        var entries = all.Except(strangers).ToList();
+        return (MatchPerson.FromTor(entries, period.Year, period.Month), MatchSource.Order(sources), tor?.Id, problems);
     }
+
+    /// <summary>Whether a register row is another employer's (decision 133): its employer code written and not the company's.</summary>
+    public static bool IsOtherEmployer(TorEntry entry, Company company) =>
+        !string.IsNullOrWhiteSpace(entry.EmployerCode) && !string.Equals(entry.EmployerCode.Trim(), company.RegistryCode.Trim(), StringComparison.Ordinal);
 
     /// <summary>Runs and stores the period's matching.</summary>
     public MatchResult Run(Guid periodId)
     {
         var period = FindPeriod(periodId);
-        var (persons, sources, torSheetId) = Prepare(periodId);
+        var (persons, sources, torSheetId, registerProblems) = Prepare(periodId);
         var result = new PeriodMatcher(Catalog()).Run(period.Year, period.Month, persons, sources);
+        if (registerProblems.Count > 0)
+        {
+            result = result with { Problems = [.. registerProblems, .. result.Problems] };
+        }
+
         _store.SaveMatchRun(periodId, torSheetId, result);
         return result;
     }

@@ -133,6 +133,9 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     public const string DecisionMoved = "DECISION_MOVED";
     /// <summary>The accountant's decision sits on a row that is a copy, and could not be moved (the month is past Draft, or the original has its own).</summary>
     public const string DecisionOnCopy = "DECISION_ON_COPY";
+
+    /// <summary>Register rows whose employer code is not the company's were left out of the run (a shared export, decision 133).</summary>
+    public const string OtherEmployer = "OTHER_EMPLOYER";
 }
 
 /// <summary>One row of the workbook's "Otsingu kontroll": a statement row with the person it was found for (or none),

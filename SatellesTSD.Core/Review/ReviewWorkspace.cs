@@ -52,7 +52,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// statement sheets with a layout), compared by sheet id — not by import time, an older file can be linked after the run.</summary>
     /// <remarks>Without a run, the month is stale as soon as a file to search is linked: lines built then would come from no
     /// search at all (every bank-row line retired). A month of hand lines only, with no such file, needs no search.</remarks>
-    private bool IsStale(StoredMatchRun? storedRun, MatchResult? run, IReadOnlyList<ImportFile> files)
+    private bool IsStale(StoredMatchRun? storedRun, MatchResult? run, IReadOnlyList<ImportFile> files, Company company)
     {
         var sheets = files.SelectMany(f => _store.Sheets(f.Id)).ToList();
         var tor = sheets.Where(s => s.Kind == SheetKind.Tor).Select(s => s.Id).ToHashSet();
@@ -60,6 +60,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         if (storedRun is null || run is null)
         {
             return tor.Count + statements.Count > 0;
+        }
+
+        // a search made before another employer's rows were left out (decision 133) still holds them as persons: searched again
+        if (run.Persons.Any(p => p.Entries.Any(e => MatchRunner.IsOtherEmployer(e, company))))
+        {
+            return true;
         }
 
         var runTor = storedRun.TorSheetId is { } t ? new HashSet<Guid> { t } : [];
@@ -110,7 +116,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var payeesChanged = false;
         var standing = _store.Payments(periodId); // the lines built: a month past Draft gives a payee only to a row they were built from
         var personProblems = new Dictionary<Guid, List<MatchProblem>>(); // what the review itself says of a person, beside the run's problems
-        var unmatchedProblems = new List<MatchProblem>();
+        // what the search said of the register as a whole (another employer's rows left out) is shown with the rows nobody
+        // matched, so it is seen whenever the month is opened, not only in the search's log
+        var unmatchedProblems = run?.Problems.Where(p => p.Code == MatchProblem.OtherEmployer).ToList() ?? [];
         var twinRows = new HashSet<Guid>(); // rent rows whose payee has a hand line of the amount this month: not declared by default
         var twinHandLines = new HashSet<Guid>(); // the hand lines already paired with a row
         List<MatchProblem> ProblemsOf(Guid id) => personProblems.TryGetValue(id, out var list) ? list : personProblems[id] = [];
@@ -267,7 +275,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Company = company,
             Run = run,
             StoredRun = storedRun,
-            RunIsStale = IsStale(storedRun, run, files),
+            RunIsStale = IsStale(storedRun, run, files, company),
             Catalog = catalog,
             Files = files,
             Sources = sources,

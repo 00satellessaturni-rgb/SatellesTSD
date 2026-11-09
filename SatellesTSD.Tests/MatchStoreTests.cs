@@ -1,6 +1,8 @@
 using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Matching;
+using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
+using SatellesTSD.Core.Tax;
 using SatellesTSD.Infrastructure;
 
 namespace SatellesTSD.Tests;
@@ -103,13 +105,59 @@ public class MatchStoreTests
     }
 
     [Fact]
+    public void Another_employers_register_rows_are_left_out_of_the_run_and_said_once()
+    {
+        var store = SqliteStore.InMemory();
+        using (store)
+        {
+            var company = store.AddCompany("10235688", "Näidis OÜ");
+            var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
+            object?[] Row(string torId, double? code, string last, string first, object? employerCode, string employer) =>
+                [torId, code, last, first, new DateTime(2024, 2, 15), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, employerCode, employer];
+            var bytes = Tables.Xlsx(
+                ("Töötajate loend", [TorHeaders.All.ToArray<object?>(),
+                    Row("1", 48712219406d, "MAASIKAS", "MARI", 10235688, "Näidis OÜ"),
+                    Row("2", 38810140309d, "TAMM", "JAAN", null, "Näidis OÜ"), // no code: the company's
+                    Row("3", 60001010008d, "KASK", "PEETER", 99999999, "Teine OÜ"),
+                    Row("4", 50001010006d, "SEPP", "ANTS", 99999999, "Teine OÜ")], false),
+                ("LHV", [LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
+                    ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"],
+                    ["EE497700771001131757", 2, new DateTime(2026, 10, 5), "EE13", "Peeter Kask", "D", -500d, null, "2026100500000002", "palk", "EUR"]], false));
+            var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
+            store.LinkImport(period.Id, file.Id);
+
+            var result = new MatchRunner(store).Run(period.Id);
+
+            Assert.Equal(["48712219406", "38810140309"], result.Persons.Select(p => p.Key)); // the strangers are nobody's persons here
+            Assert.DoesNotContain(result.Hits, h => h.PersonKey == "60001010008");
+            Assert.Contains(result.Hits, h => h.Row.Counterparty == "Peeter Kask" && h.PersonKey is null); // his payment a row nobody matched
+            var said = Assert.Single(result.Problems, p => p.Code == MatchProblem.OtherEmployer);
+            Assert.StartsWith("Register rows 4, 5 are of another employer (99999999 Teine OÜ), not of 10235688: left out", said.Message);
+            Assert.Contains(store.LoadMatchResult(period.Id)!.Problems, p => p.Code == MatchProblem.OtherEmployer); // kept with the run
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var view = workspace.Load(period.Id);
+            Assert.Contains(view.Unmatched.Problems, p => p.Code == MatchProblem.OtherEmployer); // seen whenever the month is opened
+            Assert.False(view.RunIsStale);
+
+            // a search made before the rows were left out still holds the strangers as persons: it is stale until made again
+            var all = store.TorEntries(company.Id, file.Id).Select(e => e.Entry).ToList();
+            var (_, sources, torSheetId, _) = new MatchRunner(store).Prepare(period.Id);
+            store.ClearMatchRun(period.Id);
+            store.SaveMatchRun(period.Id, torSheetId, new PeriodMatcher(MatchCatalog.Default).Run(2026, 10, MatchPerson.FromTor(all, 2026, 10), sources));
+            Assert.True(workspace.Load(period.Id).RunIsStale);
+            new MatchRunner(store).Run(period.Id);
+            Assert.False(workspace.Load(period.Id).RunIsStale);
+        }
+    }
+
+    [Fact]
     public void A_run_must_come_from_the_periods_files_and_rows()
     {
         var (store, company, period, file) = Setup();
         using (store)
         {
             var runner = new MatchRunner(store);
-            var (persons, sources, torSheetId) = runner.Prepare(period.Id);
+            var (persons, sources, torSheetId, _) = runner.Prepare(period.Id);
             var matcher = new PeriodMatcher(MatchCatalog.Default);
 
             var foreignSource = sources[0] with { SheetId = Guid.NewGuid() };
@@ -174,7 +222,7 @@ public class MatchStoreTests
         using (store)
         {
             var runner = new MatchRunner(store);
-            var (persons, sources, torSheetId) = runner.Prepare(period.Id);
+            var (persons, sources, torSheetId, _) = runner.Prepare(period.Id);
             var result = new PeriodMatcher(MatchCatalog.Default).Run(2026, 10, persons, sources);
             store.SaveMatchCatalog(MatchCatalog.Default.ToJson().Replace("\"Laenud\": \"*laen*\"", "\"Laenud\": \"*laen*,*võlg*\"")); // another catalog is in force now
 
