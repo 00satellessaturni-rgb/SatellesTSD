@@ -41,33 +41,41 @@ public sealed class ExcelTableReader : ITableReader
         {
             var sheets = new List<SheetTable>();
             var index = 0;
-            do
+            try
             {
-                var rows = new List<IReadOnlyList<Cell>>();
-                while (reader.Read())
+                do
                 {
-                    var cells = new List<Cell>(reader.FieldCount);
-                    for (var i = 0; i < reader.FieldCount; i++)
+                    var rows = new List<IReadOnlyList<Cell>>();
+                    while (reader.Read())
                     {
-                        cells.Add(Convert(reader.GetValue(i)));
+                        var cells = new List<Cell>(reader.FieldCount);
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            cells.Add(Convert(reader.GetValue(i)));
+                        }
+
+                        while (cells.Count > 0 && cells[^1].Kind == CellKind.Empty)
+                        {
+                            cells.RemoveAt(cells.Count - 1);
+                        }
+
+                        rows.Add(cells);
                     }
 
-                    while (cells.Count > 0 && cells[^1].Kind == CellKind.Empty)
+                    while (rows.Count > 0 && rows[^1].Count == 0)
                     {
-                        cells.RemoveAt(cells.Count - 1);
+                        rows.RemoveAt(rows.Count - 1);
                     }
 
-                    rows.Add(cells);
+                    sheets.Add(new SheetTable(index++, reader.Name, rows, !string.Equals(reader.VisibleState, "visible", StringComparison.OrdinalIgnoreCase)));
                 }
-
-                while (rows.Count > 0 && rows[^1].Count == 0)
-                {
-                    rows.RemoveAt(rows.Count - 1);
-                }
-
-                sheets.Add(new SheetTable(index++, reader.Name, rows, !string.Equals(reader.VisibleState, "visible", StringComparison.OrdinalIgnoreCase)));
+                while (reader.NextResult());
             }
-            while (reader.NextResult());
+            catch (Exception e) when (e is not ImportException)
+            {
+                // a damaged sheet is this file's failure, named as such, so the other files of a batch are still imported
+                throw new ImportException($"{fileName} could not be read (sheet {index + 1}): {e.Message}", e);
+            }
 
             return new SourceWorkbook(fileName, format, sheets);
         }

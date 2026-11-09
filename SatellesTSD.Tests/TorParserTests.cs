@@ -177,6 +177,31 @@ public class TorParserTests
     }
 
     [Fact]
+    public void A_row_without_an_employer_code_beside_coded_rows_is_not_another_employer()
+    {
+        var sheet = Tables.Sheet(
+            TorHeaders.All.ToArray(),
+            Full("1", "48712219406", "MAASIKAS", "MARI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "10235688", "Näidis OÜ"),
+            Full("2", "38810140309", "TAMM", "JAAN", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "10235688", "Näidis OÜ"),
+            Full("3", "60001010008", "KASK", "KATI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Näidis OÜ"));
+        var tor = TorParser.Parse(sheet, TorParser.Detect(sheet, out _)!);
+        Assert.DoesNotContain(tor.Problems, p => p.Code == TorParser.SeveralEmployers);
+        Assert.Equal(["10235688"], tor.EmployerCodes);
+
+        // the names count only when no row has a code: a spelling apart is one employer, another name two
+        var sameName = Tables.Sheet(
+            TorHeaders.All.ToArray(),
+            Full("1", "48712219406", "MAASIKAS", "MARI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Näidis OÜ"),
+            Full("2", "38810140309", "TAMM", "JAAN", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "NÄIDIS OÜ"));
+        Assert.DoesNotContain(TorParser.Parse(sameName, TorParser.Detect(sameName, out _)!).Problems, p => p.Code == TorParser.SeveralEmployers);
+        var twoNames = Tables.Sheet(
+            TorHeaders.All.ToArray(),
+            Full("1", "48712219406", "MAASIKAS", "MARI", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Näidis OÜ"),
+            Full("2", "38810140309", "TAMM", "JAAN", "01.01.2020", "1", "Tööleping", "2", "Kehtiv", "", "", "Teine OÜ"));
+        Assert.Contains(TorParser.Parse(twoNames, TorParser.Detect(twoNames, out _)!).Problems, p => p.Code == TorParser.SeveralEmployers);
+    }
+
+    [Fact]
     public void A_tor_header_key_forgives_spacing_and_case_but_the_statement_layouts_do_not()
     {
         Assert.Equal(TorHeaders.Key("Tööandja /Tegeliku tööandja nimetus"), TorHeaders.Key("  TÖÖANDJA / TEGELIKU  TÖÖANDJA NIMETUS "));

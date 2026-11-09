@@ -99,6 +99,7 @@ public sealed class CalculatorDialog : FieldDialog
         Field("", compute);
         Field("", _output);
         Buttons();
+        AcceptButton = compute; // Enter computes; Esc and the buttons close
         _residency.SelectedIndexChanged += (_, _) =>
         {
             // a type of the other residency cannot stand; a type that fits is left as chosen

@@ -199,4 +199,17 @@ public class PeriodPipelineTests
             Assert.Null(Record.Exception(() => declarer.Build(november.Id)));
         }
     }
+
+    [Fact]
+    public void A_hidden_sheet_is_read_and_said()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var bytes = Tables.Xlsx(("LHV", [LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(), ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"]], true));
+            var outcome = new PeriodPipeline(store, ReviewFixtures.Importer).ImportFile(period.Id, "peidetud.xlsx", bytes);
+            Assert.True(outcome.Succeeded, outcome.Error);
+            Assert.Contains(outcome.Messages, m => m.StartsWith("sheet 'LHV'", StringComparison.Ordinal) && m.Contains("hidden", StringComparison.Ordinal));
+        }
+    }
 }

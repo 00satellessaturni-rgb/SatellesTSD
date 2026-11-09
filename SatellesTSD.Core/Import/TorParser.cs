@@ -285,7 +285,9 @@ public static class TorParser
                 pause.Reason));
         }
 
-        var employers = entries.Select(e => e.EmployerCode ?? e.EmployerName).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().ToList();
+        // counted by code; by name only when no row has a code (a row without a code beside coded rows is not another employer)
+        var codes = entries.Select(e => e.EmployerCode).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct().ToList();
+        var employers = codes.Count > 0 ? codes : entries.Select(e => e.EmployerName).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (employers.Count > 1)
         {
             problems.Add(new ImportProblem(null, SeveralEmployers, "The export names several employers: " + string.Join(", ", employers) + "."));

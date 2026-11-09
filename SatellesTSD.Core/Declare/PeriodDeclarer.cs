@@ -113,7 +113,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         }
 
         var days = covered.Count(c => c);
-        return days == covered.Length ? 1m : Math.Min(1m, Math.Round(days / 30m, 4));
+        return days == covered.Length ? 1m : Math.Min(1m, days / 30m); // exact: the due is rounded to cents once, from kuumäär × days / 30
     }
 
     /// <summary>The standing lines of the period with their person and the feedback's last word.</summary>
@@ -132,6 +132,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             })
             .ToList();
     }
+
+    /// <summary>Whether a payment of this type carries the social-tax minimum for this person, their A1 case applied (the
+    /// engine's rule); the pension fact, which the engine wants known, has no say in it and is given as "not a member".</summary>
+    private static bool CarriesMinimumFor(PaymentType type, Person person, int year) =>
+        EffectiveFlags.Of(type, person.FactsFor(year) with { FundedPensionMember = false, PensionRate = null }).SocialTaxMinimum;
+
+    /// <summary>The earlier of two days, either missing.</summary>
+    private static DateOnly? Earlier(DateOnly? first, DateOnly? second) => first is null ? second : second is null ? first : first < second ? first : second;
 
     /// <summary>The cut the period's drafts were built in (the minimum's zero line belongs to both, so it says nothing);
     /// null without a draft that says.</summary>
@@ -392,7 +400,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
-            && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed)
+            && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed
+            && CarriesMinimumFor(zeroType, person, period.Year)) // the person's A1 case applied: a foreign A1 carries no Estonian social tax, so no minimum and no zero line
         {
             var zeroSource = MinimumKey(person.Id);
             monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
@@ -408,6 +417,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             var unmet = person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
                 ? zeroTypeId is null ? " No zero line: no employment type is known (neither the register nor the card's TÖR type)."
                 : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? $" No zero line: employment type {zeroTypeId} carries no minimum."
+                : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? " No zero line: the person's A1 case carries no Estonian social tax."
                 : ""
                 : "";
             problems.Add($"{Included}: declared as if employed (the person card's choice); the register has no valid employment for the month.{unmet}");
@@ -431,11 +441,19 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
         var facts = person.FactsFor(period.Year, share);
-        if (person.FactsControlDate is { } asked && (asked.Year != period.Year || asked.Month != period.Month)
-            && (person.ResidencySource == LookupSource.Emta || person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived))
+        var fromRegisters = person.ResidencySource == LookupSource.Emta || person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
+        if (fromRegisters && person.FactsControlDate is { } asked && (asked.Year != period.Year || asked.Month != period.Month))
         {
             // a note, not a refusal: the facts stand as the registers said them for that day; this month may say otherwise
             problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.");
+        }
+        else if (fromRegisters && person.FactsControlDate is null
+            && Earlier(person.ResidencySource == LookupSource.Emta ? person.ResidencyCheckedOn : null, person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived ? person.PensionCheckedOn : null) is { } checkedOn
+            && checkedOn < new DateOnly(period.Year, period.Month, 1))
+        {
+            // a person looked up before the control date was kept (schema v9): the day of the check stands in — the registers
+            // are asked after the month, so only a check before the month's first day is of another month for sure
+            problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was checked on {checkedOn:dd.MM.yyyy}, before this month; ask the registers for this month (Päringud) if they may have changed.");
         }
 
         if (facts.Residency == Residency.NonResident && string.IsNullOrWhiteSpace(facts.ResidenceCountry))

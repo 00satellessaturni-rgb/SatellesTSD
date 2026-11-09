@@ -260,4 +260,21 @@ public class MonthAllocatorTests
         Assert.Equal(700m, month.ExemptionLeft);
         Assert.Null(month.TopUpKey);
     }
+
+    [Fact]
+    public void A_zero_rate_payment_leaves_the_months_exemption_to_the_taxed_ones()
+    {
+        var treaty = new PayeeTaxFacts(Residency.NonResident, ResidenceCountry: "LT", BasicExemptionApplied: true, TreatyIncomeTaxRate: 0m);
+        var month = Allocator.Allocate([Pay("fee", PaymentTypes.Get("123"), 500m, 5), Pay("pay", PaymentTypes.Get("120"), 1000m, 20)], treaty);
+        Assert.Equal(0m, month.Payments[0].Result.ExemptionUsed); // the earlier 0 % fee
+        Assert.Equal(700m, month.Payments[1].Result.ExemptionUsed); // the 22 % salary gets the whole month
+    }
+
+    [Fact]
+    public void The_minimum_due_for_a_part_of_the_month_is_rounded_once_to_the_cent()
+    {
+        var facts = PayeeTaxFacts.ResidentEmployee() with { SocialTaxMinimumShare = 10m / 30m };
+        var month = Allocator.Allocate([Pay("z", Salary, 0m, 31, facts: facts)], facts);
+        Assert.Equal(295.33m, month.Payments[0].Result.SocialTaxMinimumIncrease); // 886 × 10 / 30, not 886 × 0.3333 = 295.30
+    }
 }

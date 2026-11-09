@@ -122,6 +122,11 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
                 continue;
             }
 
+            if (sheet.Hidden)
+            {
+                messages.Add($"{label}: the sheet is hidden in the workbook; it was read all the same.");
+            }
+
             if (sheet.Tor is { } tor && TorParser.CheckEmployer(tor, company.RegistryCode) is { } mismatch)
             {
                 messages.Add($"{label}: {mismatch.Message}");

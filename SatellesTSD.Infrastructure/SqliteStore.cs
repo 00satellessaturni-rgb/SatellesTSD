@@ -42,7 +42,7 @@ public sealed partial class SqliteStore : IStore
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, ForeignKeys = true, Pooling = false }.ToString());
         connection.Open();
-        var store = new SqliteStore(connection);
+        var store = new SqliteStore(connection) { _openedPath = Path.GetFullPath(path) };
         try
         {
             store.BackUpBeforeUpgrade(path);
@@ -832,14 +832,34 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException($"The store is at schema version {version}, newer than this build ({SchemaVersion}).");
         }
 
-        for (var step = version; step < Math.Min(SchemaVersion, upTo); step++)
+        var target = Math.Min(SchemaVersion, upTo);
+        if (version >= target)
         {
-            using var tx = Tx();
+            return;
+        }
+
+        // every step in one transaction: a failure half-way leaves the file at the version it was, never between two —
+        // so the copy the next start sets aside (before-v<N>) is always a true pre-upgrade store
+        using var tx = Tx();
+        for (var step = version; step < target; step++)
+        {
+            if (FailMigrationForTests is { } fail && fail.Step == step && string.Equals(fail.Path, _openedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"migration step {step + 1} failed (a test's doing).");
+            }
+
             Exec(Migrations[step]);
             Exec("INSERT INTO schema_version (version) VALUES ($v)", ("$v", step + 1));
-            tx.Commit();
         }
+
+        tx.Commit();
     }
+
+    private string? _openedPath;
+
+    /// <summary>A test seam: the file (full path) and the migration step (0-based) made to fail, so the one-transaction
+    /// upgrade is proved; null in the program, and other stores are never touched by it.</summary>
+    internal static (string Path, int Step)? FailMigrationForTests;
 
     /// <summary>Raw SQL for the tests (a row the way an older build wrote it, a version check); not part of the store's surface.</summary>
     internal int ExecuteRaw(string sql, params (string Name, object? Value)[] parameters) => Exec(sql, parameters);

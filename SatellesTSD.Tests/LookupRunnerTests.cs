@@ -56,8 +56,20 @@ public class LookupRunnerTests
         return (store, company, period);
     }
 
-    private static LookupRunner Runner(SqliteStore store, FakeResidency residency, FakePension pension, LookupOptions? options = null) =>
-        new(store, residency, pension, options ?? new LookupOptions(TimeSpan.Zero));
+    private static LookupRunner Runner(SqliteStore store, FakeResidency residency, FakePension pension, LookupOptions? options = null, TimeProvider? clock = null) =>
+        new(store, residency, pension, options ?? new LookupOptions(TimeSpan.Zero), clock);
+
+    private sealed class FixedClock(DateTime at) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(at, DateTimeKind.Utc), TimeSpan.Zero);
+
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    private sealed class CancellingPension : IPensionLookup
+    {
+        public Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default) => throw new OperationCanceledException();
+    }
 
     [Fact]
     public void The_control_date_is_the_latest_payout_of_the_month_and_never_later_than_its_last_day()
@@ -485,6 +497,88 @@ public class LookupRunnerTests
             Assert.Contains(otherCode, residency.Asked);
             Assert.DoesNotContain("49001010008", residency.Asked);
             Assert.Equal(new DateOnly(2026, 10, 12), runner.ControlDateFor(peeter, period));
+        }
+    }
+
+    [Fact]
+    public async Task A_register_person_listed_without_a_code_is_asked_by_the_code_on_the_card()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup(jaanCodeless: true);
+        using (store)
+        {
+            // the person the codeless register row made (bound to its names key), given the code on the card
+            var jaan = store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", null) with { RegisterKey = SearchPerson.NameKey("TAMM", "JAAN") });
+            store.UpdatePerson(jaan with { PersonalCode = ReviewFixtures.JaanCode });
+            new MatchRunner(store).Run(period.Id);
+            var residency = new FakeResidency { Answers = { [ReviewFixtures.MariCode] = LookupResult<ResidencyFinding>.Found(Resident(), null), [ReviewFixtures.JaanCode] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { [ReviewFixtures.MariCode] = LookupResult<PensionFinding>.Found(NotJoined, null), [ReviewFixtures.JaanCode] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+
+            var report = await Runner(store, residency, pension).RunAsync(period.Id);
+
+            Assert.Contains(ReviewFixtures.JaanCode, report.Persons.Select(p => p.PersonalCode));
+            Assert.DoesNotContain(report.Problems, p => p.StartsWith(LookupRunner.Skipped, StringComparison.Ordinal));
+            Assert.Equal(LookupSource.Emta, store.FindPerson(company.Id, ReviewFixtures.JaanCode)!.ResidencySource);
+        }
+    }
+
+    [Fact]
+    public async Task A_cancel_between_the_two_questions_leaves_no_stale_not_a_member_on_a_person_now_resident()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta, FundedPensionMember = false, PensionSource = LookupSource.Derived });
+            var residency = new FakeResidency { Answers = { ["38810140309"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var runner = new LookupRunner(store, residency, new CancellingPension(), new LookupOptions(TimeSpan.Zero));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runner.RunAsync(period.Id));
+
+            var person = store.FindPerson(company.Id, "38810140309")!;
+            Assert.Equal((Residency.Resident, (bool?)null, LookupSource.Unknown), (person.Residency, person.FundedPensionMember, person.PensionSource)); // the inference went with the residency it followed from
+        }
+    }
+
+    [Fact]
+    public async Task A_resident_now_whose_pension_answer_comes_is_a_member_with_nothing_said_of_the_reset()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta, FundedPensionMember = false, PensionSource = LookupSource.Derived });
+            var residency = new FakeResidency { Answers = { ["38810140309"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["38810140309"] = LookupResult<PensionFinding>.Found(Member(0.02m), null) } };
+
+            var report = await Runner(store, residency, pension).RunAsync(period.Id);
+
+            var outcome = Assert.Single(report.Persons);
+            Assert.DoesNotContain(outcome.Problems, p => p.StartsWith(LookupRunner.Reset, StringComparison.Ordinal)); // the inference went, the answer came: nothing to say
+            var person = store.FindPerson(company.Id, "38810140309")!;
+            Assert.Equal((Residency.Resident, true, 0.02m, LookupSource.Pensionikeskus), (person.Residency, person.FundedPensionMember, person.PensionRate, person.PensionSource));
+        }
+    }
+
+    [Fact]
+    public async Task A_reused_answer_keeps_the_day_it_was_given()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            await Runner(store, residency, pension).RunAsync(period.Id);
+            var first = store.FindPerson(company.Id, "48712219406")!;
+            var day = store.Lookups(first.Id).Select(r => DateOnly.FromDateTime(r.CheckedAt)).Distinct().Single();
+            Assert.Equal((day, day), (first.ResidencyCheckedOn, first.PensionCheckedOn)); // the day the answers were given
+
+            // the answers given weeks ago (the records' stamps moved back), the same month asked again: they are reused, and so is their day
+            var given = new DateOnly(2026, 10, 20);
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at", ("$at", "2026-10-20T09:00:00.000Z"));
+            var again = await Runner(store, residency, pension).RunAsync(period.Id);
+            Assert.Contains(again.Persons.Single().Steps, s => s.Contains("reused", StringComparison.Ordinal));
+            Assert.Single(residency.Asked);
+            var person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((given, given), (person.ResidencyCheckedOn, person.PensionCheckedOn));
         }
     }
 }

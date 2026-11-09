@@ -35,7 +35,7 @@ public sealed class CsvTableReader : ITableReader
     {
         ArgumentNullException.ThrowIfNull(content);
         var (text, encodingName) = Decode(content, _fallback);
-        var delimiter = _delimiter ?? SniffDelimiter(FirstLines(text, 5));
+        var delimiter = _delimiter ?? SniffDelimiter(FirstLines(text, StatementParser.DefaultHeaderSearchRows)); // as deep as the header is looked for: a title block does not outvote the table
         var rows = ParseRecords(text, delimiter, out var unterminated);
         var sheet = new SheetTable(0, Path.GetFileNameWithoutExtension(fileName), rows);
         var warnings = unterminated

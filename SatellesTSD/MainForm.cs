@@ -477,6 +477,7 @@ public sealed class MainForm : Form
 
         // the new version reads the settings and opens the store when it starts: both are let go of just before
         var storePath = _services?.StorePath;
+        CommitPendingNote(); // a note being typed is saved before the update may close the window
         using var dialog = new UpdateDialog(ExePath, _updateCheck.Folder, release, CurrentVersion, fromStart, () =>
         {
             KeepLayout(); // the new version opens as this one was left
@@ -1081,6 +1082,7 @@ public sealed class MainForm : Form
 
     private void OpenStore(string path)
     {
+        CommitPendingNote(); // a note being typed goes to the store it was typed for, before that store closes
         if (_personPanel.IsDirty)
         {
             ResolveDirtyPanel(); // against the store it was typed for, before that store closes
@@ -1191,7 +1193,16 @@ public sealed class MainForm : Form
             return null;
         }
 
-        _period = _services.Store.GetOrCreatePeriod(company.Id, key.Year, key.Month);
+        try
+        {
+            _period = _services.Store.GetOrCreatePeriod(company.Id, key.Year, key.Month);
+        }
+        catch (Exception e)
+        {
+            Fail(e); // said in the window, not the crash handler's; the callers stop on null
+            return null;
+        }
+
         return _period;
     }
 
@@ -1341,6 +1352,7 @@ public sealed class MainForm : Form
 
     private void ReloadView(Guid? keepPerson = null, PaymentKey? keepPayment = null)
     {
+        CommitPendingNote(); // a Märkus being typed is saved before the rows go
         if (_busy)
         {
             return; // the store belongs to the run until it ends; the run's end reloads
@@ -1919,24 +1931,32 @@ public sealed class MainForm : Form
 
         if (employer is not null && shownCode != employer.RegistryCode)
         {
-            var exists = services.Store.FindCompany(employer.RegistryCode) is not null;
-            if (HasCompany && !Confirm($"{UiText.ImportOtherEmployer}\n{employer.Name} ({employer.RegistryCode})\n\n{(exists ? UiText.ImportSwitchToExisting : UiText.ImportSwitchToNew)}", UiText.ImportFiles))
+            try
             {
+                var exists = services.Store.FindCompany(employer.RegistryCode) is not null;
+                if (HasCompany && !Confirm($"{UiText.ImportOtherEmployer}\n{employer.Name} ({employer.RegistryCode})\n\n{(exists ? UiText.ImportSwitchToExisting : UiText.ImportSwitchToNew)}", UiText.ImportFiles))
+                {
+                    return;
+                }
+
+                if (_personPanel.IsDirty)
+                {
+                    ResolveDirtyPanel();
+                }
+
+                var (company, created) = services.Pipeline.EnsureCompany(employer);
+                Log($"{(created ? UiText.CompanyCreated : UiText.CompanyTaken)}: {company.Name} ({company.RegistryCode})");
+                // the combos are filled afresh from the settings: the company found and the month chosen stay what they are
+                _settings.LastCompany = company.RegistryCode;
+                _settings.LastYear = month.Year;
+                _settings.LastMonth = month.Month;
+                FillCompanies();
+            }
+            catch (Exception e)
+            {
+                Fail(e);
                 return;
             }
-
-            if (_personPanel.IsDirty)
-            {
-                ResolveDirtyPanel();
-            }
-
-            var (company, created) = services.Pipeline.EnsureCompany(employer);
-            Log($"{(created ? UiText.CompanyCreated : UiText.CompanyTaken)}: {company.Name} ({company.RegistryCode})");
-            // the combos are filled afresh from the settings: the company found and the month chosen stay what they are
-            _settings.LastCompany = company.RegistryCode;
-            _settings.LastYear = month.Year;
-            _settings.LastMonth = month.Month;
-            FillCompanies();
         }
 
         if (!(_view?.Editable ?? true))
@@ -2078,7 +2098,17 @@ public sealed class MainForm : Form
 
         var services = _services;
         var period = _period;
-        var fresh = services.Store.Persons(person.CompanyId).FirstOrDefault(p => p.Id == person.Id) ?? person;
+        Person fresh;
+        try
+        {
+            fresh = services.Store.Persons(person.CompanyId).FirstOrDefault(p => p.Id == person.Id) ?? person;
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return;
+        }
+
         ShowProgress(UiText.LookupOne($"{fresh.LastName} {fresh.FirstName}"), null, null);
         await RunCancellableAsync(token => services.Pipeline.LookUpAsync(fresh, period, token), LogOutcome);
         ReloadView(person.Id);
@@ -2162,8 +2192,23 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>A note's edit still open in the payments grid is committed (CellValueChanged → OnPaymentEdited), so a reload
+    /// or the busy switch to read-only does not drop what was typed. Nothing while the grid is being filled.</summary>
+    private void CommitPendingNote()
+    {
+        if (!_filling && _paymentsGrid.IsCurrentCellInEditMode)
+        {
+            _paymentsGrid.EndEdit();
+        }
+    }
+
     private void SetBusy(bool busy)
     {
+        if (busy && !_busy)
+        {
+            CommitPendingNote();
+        }
+
         var wasBusy = _busy;
         _busy = busy;
         UpdateState();

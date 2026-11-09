@@ -368,4 +368,13 @@ public class TaxEngineTests
 
         Assert.Equal(PaymentTypes.All.Count, PaymentTypes.All.Select(t => t.Code).Distinct().Count());
     }
+
+    [Fact]
+    public void A_payment_taxed_at_zero_by_a_treaty_takes_nothing_from_the_exemption()
+    {
+        var exempt = new PayeeTaxFacts(Residency.NonResident, ResidenceCountry: "LT", BasicExemptionApplied: true, TreatyIncomeTaxRate: 0m);
+        var r = Engine.Calculate(new TaxInput(PaymentTypes.Get("123"), 1000m, false, 700m), exempt);
+        Assert.Equal(0m, r.IncomeTax);
+        Assert.Equal(0m, r.ExemptionUsed); // nothing to exempt at 0 %: the month's pool is left to the taxed payments
+    }
 }

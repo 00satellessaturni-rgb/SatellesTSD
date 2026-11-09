@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Reflection;
 using AngleSharp.Html.Parser;
 using SatellesTSD.Core.Lookups;
 
@@ -9,10 +10,21 @@ namespace SatellesTSD.Infrastructure.Lookups;
 /// the workbook's patience (five tries, a second apart).</summary>
 public static class LookupHttp
 {
-    public const string UserAgent = "SatellesTSD/0.1 (accounting software; one query per person)"; // headers must be ASCII
+    public static readonly string UserAgent = $"SatellesTSD/{ProgramVersion()} (accounting software; one query per person)"; // headers must be ASCII
     public const int Tries = 5;
     public static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>The program's own version (the entry assembly's informational version without its build suffix), "0" in a
+    /// test host; letters and digits only, as a header wants.</summary>
+    private static string ProgramVersion()
+    {
+        var version = System.Reflection.Assembly.GetEntryAssembly()?.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0";
+        var plus = version.IndexOf('+');
+        version = plus >= 0 ? version[..plus] : version;
+        var ascii = new string(version.Where(c => c < 128 && !char.IsWhiteSpace(c)).ToArray());
+        return ascii.Length == 0 ? "0" : ascii;
+    }
 
     /// <summary>A client of its own, with a cookie jar, for one site.</summary>
     public static HttpClient Create(TimeSpan? timeout = null)

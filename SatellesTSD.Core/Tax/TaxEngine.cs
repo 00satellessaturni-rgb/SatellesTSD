@@ -91,7 +91,7 @@ public readonly record struct EffectiveFlags(
         }
 
         var exemption = ExemptionKind.None;
-        if (incomeTaxRate is not null && type.BasicExemptionAllowed && payee.BasicExemptionApplied)
+        if (incomeTaxRate is > 0m && type.BasicExemptionAllowed && payee.BasicExemptionApplied) // a payment taxed at 0 % (a treaty rate) has nothing to exempt: the month's pool is left to the taxed ones
         {
             exemption = payee.PensionAgeThisYear ? ExemptionKind.Mvt650 : ExemptionKind.Mvt610;
         }

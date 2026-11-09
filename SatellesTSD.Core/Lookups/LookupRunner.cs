@@ -194,6 +194,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
         current = Fresh(current);
         bool isResident;
+        var derivedGone = false;
         if (current.ResidencySource == LookupSource.Manual)
         {
             // the accountant's word stands; the register's answer, when there is one, is only compared with it
@@ -216,7 +217,19 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             // register's to answer (a non-resident's follows, the accountant's is kept), else when Pensionikeskus has answered —
             // so a pension answer that fails leaves the earlier month's date, and a later build says so
             var pensionAsked = isResident && current.PensionSource != LookupSource.Manual;
-            current = current with { Residency = isResident ? Residency.Resident : Residency.NonResident, ResidencyCheckedOn = Today(), ResidencySource = LookupSource.Emta, FactsControlDate = pensionAsked ? current.FactsControlDate : controlDate };
+            // "not a member" that only ever followed from non-residency goes with the residency, in the same write: a cancel
+            // or a failure before Pensionikeskus answers leaves the pension unknown, never the stale inference
+            derivedGone = isResident && current.PensionSource == LookupSource.Derived;
+            current = current with
+            {
+                Residency = isResident ? Residency.Resident : Residency.NonResident,
+                ResidencyCheckedOn = CheckedOn(residencyRecord!), // the day the answer was given, also when an answer of the month is reused
+                ResidencySource = LookupSource.Emta,
+                FactsControlDate = pensionAsked ? current.FactsControlDate : controlDate,
+                FundedPensionMember = derivedGone ? null : current.FundedPensionMember,
+                PensionRate = derivedGone ? null : current.PensionRate,
+                PensionSource = derivedGone ? LookupSource.Unknown : current.PensionSource,
+            };
             _store.UpdatePerson(current);
             steps.Add($"residency {(isResident ? "resident" : "non-resident")}");
         }
@@ -226,13 +239,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         {
             var derived = new PensionFinding(PensionStatus.NotJoined, null, null, []);
             var existing = _options.Force ? null : _store.LatestLookup(current.Id, LookupKind.Pension, controlDate);
-            if (existing is null || existing.Source != LookupSource.Derived || existing.PersonalCode != code)
-            {
-                _store.AddLookup(new LookupRecord(Guid.Empty, current.Id, LookupKind.Pension, LookupSource.Derived, default, controlDate, JsonSerializer.Serialize(derived, Json), null, null, "not asked: a non-resident", code));
-            }
+            var derivedRecord = existing is not null && existing.Source == LookupSource.Derived && existing.PersonalCode == code
+                ? existing
+                : _store.AddLookup(new LookupRecord(Guid.Empty, current.Id, LookupKind.Pension, LookupSource.Derived, default, controlDate, JsonSerializer.Serialize(derived, Json), null, null, "not asked: a non-resident", code));
 
             steps.Add("pension not asked: a non-resident");
-            ApplyPension(current, derived, LookupSource.Derived, controlDate, steps, problems);
+            ApplyPension(current, derived, LookupSource.Derived, controlDate, CheckedOn(derivedRecord), steps, problems);
             return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
         }
 
@@ -246,17 +258,25 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             {
                 // "not a member" was only ever inferred from non-residency; a resident's membership is unknown until Pensionikeskus answers
                 _store.UpdatePerson(current with { FundedPensionMember = null, PensionRate = null, PensionSource = LookupSource.Unknown });
+            }
+
+            if (derivedGone || current.PensionSource == LookupSource.Derived)
+            {
+                // said only now that the answer did not come: with an answer, the facts are known and nothing was reset for long
                 problems.Add($"{Reset}: the pension facts had followed from non-residency; now a resident, they are unknown until Pensionikeskus answers.");
             }
 
             return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
         }
 
-        ApplyPension(Fresh(current), pensionFinding, LookupSource.Pensionikeskus, controlDate, steps, problems);
+        ApplyPension(Fresh(current), pensionFinding, LookupSource.Pensionikeskus, controlDate, CheckedOn(pensionRecord!), steps, problems);
         return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
     }
 
-    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, List<string> steps, List<string> problems)
+    /// <summary>The day a register's answer was given: the record's own stamp, so a reused answer keeps its day rather than today's.</summary>
+    private static DateOnly CheckedOn(LookupRecord record) => DateOnly.FromDateTime(record.CheckedAt);
+
+    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, List<string> steps, List<string> problems)
     {
         var member = finding.MemberOn(controlDate);
         var rate = member ? finding.RateOn(controlDate) : null;
@@ -283,7 +303,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         {
             FundedPensionMember = member,
             PensionRate = member ? rate : null,
-            PensionCheckedOn = Today(),
+            PensionCheckedOn = checkedOn,
             PensionSource = source,
             FactsControlDate = controlDate,
         });
@@ -352,15 +372,29 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         }
 
         var runKeys = run.Persons.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+        var known = _store.Persons(period.CompanyId);
         foreach (var matchPerson in run.Persons)
         {
+            Person ensured;
             if (matchPerson.Person.PersonalCode is null)
             {
-                problems.Add($"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register; nothing to ask.");
-                continue;
+                // listed without a code: asked by the code the card gave the store person the row stands for, when there is
+                // one; nobody is made here for a codeless row (the review makes them when the month is opened)
+                var card = Review.RegisterPersons.Find(known, matchPerson.Person, runKeys);
+                if (string.IsNullOrWhiteSpace(card?.PersonalCode))
+                {
+                    problems.Add($"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
+                    continue;
+                }
+
+                ensured = card;
+            }
+            else
+            {
+                ensured = Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys);
             }
 
-            persons.Add((Review.RegisterPersons.Ensure(_store, period.CompanyId, matchPerson, runKeys: runKeys), ControlDateOf(period, PayoutDates(run, matchPerson))));
+            persons.Add((ensured, ControlDateOf(period, PayoutDates(run, matchPerson))));
         }
 
         // the persons the review gives rows of the month though the register does not list them (a rent payee, a row given

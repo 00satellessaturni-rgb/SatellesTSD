@@ -497,6 +497,43 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void An_upgrade_that_fails_half_way_leaves_the_store_at_the_version_it_was()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (SqliteStore.OpenAtVersion(path, 7))
+            {
+            }
+
+            SqliteStore.FailMigrationForTests = (Path.GetFullPath(path), SqliteStore.SchemaVersion - 1); // the last step fails
+            try
+            {
+                Assert.Contains("failed", Assert.Throws<InvalidOperationException>(() => SqliteStore.Open(path).Dispose()).Message);
+            }
+            finally
+            {
+                SqliteStore.FailMigrationForTests = null;
+            }
+
+            using (var still = SqliteStore.OpenAtVersion(path, 7))
+            {
+                Assert.Equal(7L, still.ScalarRaw<long>("SELECT MAX(version) FROM schema_version")); // not 8: the step before the failure rolled back with it
+            }
+
+            using var upgraded = SqliteStore.Open(path);
+            Assert.Equal((long)SqliteStore.SchemaVersion, upgraded.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+        }
+        finally
+        {
+            foreach (var file in Directory.GetFiles(Path.GetTempPath(), Path.GetFileName(path) + "*"))
+            {
+                File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
     public void A_black_M_report_read_again_onto_a_version_long_settled_leaves_the_later_R_pending()
     {
         var (store, _, period, person) = Setup();

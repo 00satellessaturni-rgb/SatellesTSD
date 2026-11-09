@@ -186,4 +186,17 @@ public class CsvTableReaderTests
         Assert.Equal("windows-1257", named.Encoding);
         Assert.False(named.Sheets[0].Statement!.ExactHeaders);
     }
+
+    [Fact]
+    public void A_title_block_longer_than_five_lines_does_not_outvote_the_tables_delimiter()
+    {
+        // six comma-bearing title lines above a ';' table whose amounts carry a decimal comma: the table's rows outvote the block
+        var titles = string.Concat(Enumerable.Range(1, 6).Select(i => $"Konto väljavõte, osa {i}, UAB Paysera\r\n"));
+        var rows = string.Concat(Enumerable.Range(1, 12).Select(i => $"\"2026-10-{i:00}\";\"Mari Maasikas\";\"-905,92\"\r\n"));
+        var sheet = Assert.Single(new CsvTableReader().Read("evp.csv", Encoding.UTF8.GetBytes(titles + "\"Kuupäev\";\"Saaja\";\"Summa\"\r\n" + rows)).Sheets);
+
+        Assert.Equal(3, sheet.LastColumnOf(7)); // the header row split on ';'
+        Assert.Equal("-905,92", sheet.At(8, 3).Text);
+        Assert.Equal(',', CsvTableReader.SniffDelimiter(CsvTableReader.FirstLines(titles + "\"Kuupäev\";\"Saaja\";\"Summa\"\r\n" + rows, 5))); // what the five-line look saw
+    }
 }

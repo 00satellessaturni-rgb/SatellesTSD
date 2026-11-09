@@ -39,6 +39,11 @@ VBA) is in [docs/reference](docs/reference).
    Not offered for a copy run from a build folder or from a network drive (replace those by hand), and other
    open windows keep the old version until closed. A text file `SatellesTSD.update-folder.txt` beside the exe,
    naming another folder on its first line, is for trying a release on one PC.
+   Going back by hand: close every SatellesTSD window; beside the exe, the hidden folder `.SatellesTSD-update`
+   keeps the newest `previous-<stamp>` folder with the earlier `SatellesTSD.exe` and its `schemas` folder — copy
+   both over the program's own and start it. If the store's format was upgraded meanwhile, the older program
+   offers to put the `firma.db.before-v<N>` copy back and sets the upgraded file aside as `firma.db.newer-v<N>` (the same N: the format the newer program brought);
+   whatever was entered after the upgrade is then in the aside file only.
 4. If the window ever fails, it writes `%AppData%\SatellesTSD\viga.log`; send that file along.
 
 Command-line switches: `--store <file>` opens that store instead of the remembered one; `--settings <file>`
@@ -119,5 +124,6 @@ zip next to it, and then sends the zip to the release folder on the NAS with a `
 last. Every copy of the program offers the new version at its next start. Raise `<Version>` before every
 release; a version not newer than the one on offer is refused. `-LocalOnly` stops before the NAS;
 `-ReleaseFolder` names another folder (the usual one is the constant in `Updater.cs`); `-Withdraw` puts the
-previous release back on offer; `-OutputFolder` sends the local output elsewhere. `-AllowDirty` is for trying
+previous release back on offer — it stops the copies that have not updated yet, and does not take the version
+back from those that have (they go back by hand, as above); `-OutputFolder` sends the local output elsewhere. `-AllowDirty` is for trying
 the script only: the output is then named `-dirty` and says so, and never goes to the NAS.

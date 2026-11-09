@@ -63,6 +63,9 @@ public sealed class AppSettings
         {
             // a settings file that cannot be read is as good as none
         }
+        catch (UnauthorizedAccessException)
+        {
+        }
         catch (IOException)
         {
         }

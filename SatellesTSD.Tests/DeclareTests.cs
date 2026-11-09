@@ -82,7 +82,7 @@ public class DeclareTests
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2024, 1, 1), null), 2026, 10));
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31)), 2026, 10));
         Assert.Equal(0.5m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 17), null), 2026, 10)); // 15 days / 30
-        Assert.Equal(0.3333m, PeriodDeclarer.MonthShare(Entry(null, new DateOnly(2026, 10, 10)), 2026, 10));
+        Assert.Equal(10m / 30m, PeriodDeclarer.MonthShare(Entry(null, new DateOnly(2026, 10, 10)), 2026, 10)); // exact, so the due rounds to the cent once
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 30)), 2026, 10)); // 30 days = the whole
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 11, 1), null), 2026, 10)); // no overlap: not this build's business
     }
@@ -95,24 +95,24 @@ public class DeclareTests
         var next = Entry(new DateOnly(2026, 10, 16), null);
 
         // a contract ended on the 15th and the next begun on the 16th: the whole month, not the new contract's 16 days
-        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, 2026, 10));
+        Assert.Equal(16m / 30m, PeriodDeclarer.MonthShare(next, 2026, 10));
         Assert.Equal(1m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4"), next], 2026, 10));
 
         // a gap between them: 1–10 and 16–31 make 26 days
-        Assert.Equal(0.8667m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 10), "4")], 2026, 10));
+        Assert.Equal(26m / 30m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 10), "4")], 2026, 10));
 
         // a day two rows cover counts once; a row of another month adds nothing
-        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 25)), Entry(new DateOnly(2025, 1, 1), new DateOnly(2026, 9, 30), "4")], 2026, 10));
+        Assert.Equal(16m / 30m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 25)), Entry(new DateOnly(2025, 1, 1), new DateOnly(2026, 9, 30), "4")], 2026, 10));
 
         // a paused row that does not say since when, or one whose type carries no minimum (600, VÕS), adds no day
-        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "3")], 2026, 10));
-        Assert.Equal(0.5333m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4", "600")], 2026, 10));
+        Assert.Equal(16m / 30m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "3")], 2026, 10));
+        Assert.Equal(16m / 30m, PeriodDeclarer.MonthShare(next, [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4", "600")], 2026, 10));
 
         // a paused row counts its days before the pause (1–9 here) and after its planned end, never the pause itself
         var paused = Entry(new DateOnly(2024, 1, 1), null, "3") with { PauseStart = new DateOnly(2026, 10, 10) };
-        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(next, [paused], 2026, 10));
-        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(next, [paused with { PauseEnd = new DateOnly(2026, 10, 20) }], 2026, 10)); // 21–31 already the new contract's
-        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 22), null), [paused with { PauseEnd = new DateOnly(2026, 10, 18) }], 2026, 10)); // 1–9 and 19–31: 22 days
+        Assert.Equal(25m / 30m, PeriodDeclarer.MonthShare(next, [paused], 2026, 10));
+        Assert.Equal(25m / 30m, PeriodDeclarer.MonthShare(next, [paused with { PauseEnd = new DateOnly(2026, 10, 20) }], 2026, 10)); // 21–31 already the new contract's
+        Assert.Equal(22m / 30m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 22), null), [paused with { PauseEnd = new DateOnly(2026, 10, 18) }], 2026, 10)); // 1–9 and 19–31: 22 days
 
         // a row that carries no minimum stands for the month: the share is measured by the Tööleping that carries it (decision 89)
         Assert.Equal(0.5m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 10), null, "2", "600"), [Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 15), "4")], 2026, 10)); // a VÕS row (no minimum) stands for the month; the minimum is the ended Tööleping's 15 days (decision 89)
@@ -137,18 +137,18 @@ public class DeclareTests
         // minimum: the share is the Tööleping's 10 days, not the board seat's 21
         var board = Entry(new DateOnly(2026, 10, 11), null, "2", "601", 2);
         var contract = Entry(new DateOnly(2024, 1, 1), new DateOnly(2026, 10, 10), "4", "1", 1);
-        Assert.Equal(0.3333m, PeriodDeclarer.MonthShare(board, [contract, board], 2026, 10));
+        Assert.Equal(10m / 30m, PeriodDeclarer.MonthShare(board, [contract, board], 2026, 10));
         // a VÕS row newer than a running Tööleping: the Tööleping's whole month
         Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2026, 10, 6), null, "2", "600", 2), [Entry(new DateOnly(2024, 1, 1), null), Entry(new DateOnly(2026, 10, 6), null, "2", "600", 2)], 2026, 10));
         // no row carries the minimum: the standing entry's own days, as before
-        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [], 2026, 10));
+        Assert.Equal(25m / 30m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [], 2026, 10));
         // a Tööleping ended years ago beside the board seat covers no day of the month: it measures nothing, the board seat's days stand
-        Assert.Equal(0.8333m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [Entry(new DateOnly(2020, 1, 1), new DateOnly(2025, 6, 30), "4", "1", 3)], 2026, 10));
+        Assert.Equal(25m / 30m, PeriodDeclarer.MonthShare(board with { StartDate = new DateOnly(2026, 10, 7) }, [Entry(new DateOnly(2020, 1, 1), new DateOnly(2025, 6, 30), "4", "1", 3)], 2026, 10));
 
         // the entry standing for the month is paused: its days before the pause count, the pause does not
         var paused = Entry(new DateOnly(2024, 1, 1), null, "3") with { PauseStart = new DateOnly(2026, 10, 10) };
         Assert.Equal(0.3m, PeriodDeclarer.MonthShare(paused, [paused], 2026, 10));
-        Assert.Equal(0.7333m, PeriodDeclarer.MonthShare(paused with { PauseEnd = new DateOnly(2026, 10, 18) }, [], 2026, 10)); // 1–9 and 19–31: 22 days
+        Assert.Equal(22m / 30m, PeriodDeclarer.MonthShare(paused with { PauseEnd = new DateOnly(2026, 10, 18) }, [], 2026, 10)); // 1–9 and 19–31: 22 days
         Assert.Equal(0m, PeriodDeclarer.MonthShare(paused with { PauseStart = new DateOnly(2026, 8, 1) }, [], 2026, 10)); // paused through the month
         Assert.Equal(0m, PeriodDeclarer.MonthShare(paused with { PauseStart = null }, [], 2026, 10)); // a pause without a start counts nothing
         // the person card's "kaasa": the paused entry counts every day as if valid
@@ -1017,6 +1017,50 @@ public class DeclareTests
         box.Store.UpdatePerson(box.Mari with { FactsControlDate = new DateOnly(2026, 10, 31) });
         mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
         Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_person_looked_up_before_the_control_date_was_kept_is_noted_by_the_day_of_the_check()
+    {
+        using var box = Ready();
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, ResidencyCheckedOn = new DateOnly(2026, 9, 15), FactsControlDate = null });
+        Assert.Contains(Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal) && p.Contains("15.09.2026", StringComparison.Ordinal));
+
+        // checked in the month, or after it (the registers are asked when the month is declared): the month's own, no note
+        foreach (var checkedOn in new[] { new DateOnly(2026, 10, 2), new DateOnly(2026, 11, 3) })
+        {
+            box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, ResidencyCheckedOn = checkedOn, FactsControlDate = null });
+            Assert.DoesNotContain(Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal));
+        }
+
+        // the earlier of the two register facts' days counts: a pension checked before the month is noted
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, ResidencyCheckedOn = new DateOnly(2026, 11, 3), PensionSource = LookupSource.Pensionikeskus, PensionCheckedOn = new DateOnly(2026, 8, 30), FactsControlDate = null });
+        Assert.Contains(Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherMonth, StringComparison.Ordinal) && p.Contains("30.08.2026", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_included_foreign_A1_person_without_an_employment_is_told_why_no_zero_line_is_made()
+    {
+        using var box = Ready(minimum: true, mariEnded: true);
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Store.UpdatePerson(box.Mari with { Declaration = DeclarationChoice.Include, A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "FI" });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal) && p.Contains("A1 case carries no Estonian social tax", StringComparison.Ordinal));
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft);
+    }
+
+    [Fact]
+    public void A_foreign_A1_person_with_no_pay_gets_no_zero_line_for_a_minimum_they_do_not_owe()
+    {
+        using var box = Ready(minimum: true);
+        box.Workspace.SetDeclare(box.Salary, false);
+        Assert.Contains(box.Declarer.Build(box.Period.Id).Persons.Single(p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+
+        box.Store.UpdatePerson(box.Mari with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "FI" });
+        var report = box.Declarer.Build(box.Period.Id);
+        Assert.DoesNotContain(report.Persons.Single(p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft); // no Estonian social tax under a foreign A1: no minimum, no zero line
     }
 
     [Fact]

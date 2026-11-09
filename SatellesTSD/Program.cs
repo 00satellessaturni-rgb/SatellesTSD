@@ -47,18 +47,25 @@ static class Program
         StorePathOverride = storePath;
         settingsPath ??= AppSettings.DefaultPath;
         var crashLog = Path.Combine(Path.GetDirectoryName(settingsPath) ?? ".", "viga.log");
-        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += (_, e) =>
+        void WriteCrash(object? failure)
         {
-            // what the window could not handle is written down, so the owner can send it along
+            // what the program could not handle is written down, so the owner can send it along
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-                File.AppendAllText(crashLog, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {e.Exception}{Environment.NewLine}{Environment.NewLine}");
+                File.AppendAllText(crashLog, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {failure}{Environment.NewLine}{Environment.NewLine}");
             }
-            catch (IOException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
             }
+        }
+
+        // a failure before the window stands (the start-up, a worker thread) is written down too, rather than dying mute at every start
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => WriteCrash(e.ExceptionObject);
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) =>
+        {
+            WriteCrash(e.Exception);
 
             if (ReadySignal is not null)
             {

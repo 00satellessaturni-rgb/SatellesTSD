@@ -262,4 +262,20 @@ public class UpdaterTests : IDisposable
         Updater.SignalReady(name);
         Assert.True(ready.WaitOne(0));
     }
+
+    [Fact]
+    public void A_copy_back_that_fails_leaves_the_new_program_whole_and_says_so()
+    {
+        var (_, release) = Publish("0.11.0");
+        var folder = Updater.Unpack(Updater.Download(_releases, release, _exe, null, CancellationToken.None), _exe);
+        var previous = Updater.Swap(_exe, folder);
+        using (new FileStream(Path.Combine(previous, Updater.ExeName), FileMode.Open, FileAccess.Read, FileShare.None)) // the kept copy cannot be read back
+        {
+            Assert.Equal(UpdateException.RevertFailed, Assert.Throws<UpdateException>(() => Updater.Revert(_exe, previous, release)).Code);
+        }
+
+        Assert.Equal("exe 0.11.0", File.ReadAllText(_exe)); // the new exe came back from the failed folder, with its schemas
+        Assert.Equal("new 0.11.0", File.ReadAllText(Path.Combine(_program, "schemas", "apa-tsd", "xbrl", "new.xsd")));
+        Assert.False(Updater.FailedHere(_exe, release));
+    }
 }

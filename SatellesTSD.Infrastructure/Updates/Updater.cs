@@ -685,18 +685,17 @@ public static class Updater
             throw new UpdateException(UpdateException.RevertFailed, $"the previous version could not be put back: the new {ExeName} is held ({held.Message}); it is kept in {previousFolder}.", held);
         }
 
-        try
+        var failedExe = Path.Combine(failed, ExeName);
+        var failedSchemas = Path.Combine(failed, SchemasFolder);
+        var hadSchemas = Directory.Exists(schemas);
+        if (hadSchemas && !Quietly(() => Directory.Move(schemas, failedSchemas)))
         {
-            if (Directory.Exists(schemas))
-            {
-                Directory.Move(schemas, Path.Combine(failed, SchemasFolder));
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
+            // the new schemas cannot be set aside: nothing is copied over them half-way — the new exe goes back beside them,
+            // and the program is left whole with the new version
+            var exeBack = Quietly(() => File.Move(failedExe, exePath));
+            throw new UpdateException(UpdateException.RevertFailed, exeBack
+                ? $"the previous version could not be put back: the new program's schemas folder is held; the new version stays in place, the previous is kept in {previousFolder}."
+                : $"the previous version could not be put back: the new program's schemas folder is held, and its {ExeName} could not be put back beside them — copy {ExeName} from {failed} (or the previous version from {previousFolder}) into the program folder by hand.");
         }
 
         try
@@ -710,7 +709,31 @@ public static class Updater
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            throw new UpdateException(UpdateException.RevertFailed, $"the previous version could not be put back ({e.Message}); it is kept in {previousFolder}.", e);
+            // the copy back failed half-way: the program is left whole with the new version (its exe and schemas come back
+            // from the failed folder, a partial copy goes) rather than with no exe or half its schemas
+            var exeBack = Quietly(() =>
+            {
+                File.Delete(exePath);
+                File.Move(failedExe, exePath);
+            });
+            var schemasBack = !hadSchemas || Quietly(() =>
+            {
+                if (Directory.Exists(schemas))
+                {
+                    Directory.Delete(schemas, recursive: true);
+                }
+
+                Directory.Move(failedSchemas, schemas);
+            });
+            if (exeBack && schemasBack)
+            {
+                throw new UpdateException(UpdateException.RevertFailed, $"the previous version could not be put back ({e.Message}); the new version stays in place, the previous is kept in {previousFolder}.", e);
+            }
+
+            // what could not be put back is the only whole copy of the new program: kept out of the next start's tidying
+            var hold = Path.Combine(StagingFolder(exePath), $"hold-{Path.GetFileName(failed)["failed-".Length..]}");
+            var kept = Quietly(() => Directory.Move(failed, hold)) ? hold : failed;
+            throw new UpdateException(UpdateException.RevertFailed, $"the previous version could not be put back ({e.Message}), and the program folder may be incomplete: copy {ExeName} and the {SchemasFolder} folder from {kept} (the new version) or from {previousFolder} (the previous one) into the program folder by hand.", e);
         }
 
         try
@@ -872,6 +895,20 @@ public static class Updater
 
     // ---------------------------------------------------------------- the hidden folder
 
+    /// <summary>A file step that may fail: whether it went through, the caller saying what it means.</summary>
+    private static bool Quietly(Action step)
+    {
+        try
+        {
+            step();
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Tidies the hidden folder at start: leftover downloads, unpacked releases and failed versions go, and of
     /// the previous versions only the newest stays. A file still in use (a window of an older version is open) is
     /// left for a later start. The folder goes when it is empty.</summary>
@@ -921,6 +958,10 @@ public static class Updater
         }
         catch (UnauthorizedAccessException)
         {
+        }
+        catch (UpdateException)
+        {
+            // the staging folder cannot be made or locked (a read-only program folder, say): tidying is best effort, the program starts
         }
     }
 

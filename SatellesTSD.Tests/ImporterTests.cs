@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using SatellesTSD.Core.Import;
 using SatellesTSD.Infrastructure;
@@ -99,5 +100,37 @@ public class ImporterTests
         Assert.Equal(ImportKind.Statement, import.Kind);
         Assert.Equal("paysera-ru-short", import.Sheets[0].Statement?.Layout.Id);
         Assert.Equal("paysera", import.Sheets[0].Name);
+    }
+
+    [Fact]
+    public void A_workbook_with_a_damaged_sheet_is_refused_by_name_so_the_batch_goes_on_without_it()
+    {
+        // a workbook with two sheets whose second sheet's compressed bytes are damaged (a half-written download, a bad disk): the
+        // zip opens and the first sheet reads, the second fails inside the reader
+        var rows = new object?[][] { LhvHeaders, ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"] };
+        var xlsx = Tables.Xlsx(("LHV", rows, false), ("Teine", Enumerable.Range(1, 200).Select(i => new object?[] { $"rida {i}", i, $"tekst {i * 7919 % 1000}" }).ToArray(), false));
+        var damaged = (byte[])xlsx.Clone();
+        var name = Encoding.ASCII.GetBytes("xl/worksheets/sheet2.xml");
+        var at = -1;
+        for (var i = 0; i < damaged.Length - name.Length; i++)
+        {
+            // the local file header (signature PK\3\4) that names the sheet, not the central directory's copy
+            if (damaged[i] == 0x50 && damaged[i + 1] == 0x4B && damaged[i + 2] == 0x03 && damaged[i + 3] == 0x04 && damaged.AsSpan(i + 30, name.Length).SequenceEqual(name))
+            {
+                var extra = BitConverter.ToUInt16(damaged, i + 28);
+                at = i + 30 + name.Length + extra; // the compressed data starts here
+                break;
+            }
+        }
+
+        Assert.True(at > 0, "the sheet's local header was not found");
+        for (var i = at + 40; i < at + 80; i++)
+        {
+            damaged[i] ^= 0xFF;
+        }
+
+        var error = Record.Exception(() => Importer.Read("katki.xlsx", damaged));
+        Assert.True(error is ImportException, error is null ? $"read without a word: {string.Join(" | ", Importer.Read("katki.xlsx", damaged).Sheets.Select(s => $"{s.Name}:{s.Kind}:{s.Message}:{s.Statement?.Rows.Count}"))}" : error.ToString());
+        Assert.StartsWith("katki.xlsx could not be read (sheet 2)", error!.Message); // this file's failure, named by sheet; another file of the batch is still imported
     }
 }
