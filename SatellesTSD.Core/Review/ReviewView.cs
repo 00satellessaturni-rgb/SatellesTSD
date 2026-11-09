@@ -135,6 +135,14 @@ public sealed class ReviewPerson
     /// payments ticked to be declared (no one would carry them).</summary>
     public IReadOnlyList<Undeclared> Undeclared { get; init; } = [];
 
+    /// <summary>The income not declared, added up by one rule for the grid and the report (decision 100): a euro amount
+    /// that was read and is no copy of another source's row; null when nothing goes undeclared.</summary>
+    public decimal? UndeclaredSum => Undeclared.Count == 0 ? null
+        : Undeclared.Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal)).Sum(u => u.Payment.Amount);
+
+    /// <summary>The register entry standing for the person (the one "Kande olek" shows) when it is paused (kande olek 3), else null.</summary>
+    public Import.TorEntry? PausedEntry => Register?.Entry is { StateId: Import.TorStates.Paused } entry ? entry : null;
+
     public string LastName => Person?.LastName ?? Register?.Person.LastName ?? "";
 
     public string FirstName => Person?.FirstName ?? Register?.Person.FirstName ?? "";

@@ -122,6 +122,17 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     /// earlier source of the run: two exports that overlap, or a bank's file beside its copy. Listed, never searched
     /// for a person, never counted.</summary>
     public const string DuplicateRow = "DUPLICATE_ROW";
+    /// <summary>Two persons of the company have a rent payee's names and neither is bound or coded: the accountant names the one.</summary>
+    public const string PayeeAmbiguous = "PAYEE_AMBIGUOUS";
+    /// <summary>A rent row whose payee already has a line added by hand of the same amount this month: not declared by default, lest the rent go twice.</summary>
+    public const string PayeeHandLine = "PAYEE_HAND_LINE";
+
+    /// <summary>The payee row's personal code belongs to another person of the company than the one bound to the payee's names: the code is not taken, the cards want a look.</summary>
+    public const string PayeeCodeElsewhere = "PAYEE_CODE_ELSEWHERE";
+    /// <summary>The accountant's decision on a row a later file turned into a copy was moved to the original row.</summary>
+    public const string DecisionMoved = "DECISION_MOVED";
+    /// <summary>The accountant's decision sits on a row that is a copy, and could not be moved (the month is past Draft, or the original has its own).</summary>
+    public const string DecisionOnCopy = "DECISION_ON_COPY";
 }
 
 /// <summary>One row of the workbook's "Otsingu kontroll": a statement row with the person it was found for (or none),

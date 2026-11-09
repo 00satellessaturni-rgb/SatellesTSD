@@ -212,7 +212,11 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         else
         {
             isResident = residency!.IsResidentOn(controlDate);
-            current = current with { Residency = isResident ? Residency.Resident : Residency.NonResident, ResidencyCheckedOn = Today(), ResidencySource = LookupSource.Emta, FactsControlDate = controlDate };
+            // the control date stamps the person once both register facts are of it: here when the pension is not the
+            // register's to answer (a non-resident's follows, the accountant's is kept), else when Pensionikeskus has answered —
+            // so a pension answer that fails leaves the earlier month's date, and a later build says so
+            var pensionAsked = isResident && current.PensionSource != LookupSource.Manual;
+            current = current with { Residency = isResident ? Residency.Resident : Residency.NonResident, ResidencyCheckedOn = Today(), ResidencySource = LookupSource.Emta, FactsControlDate = pensionAsked ? current.FactsControlDate : controlDate };
             _store.UpdatePerson(current);
             steps.Add($"residency {(isResident ? "resident" : "non-resident")}");
         }

@@ -638,6 +638,7 @@ public sealed partial class SqliteStore : IStore
         {
             var payment = byKey[new LineKey(outcome.EntryNumber, outcome.LineNumber)];
             var codes = outcome.Messages.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
+            var wasPending = payment.Pending; // a report read again onto a version long settled says nothing new of the key
             if (payment.Pending)
             {
                 var status = outcome.Severity switch
@@ -652,7 +653,7 @@ public sealed partial class SqliteStore : IStore
                 SetStatus(payment.Id, status);
             }
 
-            if (outcome.Severity == Severity.Black && codes.Contains(FeedbackReport.RuleChangeOnUnknownKey))
+            if (wasPending && outcome.Severity == Severity.Black && codes.Contains(FeedbackReport.RuleChangeOnUnknownKey))
             {
                 // "M or T on an unknown key": the key is not on the server, whatever an earlier pending version presumed —
                 // or an earlier version settled as on the server (by the accountant's word, or a report read onto the wrong

@@ -667,9 +667,9 @@ public class ReviewWorkspaceTests
     }
     private const string RenterCode = "49001010008";
 
-    private static (SqliteStore Store, Company Company, Period Period, ReviewWorkspace Workspace) RunWithRenter(string renter = "KATI KASK", string? renterCode = null)
+    private static (SqliteStore Store, Company Company, Period Period, ReviewWorkspace Workspace) RunWithRenter(string renter = "KATI KASK", string? renterCode = null, string renterDirection = "D")
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(renter: renter, renterCode: renterCode);
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: renter, renterCode: renterCode, renterDirection: renterDirection);
         new MatchRunner(store).Run(period.Id);
         return (store, company, period, Workspace(store));
     }
@@ -734,6 +734,14 @@ public class ReviewWorkspaceTests
         Assert.Equal(("Jüri-Mart", "Õun"), PayeePersons.NamesOf("JÜRI-MART ÕUN"));
         Assert.Equal(("Mari Liis", "McKenzie"), PayeePersons.NamesOf("Mari Liis McKenzie"));
         Assert.Null(PayeePersons.NamesOf("A1 Kask"));
+        Assert.Null(PayeePersons.NamesOf("KATI JA MARI KASK")); // a joint payee: two persons, nobody made
+        Assert.Null(PayeePersons.NamesOf("Kask & Tamm"));
+        Assert.Null(PayeePersons.NamesOf("KATI AND MARI KASK"));
+        Assert.Null(PayeePersons.NamesOf("Kati und Mari Kask"));
+        Assert.Null(PayeePersons.NamesOf("KATI KASK, MARI TAMM")); // two owners of one account, written with a comma
+        Assert.Null(PayeePersons.NamesOf("Kati Kask / Mari Tamm"));
+        Assert.Equal(("Kask", "Kati"), PayeePersons.NamesOf("Kask, Kati")); // one name with a comma: a person still (the words are matched in any order)
+        Assert.Null(PayeePersons.NamesOf("Anna Maria Liisa Kask Tamm")); // five words: a firm, or two persons
         Assert.Null(PayeePersons.NamesOf("Kask AS"));
         Assert.Null(PayeePersons.NamesOf(null));
     }
@@ -756,16 +764,158 @@ public class ReviewWorkspaceTests
         Assert.False(PayeePersons.Declares(null));
     }
     [Fact]
-    public void A_rent_payee_made_in_a_draft_month_keeps_the_row_once_the_month_is_past_draft()
+    public void A_rent_payee_made_in_a_draft_month_keeps_the_row_past_draft_only_where_a_line_was_built_from_it()
     {
-        var (store, _, period, workspace) = RunWithRenter();
+        var (store, _, period, workspace) = RunWithRenter(renterCode: RenterCode);
         using (store)
         {
             var kati = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.LastName == "Kask");
+            var rentRow = Assert.Single(kati.Payments).RowId;
+
+            // exported without a build: the month was declared without her, and reads so — the person made since is not read back
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            var without = workspace.Load(period.Id);
+            Assert.DoesNotContain(without.Persons, p => p.PersonId == kati.PersonId);
+            Assert.Single(without.Unmatched.Payments, p => p.Payee == "KATI KASK");
+
+            // the rent line built from the row: the row is hers in the exported month too
+            store.SetPeriodState(period.Id, PeriodState.Draft, DateTime.UtcNow);
+            workspace.SavePerson(kati.Person!, confirmResidency: true, confirmPension: true);
+            new PeriodDeclarer(store).Build(period.Id);
+            Assert.Contains(store.Payments(period.Id), p => p.SourceRowId == rentRow);
             store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
             var view = workspace.Load(period.Id);
             Assert.Single(Assert.Single(view.Persons, p => p.PersonId == kati.PersonId).Payments);
             Assert.DoesNotContain(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+
+            // the same under the totals per type: the line names the row among its references
+            store.SetPeriodState(period.Id, PeriodState.Draft, DateTime.UtcNow);
+            new PeriodDeclarer(store).Build(period.Id, DeclarationMode.TotalsPerType);
+            Assert.Contains(store.Payments(period.Id), p => p.Status == PaymentStatus.Draft && PeriodDeclarer.TotalsOf(p.SourceRef) is { TypeCode: "57" });
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Single(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId).Payments);
+        }
+    }
+
+    [Fact]
+    public void Money_in_from_a_person_is_never_a_rent_payees_row()
+    {
+        var (store, company, period, workspace) = RunWithRenter(renterCode: RenterCode, renterDirection: "C");
+        using (store)
+        {
+            var view = workspace.Load(period.Id);
+            var row = Assert.Single(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Equal(2, store.Persons(company.Id).Count); // the run's own verdict: money in is on the wrong side of Üür
+
+            // given Üür by hand (audit 25): still nobody's, nobody made, nothing declared
+            workspace.SetCategory(row, "Üür");
+            var byHand = workspace.Load(period.Id);
+            var again = Assert.Single(byHand.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Equal(("Üür", (Guid?)null, false), (again.Category, again.DefaultPersonId, again.Declare));
+            Assert.Equal(2, store.Persons(company.Id).Count);
+        }
+    }
+
+    [Fact]
+    public void A_bound_payee_whose_code_another_person_holds_keeps_none_and_the_review_says_so()
+    {
+        var (store, company, period, workspace) = RunWithRenter(renterCode: RenterCode);
+        using (store)
+        {
+            var kati = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.LastName == "Kask").Person!;
+            Assert.Equal(RenterCode, kati.PersonalCode);
+
+            // the card clears the code and gives it to another person (the statement's code was the co-owner's, say)
+            workspace.SavePerson(kati with { PersonalCode = null });
+            var other = workspace.AddPerson(company.Id, "Mari", "Tamm", RenterCode, null);
+
+            var view = workspace.Load(period.Id); // the unique code index would have thrown here
+            var person = Assert.Single(view.Persons, p => p.PersonId == kati.Id);
+            Assert.Null(person.Person!.PersonalCode); // the clearing stands
+            Assert.Single(person.Payments);
+            Assert.Contains(person.Problems, p => p.Code == MatchProblem.PayeeCodeElsewhere);
+            Assert.Equal(RenterCode, store.Persons(company.Id).Single(p => p.Id == other.Id).PersonalCode);
+        }
+    }
+
+    [Fact]
+    public void A_hand_line_of_the_rents_amount_for_the_payee_leaves_the_row_undeclared_by_default_and_says_so()
+    {
+        var (store, _, period, workspace) = RunWithRenter(renterCode: RenterCode);
+        using (store)
+        {
+            var kati = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.LastName == "Kask");
+            var hand = workspace.AddHandLine(period.Id, kati.PersonId, new DateOnly(2026, 10, 15), 400m, "KATI KASK", "üür, käsitsi", "Üür");
+
+            var view = workspace.Load(period.Id);
+            var person = Assert.Single(view.Persons, p => p.PersonId == kati.PersonId);
+            var row = Assert.Single(person.Payments, p => !p.IsByHand);
+            Assert.Equal((false, false), (row.DefaultDeclare, row.Declare));
+            Assert.Contains(person.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            // ticked by the accountant: both stand, and the word is ended
+            workspace.SetDeclare(row, true);
+            var ticked = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId);
+            Assert.True(ticked.Payments.Single(p => !p.IsByHand).Declare);
+            Assert.DoesNotContain(ticked.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            // a hand line that declares nothing is no twin
+            workspace.SetDeclare(row, null);
+            workspace.UpdateHandLine(hand with { Declare = false });
+            Assert.DoesNotContain(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId).Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            // a hand line of another amount is no twin
+            workspace.UpdateHandLine(hand with { Amount = 350m });
+            var apart = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId);
+            Assert.True(apart.Payments.Single(p => !p.IsByHand).DefaultDeclare);
+            Assert.DoesNotContain(apart.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+        }
+    }
+
+    [Fact]
+    public void A_decision_on_a_row_that_is_a_copy_follows_the_original_in_a_draft_and_is_said_otherwise()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup();
+        using (store)
+        {
+            // a second export of the account carrying the salary row again: its row is a copy of the first file's (decision 86)
+            var again = Tables.Xlsx("LHV", LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
+                ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR", 48712219406d]);
+            var copyFile = store.AddImport(company.Id, ReviewFixtures.Importer.Read("uuesti.xlsx", again), again);
+            store.LinkImport(period.Id, copyFile.Id);
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+
+            var view = workspace.Load(period.Id);
+            var copy = Assert.Single(view.Unmatched.Payments, p => p.Flags.Contains(MatchProblem.DuplicateRow));
+            var original = Assert.Single(view.Persons[0].Payments, p => p.Amount == 905.92m);
+            Assert.Equal($"duplikaat: {original.Reference}", copy.VerdictText);
+
+            // a note left on the copy: the next load moves it to the original, marks the move in the note and says so — on
+            // every load, until the mark is cleared
+            workspace.SetNote(copy, "kontrollitud");
+            var moved = workspace.Load(period.Id);
+            Assert.Equal($"{ReviewWorkspace.MovedFromMark}{copy.Reference}» kontrollitud", moved.Persons[0].Payments.Single(p => p.RowId == original.RowId).Note);
+            Assert.Null(moved.Unmatched.Payments.Single(p => p.RowId == copy.RowId).LineId);
+            Assert.Contains(moved.Unmatched.Problems, p => p.Code == MatchProblem.DecisionMoved);
+            Assert.Contains(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.DecisionMoved);
+            workspace.SetNote(moved.Persons[0].Payments.Single(p => p.RowId == original.RowId), "kontrollitud");
+            Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.DecisionMoved);
+
+            // the original carries its own now: a second decision on the copy stays where it is, and is said
+            workspace.SetNote(copy, "veel kord");
+            var stays = workspace.Load(period.Id);
+            Assert.Equal(("kontrollitud", "veel kord"), (stays.Persons[0].Payments.Single(p => p.RowId == original.RowId).Note, stays.Unmatched.Payments.Single(p => p.RowId == copy.RowId).Note));
+            Assert.Contains(stays.Unmatched.Problems, p => p.Code == MatchProblem.DecisionOnCopy);
+
+            // past Draft nothing moves: the copy's decision is said, the original's missing
+            workspace.SetNote(copy, null);
+            workspace.SetNote(stays.Persons[0].Payments.Single(p => p.RowId == original.RowId), null);
+            workspace.SetNote(copy, "hilja");
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            var late = workspace.Load(period.Id);
+            Assert.Equal(("hilja", (string?)null), (late.Unmatched.Payments.Single(p => p.RowId == copy.RowId).Note, late.Persons[0].Payments.Single(p => p.RowId == original.RowId).Note));
+            Assert.Contains(late.Unmatched.Problems, p => p.Code == MatchProblem.DecisionOnCopy);
         }
     }
 
@@ -779,6 +929,7 @@ public class ReviewWorkspaceTests
             workspace.AddPerson(company.Id, "Kati", "Kask", "49001010008", null);
             var view = workspace.Load(period.Id);
             Assert.Single(view.Unmatched.Payments, p => p.Payee == "KATI KASK");
+            Assert.Contains(view.Unmatched.Problems, p => p.Code == MatchProblem.PayeeAmbiguous); // said, so the accountant names the one
             Assert.Equal(2, store.Persons(company.Id).Count(p => p.LastName == "Kask"));
         }
     }

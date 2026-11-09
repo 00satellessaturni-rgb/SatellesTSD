@@ -31,6 +31,20 @@ public static class ReportText
     public const string EmploymentType = "Töötamise liik";
     public const string EntryState = "Kande olek";
     public const string EmploymentEnd = "Töötamise lõpu aeg";
+    public const string PauseStart = "Peatamise algus";
+    public const string PauseEnd = "Peatamise lõpu aeg";
+    public const string DeclarationChoice = "Deklareerimine";
+    public const string Undeclared = "Deklareerimata";
+    public const string NetTotal = "NETO KOKKU";
+    public const string TaxTotal = "MAKSUD KOKKU";
+
+    /// <summary>The person card's declaration choice as the grid shows it: "kaasa", "välja", nothing by the rules.</summary>
+    public static string DeclarationText(Store.DeclarationChoice choice) => choice switch
+    {
+        Store.DeclarationChoice.Include => "kaasa",
+        Store.DeclarationChoice.Exclude => "välja",
+        _ => "",
+    };
     public const string Total = "Kokku";
     public const string ByHandSource = "käsitsi";
 

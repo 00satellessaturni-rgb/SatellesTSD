@@ -286,7 +286,10 @@ internal static class UiText
     public const string FeedbackFilter = "Tagasisideraport (*.xml;*.zip)|*.xml;*.zip|Kõik failid (*.*)|*.*";
     public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Ainult faili puhul, mida e-MTA-sse ei laaditud.";
     public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris). Märkida periood siiski kinnitatuks?";
-    public const string ReviewChangedSinceBuild = "Ülevaatus on pärast „Koosta read“ muutunud ja read ei kajasta seda. Eksportida siiski? (Muidu vajuta uuesti „Koosta read“.)";
+    public const string CutChangedSinceBuild = "Deklaratsiooni lõige on pärast „Koosta read“ muudetud (Seaded): mustandid on teises lõikes. Eksportida need siiski? (Muidu vajuta uuesti „Koosta read“.)";
+    public const string RunStaleReport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: aruanne ei sisalda kõiki makseid. Koostada aruanne siiski?";
+    public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 (võti ei ole serveris)";
+    public const string ReviewChangedSinceBuild ="Ülevaatus on pärast „Koosta read“ muutunud ja read ei kajasta seda. Eksportida siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string ReviewNotChecked = "Ei saanud kontrollida, kas read vastavad ülevaatusele.";
     public const string ReopenConfirm = "Avada periood parandamiseks? Ülevaatus muutub taas muudetavaks; järgmine eksport kannab muudatused (M) ja tühistused (T) võtmetele, mida e-MTA juba teab. e-MTA-s tuleb deklaratsioon samuti muudatusteks avada. (Kui faili ei laaditudki üles, kasuta „Tühista eksport“.)";
     public const string ApplyReportTo = "Rakendada raport failile";
@@ -341,7 +344,7 @@ internal static class UiText
         ("TSD_KP", "kogumispension", r => r.FundedPension),
         ("TSD_TK", "töötuskindlustus (töötaja)", r => r.UnemploymentEmployee),
         ("TSD_TTK", "töötuskindlustus (tööandja)", r => r.UnemploymentEmployer),
-        ("TSD_KTM", "TSD_KTM", null), // no figure of ours stands for it; the server's is shown alone
+        ("TSD_KTM", "tulumaks (kinnipeetud)", r => r.IncomeTax),
     ];
 
     /// <summary>The tooltip of a feedback cell: the latest report's messages in full, the advice, and the server's taxes

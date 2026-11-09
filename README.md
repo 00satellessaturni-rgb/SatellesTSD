@@ -24,7 +24,9 @@ VBA) is in [docs/reference](docs/reference).
    drive, not a build folder. Run `SatellesTSD.exe`.
 2. First run: the window asks for the store file. Cancel the picker and use **Uus andmebaas…** to create one
    (the suggested name is `SatellesTSD.db`); put it in a folder that is backed up. The choice is remembered
-   in `%AppData%\SatellesTSD\settings.json`, with the company and the month last shown.
+   in `%AppData%\SatellesTSD\settings.json`, with the company and the month last shown, the window's size and
+   place, the card's width and the persons grid's height, the Vaade choices (the log one line high, the persons
+   grid salary-only) and the Seaded choice (the declaration's cut).
 3. Updates come by themselves. At every start the program looks in the release folder on the office NAS
    (`S:\2. DOKUMENDID JA FAILID\IT\SatellesTsdUpdate`); when a newer version is there, the title says so
    ("SatellesTSD v0.10.0 — saadaval v0.11.0") and the Andmebaas menu's item reads "Uuenda v0.11.0…".
@@ -46,7 +48,8 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 
 The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
 (import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
-(the report, the calculator); the toolbar keeps the company and the month. Every table sorts on a header
+(the report, the calculator), **Vaade** (the log one line high; the persons grid showing only PALK NETO KOKKU
+of the sources) and **Seaded** (the declaration's cut, step 6); the toolbar keeps the company and the month. Every table sorts on a header
 click and has an **Otsi:** box that hides the rows without the text. The payments table has tabs: the
 person picked, every payment of the month, one per category, and the payments without a category.
 

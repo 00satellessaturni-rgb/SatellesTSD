@@ -712,8 +712,21 @@ public sealed class MainForm : Form
         var checkServices = _services;
         var checkPeriod = _view.Period.Id;
         var mode = DeclarationMode;
+        var draftsCut = checkServices.Declarer.DraftsCut(checkPeriod);
+        if (draftsCut is { } cut && cut != mode)
+        {
+            // the Seaded cut switched after "Koosta read": the drafts are of the other cut — said as such, not as a review change
+            Log($"{UiText.Export}: {(cut == Core.Declare.DeclarationMode.TotalsPerType ? UiText.ModeTotals : UiText.ModeEach)} → {(mode == Core.Declare.DeclarationMode.TotalsPerType ? UiText.ModeTotals : UiText.ModeEach)}");
+            if (!Confirm(UiText.CutChangedSinceBuild, UiText.Export))
+            {
+                return;
+            }
+        }
+
+        // the review's own changes are checked in the drafts' own cut, whatever Seaded says now
+        var checkMode = draftsCut ?? mode;
         bool? current = null;
-        await RunBusyAsync(async () => current = await Task.Run(() => checkServices.Declarer.DraftsCurrent(checkPeriod, mode)));
+        await RunBusyAsync(async () => current = await Task.Run(() => checkServices.Declarer.DraftsCurrent(checkPeriod, checkMode)));
         if (current is null)
         {
             Log(UiText.ReviewNotChecked);
@@ -780,6 +793,16 @@ public sealed class MainForm : Form
             ResolveDirtyPanel();
             ReloadView(); // whichever way it went, the grid shows what the store holds before the folder is asked
             if (_services is null || _view is null)
+            {
+                return;
+            }
+        }
+
+        if (_view.Editable && _view.RunIsStale)
+        {
+            // the search did not see every linked file (or there was none): the workbook would miss payments — said, the accountant decides
+            Log($"{UiText.ExportReport}: {UiText.RunStale}");
+            if (!Confirm(UiText.RunStaleReport, UiText.ExportReport))
             {
                 return;
             }
@@ -1232,6 +1255,13 @@ public sealed class MainForm : Form
             {
                 column.Visible = !salaryOnly;
             }
+        }
+
+        // the search matches the text shown: with the source columns gone or back, the rows shown and the total follow
+        if (_personsGrid.Rows.Count > 0)
+        {
+            Filter(_personsGrid, _personsSearch.Text);
+            UpdateSalaryTotal();
         }
     }
 
@@ -2370,7 +2400,7 @@ public sealed class MainForm : Form
     }
 
     private static bool Matches(DataGridViewRow row, string needle) =>
-        row.Cells.Cast<DataGridViewCell>().Any(c => c.FormattedValue?.ToString()?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true);
+        row.Cells.Cast<DataGridViewCell>().Any(c => c.OwningColumn.Visible && c.FormattedValue?.ToString()?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true); // the text shown, a hidden column's not
 
     /// <summary>The sort a grid stands in, to put it back after the rows are made afresh.</summary>
     private static (string? Column, ListSortDirection Direction) SortOf(DataGridView grid) =>
@@ -2445,10 +2475,7 @@ public sealed class MainForm : Form
     /// <summary>The sum in euros of the person's income the month does not declare, or none: a row in another currency
     /// or without an amount read is listed in the tooltip, never added (decision 87), nor a copy of another source's row
     /// (decision 86); a shared row nobody was named for is added, its amount was read.</summary>
-    private static decimal? UndeclaredSum(ReviewPerson person) =>
-        person.Undeclared.Count == 0 ? null : person.Undeclared
-            .Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal))
-            .Sum(u => u.Payment.Amount);
+    private static decimal? UndeclaredSum(ReviewPerson person) => person.UndeclaredSum; // one rule for the grid and the report
 
     /// <summary>The problems' codes, then why income goes undeclared, so the search finds both.</summary>
     private static string ProblemCodes(ReviewPerson person) =>

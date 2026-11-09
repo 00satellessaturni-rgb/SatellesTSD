@@ -38,17 +38,27 @@ public static class PayeePersons
         ArgumentNullException.ThrowIfNull(hit);
         ArgumentNullException.ThrowIfNull(catalog);
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? (hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null);
-        return hit.PersonKey is null && hit.InPeriod && NamesOf(hit.Row.Counterparty) is not null && Declares(category is null ? null : catalog.Find(category));
+        // money in (a credit row) is nobody's payout: a rent paid to the company is not rent paid by it, whatever its category
+        return hit.PersonKey is null && hit.InPeriod && hit.Row.Direction != Direction.Credit && NamesOf(hit.Row.Counterparty) is not null && Declares(category is null ? null : catalog.Find(category));
     }
+
+    /// <summary>The words that join two persons' names on one account ("MARI JA JAAN TAMM"): such a payee is nobody's one person.</summary>
+    private static readonly HashSet<string> Conjunctions = new(StringComparer.OrdinalIgnoreCase) { "JA", "AND", "UND", "OCH", "OR", "VÕI", "VOI", "И", "&" };
 
     /// <summary>The payee's names when the statement's name is a natural person's: two words or more, no digits, no legal
     /// form; the last word the last name (the banks write "MARI MAASIKAS"), an all-capitals name written as a name.</summary>
     public static (string FirstName, string LastName)? NamesOf(string? payee)
     {
-        var tokens = Tokens(payee);
-        if (tokens.Count < 2 || Tokens((payee ?? "").Replace(".", "", StringComparison.Ordinal)).Any(LegalForms.Contains) || tokens.Any(t => LegalForms.Contains(t) || t.Any(c => !char.IsLetter(c) && c is not '-' and not '\'')))
+        if ((payee ?? "").Split([',', ';', '/'], StringSplitOptions.RemoveEmptyEntries).Count(part => Tokens(part).Count >= 2) > 1)
         {
-            return null;
+            return null; // "first owner, second owner": two persons' names on one account
+        }
+
+        var tokens = Tokens(payee);
+        if (tokens.Count < 2 || tokens.Count > 4 || Tokens((payee ?? "").Replace(".", "", StringComparison.Ordinal)).Any(LegalForms.Contains)
+            || tokens.Any(t => LegalForms.Contains(t) || Conjunctions.Contains(t) || t.Any(c => !char.IsLetter(c) && c is not '-' and not '\'')))
+        {
+            return null; // not one natural person's name: a legal form, two names joined, or more words than a name has
         }
 
         var names = tokens.Select(Written).ToList();
@@ -113,9 +123,12 @@ public static class PayeePersons
         if (known is { } found)
         {
             var next = found;
-            if (next.PersonalCode is null && code is not null && !string.Equals(next.RegisterKey, key, StringComparison.Ordinal))
+            if (next.PersonalCode is null && code is not null && !persons.Any(p => p.Id != found.Id && string.Equals(p.PersonalCode, code, StringComparison.Ordinal)))
             {
-                next = next with { PersonalCode = code }; // as a register that starts writing the code gives it (a bound person whose code was cleared on the card stays cleared)
+                // the statement names the payee's code: theirs, whether the person was made from a row without it or is
+                // bound to this very name — unless another person of the company holds the code (the card cleared it to give
+                // it there, say): then the clearing stands, and the review says the code points elsewhere (decision 112)
+                next = next with { PersonalCode = code };
             }
 
             if (next.RegisterKey is null)
@@ -150,7 +163,7 @@ public static class PayeePersons
             && Sorted(Tokens(person.RegisterKey[KeyPrefix.Length..])).SequenceEqual(Sorted(Tokens(firstName + " " + lastName)), StringComparer.Ordinal);
     }
 
-    private static string? CodeOf(string? personalCode)
+    public static string? CodeOf(string? personalCode)
     {
         var code = personalCode?.Trim();
         return PersonalCode.LooksValid(code) ? code : null;

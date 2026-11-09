@@ -14,7 +14,8 @@ public class MatchCatalogTests
         var workbook = WorkbookCatalog.Catalog.FilterSets["standard"];
         Assert.Equal(workbook["Palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["Palgad"]);
         Assert.Equal(workbook["TÖR-väline palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["TÖR-väline palgad"]);
-        Assert.All(workbook.Keys.Where(k => k is not ("Palgad" or "TÖR-väline palgad")), k => Assert.Equal(workbook[k], standard[k]));
+        Assert.Equal(workbook["Kompensatsioon"].Replace(";*haigus*", ";*haigus*,*proovip?ev*", StringComparison.Ordinal), standard["Kompensatsioon"]); // a trial day is salary, never a per diem
+        Assert.All(workbook.Keys.Where(k => k is not ("Palgad" or "TÖR-väline palgad" or "Kompensatsioon")), k => Assert.Equal(workbook[k], standard[k]));
     }
 
     /// <summary>The CONFIG sheet as extracted into the repository (docs/reference/workbook-vba/CONFIG-sheet.txt).</summary>

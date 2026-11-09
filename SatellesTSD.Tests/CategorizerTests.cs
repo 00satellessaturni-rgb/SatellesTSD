@@ -20,6 +20,7 @@ public class CategorizerTests
     [InlineData("töötasu", "[Palgad]")]
     [InlineData("tasu", "[Palgad]")]
     [InlineData("proovipäev", "[Palgad]")]
+    [InlineData("proovipäeva raha", "[Palgad]")]
     [InlineData("Proovipäeva tasu 12.10.2026", "[Palgad]")]
     [InlineData("PROOVIPAEV", "[Palgad]")]
     [InlineData("Laenu tagastus", "[Laenud]")]

@@ -182,17 +182,24 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) were never sent: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them or build again first.");
         }
 
+        // the one question names everything the force would pass: the lines still open, and the keys whose every version
+        // MTA refused (nothing of them is on the server) — a refused T aside, it took nothing back and nothing resends it
         var open = lines.Where(p => p.Pending || p.Status == PaymentStatus.NeedsChange).ToList();
-        if (open.Count > 0 && !force)
+        var refused = lines.Where(p => p.Status == PaymentStatus.Rejected && p.Action != LineAction.T).ToList();
+        if (!force && (open.Count > 0 || refused.Count > 0))
         {
-            throw new DeclareException(LinesPending, $"{open.Count} line(s) still await a verdict or need a change: {string.Join(", ", open.Select(p => p.LineNumber))}.");
-        }
+            var parts = new List<string>();
+            if (open.Count > 0)
+            {
+                parts.Add($"{open.Count} line(s) still await a verdict or need a change: {string.Join(", ", open.Select(p => p.LineNumber))}");
+            }
 
-        // a key whose every version MTA refused stands as Rejected: nothing of it is on the server
-        var refused = lines.Where(p => p.Status == PaymentStatus.Rejected).ToList();
-        if (refused.Count > 0 && !force)
-        {
-            throw new DeclareException(LinesPending, $"{refused.Count} line(s) were refused by MTA and are not on the server: {string.Join(", ", refused.Select(p => p.LineNumber))}; reopen the period and build again to resend them, or confirm anyway.");
+            if (refused.Count > 0)
+            {
+                parts.Add($"{refused.Count} line(s) were refused by MTA and are not on the server: {string.Join(", ", refused.Select(p => p.LineNumber))} (reopen the period and build again to resend what the review still declares)");
+            }
+
+            throw new DeclareException(LinesPending, string.Join("; ", parts) + "; or confirm anyway.");
         }
 
         _store.SetPeriodState(periodId, PeriodState.Confirmed, _clock.GetUtcNow().UtcDateTime);

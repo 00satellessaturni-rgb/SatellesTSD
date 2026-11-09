@@ -183,7 +183,7 @@ public sealed partial class SqliteStore
     }
 
     public IReadOnlyList<ImportFile> PeriodImports(Guid periodId) =>
-        Query(ImportFileSelect + " JOIN period_import p ON p.file_id = import_file.id WHERE p.period_id = $period ORDER BY imported_at, import_file.rowid", ReadImportFile, ("$period", G(periodId)));
+        Query(ImportFileSelect + " JOIN period_import p ON p.file_id = import_file.id WHERE p.period_id = $period ORDER BY p.rowid", ReadImportFile, ("$period", G(periodId)));
 
     public void RemoveImport(Guid fileId)
     {

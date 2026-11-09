@@ -80,6 +80,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
         var header = new List<string?> { ReportText.PersonalCode, ReportText.LastName, ReportText.FirstName };
         header.AddRange(sources.Select(SourceHeader));
         header.AddRange([ReportText.SalaryTotal, ReportText.TaxFree, ReportText.Residency, ReportText.Pension, ReportText.ControlDate, ReportText.EmploymentStart, ReportText.EmploymentType, ReportText.EntryState, ReportText.EmploymentEnd]);
+        header.AddRange([ReportText.PauseStart, ReportText.PauseEnd, ReportText.DeclarationChoice, ReportText.Undeclared]); // the grid's newer columns, after the workbook's
         rows.Add(ReportRow.Headers(header.ToArray()));
         foreach (var person in view.Persons.Where(p => !p.IsUnmatched))
         {
@@ -96,6 +97,10 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             cells.Add(ReportCell.Of(store is { TypeFromCard: true } && EmploymentTypes.Find(store.TorEmploymentTypeId) is { } cardType ? cardType.Name : entry?.Type)); // the type that applies, as the grid shows it
             cells.Add(ReportCell.Of(entry?.State));
             cells.Add(ReportCell.Day(entry?.EndDate));
+            cells.Add(ReportCell.Day(person.PausedEntry?.PauseStart));
+            cells.Add(ReportCell.Day(person.PausedEntry?.PauseEnd));
+            cells.Add(ReportCell.Of(store is null ? null : ReportText.DeclarationText(store.Declaration)));
+            cells.Add(person.UndeclaredSum is { } undeclared ? ReportCell.Amount(undeclared) : ReportCell.Empty);
             rows.Add(new ReportRow(cells));
         }
 
@@ -396,7 +401,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 ReportCell.Of(p.Line.Payee?.Code),
                 ReportCell.Of(p.Line.TypeCode),
                 ReportCell.Day(p.Line.DocumentDate),
-                p.NetPaid is { } net ? ReportCell.Amount(net) : ReportCell.Empty,
+                (p.NetPaid ?? r?.Net) is { } net ? ReportCell.Amount(net) : ReportCell.Empty, // the net paid, else the engine's, as the tab shows it
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.Gross),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.SocialTax),
                 r is null || r.SocialTaxMinimumIncrease == 0 ? ReportCell.Empty : ReportCell.Amount(r.SocialTaxMinimumIncrease),
@@ -409,6 +414,19 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 ReportCell.Of(line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : null),
                 ReportCell.Of(line.Versions.ToString(CultureInfo.InvariantCulture)),
             ]));
+        }
+
+        if (lines.Count > 0)
+        {
+            // the month's totals as the tab shows them (decision 104): the standing lines, never a refused attempt nor a T
+            var totals = DeclarationTotals.Of(lines.Select(l => l.Payment));
+            var e = ReportCell.Empty;
+            rows.Add(new ReportRow([ReportCell.Of(ReportText.NetTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Net), e, e, e, e, e, e, e, e, e, e, e], header: true));
+            rows.Add(new ReportRow(
+            [
+                ReportCell.Of(ReportText.TaxTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Taxes), e, ReportCell.Amount(totals.SocialTax), e,
+                ReportCell.Amount(totals.FundedPension), ReportCell.Amount(totals.UnemploymentEmployee), ReportCell.Amount(totals.UnemploymentEmployer), ReportCell.Amount(totals.IncomeTax), e, e, e, e,
+            ], header: true));
         }
 
         return new ReportSheet(ReportText.DeclarationSheet, rows);

@@ -133,6 +133,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             .ToList();
     }
 
+    /// <summary>The cut the period's drafts were built in (the minimum's zero line belongs to both, so it says nothing);
+    /// null without a draft that says.</summary>
+    public DeclarationMode? DraftsCut(Guid periodId)
+    {
+        var drafts = _store.Payments(periodId).Where(p => p.Status == PaymentStatus.Draft && p.Action != LineAction.T && p.SourceRef != MinimumSource).ToList();
+        return drafts.Count == 0 ? null : drafts.Any(IsTotals) ? DeclarationMode.TotalsPerType : DeclarationMode.PerPayment;
+    }
+
     /// <summary>Whether the period's drafts are what a build would make now: a build run and rolled back, its drafts
     /// compared with the stored ones (by key, action, source, person, net paid and the line itself, its counter aside) — so
     /// the export can say that the review changed after "Koosta read". False too for a stale search (the files

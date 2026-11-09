@@ -93,13 +93,13 @@ public class ReportTests
         using var box = Ready();
         var sheet = box.Build().Sheet(ReportText.InterimSheet)!;
         Assert.Equal(
-            ["Töötaja isikukood", "Perekonnanimi", "Eesnimi", "LHV pank *1757", "PALK NETO KOKKU", "Maksuvaba", "Residentsus", "Pension", "Kontroll-kp", "Töötamise alguse aeg", "Töötamise liik", "Kande olek", "Töötamise lõpu aeg"],
+            ["Töötaja isikukood", "Perekonnanimi", "Eesnimi", "LHV pank *1757", "PALK NETO KOKKU", "Maksuvaba", "Residentsus", "Pension", "Kontroll-kp", "Töötamise alguse aeg", "Töötamise liik", "Kande olek", "Töötamise lõpu aeg", "Peatamise algus", "Peatamise lõpu aeg", "Deklareerimine", "Deklareerimata"],
             Texts(sheet, 1));
         Assert.True(sheet.Row(1).Header);
-        Assert.Equal(["48712219406", "MAASIKAS", "MARI", "905.92", "905.92", "700", "EE", "ei ole liitunud", "2026-11-04", "2024-02-15", "Tööleping", "Kehtiv", ""], Texts(sheet, 2)); // Kontroll-kp = the day the facts were confirmed
+        Assert.Equal(["48712219406", "MAASIKAS", "MARI", "905.92", "905.92", "700", "EE", "ei ole liitunud", "2026-11-04", "2024-02-15", "Tööleping", "Kehtiv", "", "", "", "", ""], Texts(sheet, 2)); // Kontroll-kp = the day the facts were confirmed
         Assert.Equal(ReportCellKind.Code, sheet.At(2, 1).Kind);
         Assert.Equal(ReportCellKind.Date, sheet.At(2, 9).Kind);
-        Assert.Equal(["38810140309", "TAMM", "JAAN", "", "0", "700", "kontrollimata", "kontrollimata", "", "2020-01-01", "VÕS leping", "Lõpetatud", "2026-09-30"], Texts(sheet, 3));
+        Assert.Equal(["38810140309", "TAMM", "JAAN", "", "0", "700", "kontrollimata", "kontrollimata", "", "2020-01-01", "VÕS leping", "Lõpetatud", "2026-09-30", "", "", "", ""], Texts(sheet, 3));
         Assert.True(sheet.Row(4).Cells.Count == 0, "the person block ends at a blank row");
 
         // Maksuvaba: empty when the exemption is not applied; the pension-age allowance once the person has reached it
@@ -251,6 +251,27 @@ public class ReportTests
     }
 
     [Fact]
+    public void The_Vahearuanne_gives_the_pause_the_declaration_choice_and_the_undeclared_sum_as_the_grid_does()
+    {
+        var (store, _, period, _) = ReviewFixtures.Setup(mariPaused: true);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var clock = new FixedClock(At);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026, clock);
+            var builder = new ReportBuilder(store, workspace, declarer, clock);
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.SavePerson(mari with { Declaration = DeclarationChoice.Exclude });
+
+            var view = workspace.Load(period.Id);
+            Assert.Equal(905.92m, view.Persons[0].UndeclaredSum); // the salary kept out by the card
+            var row = Texts(builder.Build(period.Id).Sheet(ReportText.InterimSheet)!, 2);
+            Assert.Equal(["2026-08-03", "2027-06-30", "välja", "905.92"], row.Skip(13)); // Peatamise algus, Peatamise lõpu aeg, Deklareerimine, Deklareerimata
+        }
+    }
+
+    [Fact]
     public void The_Deklaratsioon_sheet_lists_the_standing_lines()
     {
         using var box = Ready();
@@ -260,13 +281,20 @@ public class ReportTests
 
         box.Declarer.Build(box.Period.Id);
         var sheet = box.Build().Sheet(ReportText.DeclarationSheet)!;
-        Assert.Equal(2, sheet.Rows.Count);
+        Assert.Equal(4, sheet.Rows.Count);
         var line = Texts(sheet, 2);
         Assert.Equal(("EE0201001", "R uus", "mustand", "MAASIKAS MARI", "EE48712219406", "10", "2026-10-05", "905.92"), (line[0], line[2], line[3], line[4], line[5], line[6], line[7], line[8]));
         Assert.StartsWith("10235688-202610-01-", line[1]);
         Assert.True(sheet.At(2, 10).Number > 905.92m, "the gross");
         Assert.Equal(ReportCellKind.Number, sheet.At(2, 11).Kind);
         Assert.Equal("1", line[^1]);
+
+        // the tab's totals under the lines (decision 104): the net, then the taxes with their parts
+        Assert.Equal(("NETO KOKKU", "905.92"), (Texts(sheet, 3)[0], Texts(sheet, 3)[8]));
+        Assert.Equal("MAKSUD KOKKU", Texts(sheet, 4)[0]);
+        Assert.True(sheet.At(4, 9).Number > 0m, "the taxes to pay");
+        Assert.True(sheet.At(4, 11).Number > 0m, "the social tax");
+        Assert.True(sheet.Row(3).Header && sheet.Row(4).Header);
     }
 
     [Fact]

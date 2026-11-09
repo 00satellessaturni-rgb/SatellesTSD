@@ -930,6 +930,44 @@ public class DeclareTests
     }
 
     [Fact]
+    public void The_cut_the_drafts_were_built_with_is_read_from_them()
+    {
+        using var box = Ready();
+        Assert.Null(box.Declarer.DraftsCut(box.Period.Id)); // nothing built: no cut to speak of
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(DeclarationMode.PerPayment, box.Declarer.DraftsCut(box.Period.Id));
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal(DeclarationMode.TotalsPerType, box.Declarer.DraftsCut(box.Period.Id)); // the export compares it with the switch, and asks when they differ
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(DeclarationMode.PerPayment, box.Declarer.DraftsCut(box.Period.Id));
+    }
+
+    [Fact]
+    public void The_confirmation_names_the_lines_awaiting_a_verdict_and_the_refused_ones_in_one_question()
+    {
+        using var box = Ready();
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        var lines = box.Lines;
+        Assert.Equal(2, lines.Count);
+
+        // one line settled as refused by hand, the other still awaiting its verdict
+        box.Submitter.Resolve(lines[0].Id, onServer: false);
+        Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Sent], box.Lines.Select(l => l.Status));
+
+        var refused = Assert.Throws<DeclareException>(() => box.Submitter.MarkConfirmed(box.Period.Id));
+        Assert.Equal(PeriodSubmitter.LinesPending, refused.Code);
+        Assert.Contains("await a verdict", refused.Message);
+        Assert.Contains("refused by MTA", refused.Message); // both said in the one question, not one after the other
+        Assert.EndsWith("or confirm anyway.", refused.Message);
+
+        box.Submitter.MarkConfirmed(box.Period.Id, force: true);
+        Assert.Equal(PeriodState.Confirmed, box.Store.Periods(box.Company.Id).Single().State);
+    }
+
+    [Fact]
     public void A_refused_payments_line_that_used_the_months_exemption_holds_the_persons_other_payments_back()
     {
         using var box = Ready();

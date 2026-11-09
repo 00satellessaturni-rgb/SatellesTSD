@@ -233,7 +233,7 @@ public class WindowTests
                 Assert.All(sources, c => Assert.False(c.Visible));
                 Assert.True(grid.Columns["total"]!.Visible);
                 Assert.True(grid.Columns["undeclared"]!.Visible);
-                Assert.Equal(0, grid.CurrentCell?.RowIndex); // still on the person
+                Assert.Equal((0, "total"), (grid.CurrentCell?.RowIndex, grid.CurrentCell?.OwningColumn.Name)); // still on the person, on PALK NETO KOKKU
             });
 
             // the next window: the columns built hidden; and shown again
@@ -642,6 +642,7 @@ public class WindowTests
                       <entryDetail>
                         <lineReferences><lineReference><lineInternalId>{line.LineNumber}</lineInternalId><lineNumberCounter>1</lineNumberCounter></lineReference></lineReferences>
                         <data><code>TSD_SM</code><description>Sotsiaalmaks</description><info>330,00</info></data>
+                        <data><code>TSD_KTM</code><description>Kinnipeetud tulumaks</description><info>120,00</info></data>
                         <data><code>KR_TEST_HOIATUS</code><description>WARNING</description><info>vaata üle</info></data>
                       </entryDetail>
                     </responseData>
@@ -660,6 +661,9 @@ public class WindowTests
             var tip = panel.FeedbackTips.TextOf(panel.LinesGrid.Rows[0]) ?? "";
             Assert.Contains("KR_TEST_HOIATUS (Warning): vaata üle", tip, StringComparison.Ordinal);
             Assert.Contains("sotsiaalmaks", tip, StringComparison.Ordinal);
+            var ktm = Assert.Single(tip.Split(Environment.NewLine), l => l.Contains("tulumaks (kinnipeetud)", StringComparison.Ordinal)); // the server's KTM with our figure beside it
+            Assert.Matches(@"tulumaks \(kinnipeetud\): 120[.,]00 \(\d+[.,]\d\d\)$", ktm);
+            Assert.DoesNotContain("TSD_KTM", tip, StringComparison.Ordinal);
             Assert.Contains(UiText.NextActionText(Core.Feedback.NextAction.ReviewWarning), tip, StringComparison.Ordinal);
             Assert.DoesNotContain("sotsiaalmaks", cell.ToolTipText, StringComparison.Ordinal); // the grid's own tooltip would cut the text at 256 characters: never given it
             Assert.Contains("KR_JAOTIS_TEST", panel.SubmissionsList.Items[0].ToolTipText, StringComparison.Ordinal);

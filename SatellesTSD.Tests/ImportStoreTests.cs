@@ -282,6 +282,25 @@ public class ImportStoreTests
     }
 
     [Fact]
+    public void A_periods_files_come_in_the_order_they_were_linked_not_the_order_imported()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var headers = LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>();
+            var octoberBytes = Tables.Xlsx("LHV", headers, ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"]);
+            var feesBytes = Tables.Xlsx("LHV", headers, ["EE497700771001131757", 2, new DateTime(2026, 10, 6), null, null, "D", -0.38, null, null, "Teenustasu", "EUR"]);
+            var fees = store.AddImport(company.Id, Importer.Read("tasud.xlsx", feesBytes), feesBytes); // imported first
+            var october = store.AddImport(company.Id, Importer.Read("oktoober.xlsx", octoberBytes), octoberBytes);
+            store.LinkImport(period.Id, october.Id);
+            store.LinkImport(period.Id, fees.Id);
+
+            Assert.Equal([october.Id, fees.Id], store.PeriodImports(period.Id).Select(f => f.Id)); // the files as linked (decision 86): the first linked holds the originals
+            Assert.Equal([fees.Id, october.Id], store.Imports(company.Id).Select(f => f.Id)); // the company's list stays by import
+        }
+    }
+
+    [Fact]
     public void A_deleted_layout_must_leave_the_merged_catalog_usable_too()
     {
         var (store, _, _) = Setup();

@@ -497,6 +497,27 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void A_black_M_report_read_again_onto_a_version_long_settled_leaves_the_later_R_pending()
+    {
+        var (store, _, period, person) = Setup();
+        using (store)
+        {
+            var r = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            store.AddSubmission(period.Id, "f1.xml", "u1", [r.Id], DateTime.UtcNow);
+            var m = store.AddPayment(SalaryDraft(store, period, person, LineAction.M, r.LineNumber, gross: 900m));
+            var file2 = store.AddSubmission(period.Id, "f2.xml", "u2", [m.Id], DateTime.UtcNow);
+            store.RecordFeedback(file2.Id, Coloured("EE0201001", r.LineNumber, "ERROR_BLACK", FeedbackReport.RuleChangeOnUnknownKey));
+            var again = store.AddPayment(SalaryDraft(store, period, person, LineAction.R, r.LineNumber));
+            store.AddSubmission(period.Id, "f3.xml", "u3", [again.Id], DateTime.UtcNow);
+
+            // the second file's report read once more: its M was settled long ago, and says nothing of the R sent since
+            store.RecordFeedback(file2.Id, Coloured("EE0201001", r.LineNumber, "ERROR_BLACK", FeedbackReport.RuleChangeOnUnknownKey));
+
+            Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Rejected, PaymentStatus.Sent], store.History(period.Id, Section.EE0201001, r.LineNumber).Select(v => v.Status));
+        }
+    }
+
+    [Fact]
     public void A_report_that_names_a_line_of_another_file_is_refused()
     {
         var (store, _, period, person) = Setup();

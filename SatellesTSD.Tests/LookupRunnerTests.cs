@@ -201,6 +201,7 @@ public class LookupRunnerTests
             Assert.Equal(2, residency.Asked.Count);
             var after = store.FindPerson(company.Id, "48712219406")!;
             Assert.Equal((LookupSource.Emta, true, 0.02m, new DateOnly(2026, 9, 30)), (after.ResidencySource, after.FundedPensionMember, after.PensionRate, after.PensionCheckedOn)); // the pension facts untouched by the failed pension answer
+            Assert.Equal(before.FactsControlDate, after.FactsControlDate); // stamped once both register facts are of the month, not by the residency alone
             Assert.Contains(second.Persons[0].Problems, p => p.StartsWith(LookupRunner.Failed) && p.Contains("pension"));
         }
     }

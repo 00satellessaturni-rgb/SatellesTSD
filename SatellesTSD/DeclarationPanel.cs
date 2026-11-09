@@ -79,7 +79,7 @@ public sealed class DeclarationPanel : UserControl
     private void Filter()
     {
         var needle = _search.Text.Trim();
-        static bool Matches(DataGridViewRow row, string text) => row.Cells.Cast<DataGridViewCell>().Any(c => c.FormattedValue?.ToString()?.Contains(text, StringComparison.OrdinalIgnoreCase) == true);
+        static bool Matches(DataGridViewRow row, string text) => row.Cells.Cast<DataGridViewCell>().Any(c => c.OwningColumn.Visible && c.FormattedValue?.ToString()?.Contains(text, StringComparison.OrdinalIgnoreCase) == true);
         MainForm.FilterRows(_lines, needle, Matches);
         ShowTotals();
         EnableLineButtons();

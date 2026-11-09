@@ -98,6 +98,10 @@ public sealed class HistoryDialog : Form
         foreach (var version in Versions)
         {
             var feedback = _services.Store.Feedback(version.Id).LastOrDefault();
+            // a version refused over its own green, yellow or red report by a later version's black _5 (decision 93): the row says so (one refused by hand, without a report, is left as it is)
+            var rejectedBy = version.Status == PaymentStatus.Rejected && feedback is not null && feedback.Severity != Core.Feedback.Severity.Black
+                ? Versions.FirstOrDefault(v => v.Version > version.Version && _services.Store.Feedback(v.Id).Any(f => f.Severity == Core.Feedback.Severity.Black && f.Messages.Any(m => m.Code == Core.Feedback.FeedbackReport.RuleChangeOnUnknownKey)))
+                : null;
             var index = _grid.Rows.Add(
                 version.Version.ToString(CultureInfo.InvariantCulture),
                 ReportText.ActionText(version.Action),
@@ -106,10 +110,11 @@ public sealed class HistoryDialog : Form
                 version.SubmissionId is { } submission && files.TryGetValue(submission, out var file) ? file : "",
                 version.NetPaid is { } net ? UiText.Money(net) : "",
                 version.Result is { } r ? UiText.Money(r.Gross) : "",
-                feedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "");
+                rejectedBy is { } by ? UiText.HistoryRejectedBy(by.Version) : feedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "");
             var row = _grid.Rows[index];
             row.Tag = version;
-            FeedbackTips.Set(row, feedback is null ? null : UiText.FeedbackDetail(feedback, version.Result));
+            var tip = feedback is null ? null : UiText.FeedbackDetail(feedback, version.Result);
+            FeedbackTips.Set(row, rejectedBy is { } later ? $"{UiText.HistoryRejectedBy(later.Version)}{(tip is null ? "" : Environment.NewLine + tip)}" : tip);
 
             if (version.Status is PaymentStatus.Rejected or PaymentStatus.Cancelled)
             {

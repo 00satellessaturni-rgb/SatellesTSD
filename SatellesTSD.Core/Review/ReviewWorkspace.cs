@@ -22,6 +22,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// <summary>The source name of the lines added by hand.</summary>
     public const string ByHandSource = "by hand";
 
+    /// <summary>The mark a decision carries in its note once the review moved it from a copy to the original row (decision 117): "«liigutatud koopialt <reference>»", said as DECISION_MOVED until the accountant clears it.</summary>
+    public const string MovedFromMark = "«liigutatud koopialt ";
+
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
     private readonly TaxRates _rates = rates ?? TaxRates.Year2026;
     private readonly bool _ratesGiven = rates is not null;
@@ -105,6 +108,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var byId = storePersons.ToDictionary(p => p.Id);
         var payeeKnown = storePersons.ToList();
         var payeesChanged = false;
+        var standing = _store.Payments(periodId); // the lines built: a month past Draft gives a payee only to a row they were built from
+        var personProblems = new Dictionary<Guid, List<MatchProblem>>(); // what the review itself says of a person, beside the run's problems
+        var unmatchedProblems = new List<MatchProblem>();
+        var twinRows = new HashSet<Guid>(); // rent rows whose payee has a hand line of the amount this month: not declared by default
+        var twinHandLines = new HashSet<Guid>(); // the hand lines already paired with a row
+        List<MatchProblem> ProblemsOf(Guid id) => personProblems.TryGetValue(id, out var list) ? list : personProblems[id] = [];
         var byPerson = new Dictionary<Guid, List<ReviewPayment>>();
         var unmatched = new List<ReviewPayment>();
         var leftOut = 0;
@@ -142,6 +151,48 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 list.Add(i);
             }
 
+            // a decision made on a row that a file linked since turned into a copy (decision 86) belongs to the original:
+            // moved there in a Draft, unless the original carries its own; said either way, so the accountant looks
+            const string copyOf = "duplikaat: ";
+            var rowByReference = new Dictionary<string, Guid>(StringComparer.Ordinal);
+            for (var i = 0; i < run.Hits.Count; i++)
+            {
+                rowByReference.TryAdd(run.Hits[i].Reference, storedHits[i].RowId);
+            }
+
+            for (var i = 0; i < run.Hits.Count; i++)
+            {
+                var copy = run.Hits[i];
+                var copyRow = storedHits[i].RowId;
+                if (!copy.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) || !overlays.TryGetValue(copyRow, out var decided)
+                    || !copy.Text.StartsWith(copyOf, StringComparison.Ordinal) || !rowByReference.TryGetValue(copy.Text[copyOf.Length..], out var originalRow))
+                {
+                    continue;
+                }
+
+                var original = copy.Text[copyOf.Length..];
+                if (period.State == PeriodState.Draft && !overlays.ContainsKey(originalRow))
+                {
+                    // the move is marked in the line's note, so it is seen in the grid and said on every load until the
+                    // accountant clears the mark
+                    var note = $"{MovedFromMark}{copy.Reference}»" + (string.IsNullOrWhiteSpace(decided.Note) ? "" : " " + decided.Note);
+                    var moved = _store.SaveReviewLine(decided with { RowId = originalRow, Note = note });
+                    overlays.Remove(copyRow);
+                    overlays[originalRow] = moved;
+                }
+                else
+                {
+                    var why = period.State == PeriodState.Draft ? "the original carries its own" : "the month is past Draft";
+                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {original} and carries a decision; {why}, so it stays where it is — check the original.", Source: copy.Source, RowNo: copy.Row.RowNo));
+                }
+            }
+
+            foreach (var marked in overlays.Values.Where(l => l.Note?.StartsWith(MovedFromMark, StringComparison.Ordinal) == true))
+            {
+                var mark = marked.Note![..(marked.Note.IndexOf('»') is var end and >= 0 ? end + 1 : marked.Note.Length)];
+                unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionMoved, $"{mark}: a decision made on a copy was moved to the original row; check it, then clear the mark from the note."));
+            }
+
             foreach (var rowId in rowOrder)
             {
                 var indices = hitsByRow[rowId];
@@ -149,7 +200,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 var shared = indices.Count > 1;
                 var hit = run.Hits[indices[0]];
                 var defaultPerson = !shared && hit.PersonKey is { } key && personsByKey.TryGetValue(key, out var dp) ? dp
-                    : !shared && hit.PersonKey is null ? PayeeOf(hit, overlay) : null;
+                    : !shared && hit.PersonKey is null ? PayeeOf(hit, overlay, rowId) : null;
                 var personId = overlay is { NoPerson: true } ? null : overlay?.PersonId ?? defaultPerson?.Id;
                 var person = personId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
                 var candidates = shared ? indices.Select(i => run.Hits[i].PersonKey).OfType<string>().Distinct().Select(k => personsByKey[k].FullName).ToList() : [];
@@ -167,7 +218,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 var register = person is not null
                     ? registerByPersonId.GetValueOrDefault(person.Id)
                     : hit.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
-                Place(FromHit(period, hit, rowId, overlay, person, defaultPerson?.Id, register, catalog, shared, candidates, assumed.Contains(hit.Source)));
+                Place(FromHit(period, hit, rowId, overlay, person, defaultPerson?.Id, register, catalog, shared, candidates, assumed.Contains(hit.Source), twinRows.Contains(rowId)));
             }
         }
 
@@ -193,16 +244,16 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     continue; // two register rows bound to one store person show once
                 }
 
-                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).ToList(), catalog, false, TotalsPerType));
+                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).Concat(ProblemsOf(person.Id)).ToList(), catalog, false, TotalsPerType));
             }
         }
 
         foreach (var id in byPerson.Keys.OrderBy(id => byId[id].LastName, StringComparer.OrdinalIgnoreCase).ThenBy(id => byId[id].FirstName, StringComparer.OrdinalIgnoreCase).ToList())
         {
-            persons.Add(Make(null, byId[id], null, Take(id), [], catalog, false, TotalsPerType));
+            persons.Add(Make(null, byId[id], null, Take(id), ProblemsOf(id), catalog, false, TotalsPerType));
         }
 
-        persons.Add(Make(null, null, null, unmatched, [], catalog, true, TotalsPerType));
+        persons.Add(Make(null, null, null, unmatched, unmatchedProblems, catalog, true, TotalsPerType));
 
         var sources = run?.Sources.Select(s => s.Name).ToList() ?? [];
         if (lines.Any(l => l.IsByHand))
@@ -248,28 +299,66 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
         // the payee of a row nobody of the register was found for, when its category is declared on the payee's own code
         // (Üür): a person of the company, created while the month is prepared; a month past Draft keeps its run as it was
-        Person? PayeeOf(MatchHit hit, ReviewLine? overlay)
+        Person? PayeeOf(MatchHit hit, ReviewLine? overlay, Guid rowId)
         {
             if (!PayeePersons.IsPayeeRow(hit, overlay, catalog))
             {
                 return null;
             }
 
-            Person? payee;
-            if (period.State != PeriodState.Draft || overlay is { NoPerson: true } || overlay?.PersonId is not null)
+            var counterparty = hit.Row.Counterparty!;
+            if (overlay is { NoPerson: true } || overlay?.PersonId is not null)
             {
-                // a month past Draft is read, never written: its payee as already made; nor is anybody made for a row the
-                // accountant gave a person or nobody
-                return PayeePersons.Find(payeeKnown, hit.Row.Counterparty!, hit.Row.CounterpartyCode);
+                // nobody is made for a row the accountant gave a person or nobody: the payee as already made, if any
+                return PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode);
             }
 
-            payee = PayeePersons.Ensure(_store, company.Id, hit.Row.Counterparty!, hit.Row.CounterpartyCode, payeeKnown, out var changed);
-            if (payee is not null && changed)
+            if (period.State != PeriodState.Draft)
+            {
+                // a month past Draft is read, never written: its payee only where a line of the month was built from the row — a
+                // person made since (in another month's Draft, or by hand) is not read back into a month declared without them
+                var built = standing.Any(l => l.SourceRowId == rowId
+                    || (Declare.PeriodDeclarer.TotalsOf(l.SourceRef) is { } totals && totals.References.Split("; ").Contains(hit.Reference, StringComparer.Ordinal)));
+                return built ? PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode) : null;
+            }
+
+            var payee = PayeePersons.Ensure(_store, company.Id, counterparty, hit.Row.CounterpartyCode, payeeKnown, out var changed);
+            if (payee is null)
+            {
+                PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode, out var ambiguous);
+                if (ambiguous)
+                {
+                    unmatchedProblems.Add(new MatchProblem(MatchProblem.PayeeAmbiguous, $"{hit.Reference}: two persons of the company have the payee's names; name the one on the row.", Source: hit.Source, RowNo: hit.Row.RowNo));
+                }
+
+                return null;
+            }
+
+            if (changed)
             {
                 payeesChanged = true;
                 payeeKnown.RemoveAll(p => p.Id == payee.Id);
                 payeeKnown.Add(payee);
                 byId[payee.Id] = payee;
+            }
+
+            // the row's code held by another person of the company: not taken (decision 112), and said — the cards want a look
+            if (PayeePersons.CodeOf(hit.Row.CounterpartyCode) is { } statementCode && payee.PersonalCode != statementCode
+                && payeeKnown.Any(p => p.Id != payee.Id && string.Equals(p.PersonalCode, statementCode, StringComparison.Ordinal)))
+            {
+                ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeCodeElsewhere, $"{hit.Reference}: the row's personal code belongs to another person of the company; the row is the payee's by the bound names — check the two cards.", Source: hit.Source, RowNo: hit.Row.RowNo));
+            }
+
+            // a line added by hand of the same amount for the payee this month, declaring something: the rent may be declared
+            // there already — the row is not declared by default, and the person says so, until the accountant's tick or
+            // untick on the row ends the word; one hand line pairs with one row
+            if (overlay?.Declare is null
+                && lines.FirstOrDefault(l => l.IsByHand && !twinHandLines.Contains(l.Id) && l.PersonId == payee.Id && l.Amount == hit.Amount && l.Declare != false
+                    && (l.Category is not null || l.TypeCode is not null) && l.Date is { } day && day.Year == period.Year && day.Month == period.Month) is { } twin)
+            {
+                twinHandLines.Add(twin.Id);
+                twinRows.Add(rowId);
+                ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeHandLine, $"{hit.Reference}: a line added by hand of the same amount stands for the person this month; the row is not declared by default (tick it when both are real).", Source: hit.Source, RowNo: hit.Row.RowNo));
             }
 
             return payee;
@@ -416,7 +505,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             ResidencyCheckedOn = residency == Residency.NonResident ? Today() : null });
     }
 
-    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed)
+    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false)
     {
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? defaultCategory;
@@ -427,7 +516,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var euro = ReviewChecks.IsEuro(hit.Row.Currency);
         var duplicate = hit.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal);
         var amountOk = hit.Row.Amount is not null && (!shared || person is not null) && !duplicate;
-        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null;
+        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null && !twin;
         var declare = overlay?.Declare ?? defaultDeclare;
         var blockers = ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate);
         return new ReviewPayment
