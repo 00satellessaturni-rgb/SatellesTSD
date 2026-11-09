@@ -118,7 +118,15 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var personProblems = new Dictionary<Guid, List<MatchProblem>>(); // what the review itself says of a person, beside the run's problems
         // what the search said of the register as a whole (another employer's rows left out) is shown with the rows nobody
         // matched, so it is seen whenever the month is opened, not only in the search's log
-        var unmatchedProblems = run?.Problems.Where(p => p.Code == MatchProblem.OtherEmployer).ToList() ?? [];
+        var unmatchedProblems = run?.Problems.Where(p => p.Code is MatchProblem.OtherEmployer or MatchProblem.RowsBelowLastPayee).ToList() ?? [];
+        if (run is not null)
+        {
+            // a search made before decision 140 carries no count of the rows below the last payee row: told from the rows themselves
+            foreach (var source in run.Sources.Where(s => unmatchedProblems.All(p => p.Code != MatchProblem.RowsBelowLastPayee || p.Source != s.Name)))
+            {
+                unmatchedProblems.AddRange(PeriodMatcher.RowsBelowLastPayee(source).Where(p => p.Code == MatchProblem.RowsBelowLastPayee));
+            }
+        }
         var twinRows = new HashSet<Guid>(); // rent rows whose payee has a hand line of the amount this month: not declared by default
         var twinHandLines = new HashSet<Guid>(); // the hand lines already paired with a row
         List<MatchProblem> ProblemsOf(Guid id) => personProblems.TryGetValue(id, out var list) ? list : personProblems[id] = [];

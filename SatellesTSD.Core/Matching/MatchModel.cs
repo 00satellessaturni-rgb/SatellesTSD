@@ -140,6 +140,9 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     /// <summary>A person the card declares as if employed ("kaasa") whom the month's register does not list and who has no
     /// payment: shown, nothing built (decision 137).</summary>
     public const string IncludedWithoutRow = "INCLUDED_NO_ROW";
+
+    /// <summary>Rows of a statement below its last payee row were not listed (the workbook's cut, decision 29): counted and said (140).</summary>
+    public const string RowsBelowLastPayee = "ROWS_BELOW_LAST_PAYEE";
 }
 
 /// <summary>One row of the workbook's "Otsingu kontroll": a statement row with the person it was found for (or none),

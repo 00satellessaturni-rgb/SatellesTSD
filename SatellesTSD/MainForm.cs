@@ -173,6 +173,8 @@ public sealed class MainForm : Form
         _stopButton.Click += (_, _) => _lookups?.Cancel();
         _undeclaredTips = new GridTips(_personsGrid, "undeclared");
         Disposed += (_, _) => _undeclaredTips.Dispose();
+        _problemTips = new GridTips(_personsGrid, "problems"); // the problems' texts, the cell holding the codes only
+        Disposed += (_, _) => _problemTips.Dispose();
         _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
         _closeButton.Click += (_, _) => Close();
 
@@ -310,6 +312,7 @@ public sealed class MainForm : Form
 
     /// <summary>The persons grid's "Deklareerimata" tooltip: each payment left out and why.</summary>
     private readonly GridTips _undeclaredTips;
+    private readonly GridTips _problemTips;
 
     internal GridTips UndeclaredTips => _undeclaredTips;
 
@@ -1437,6 +1440,7 @@ public sealed class MainForm : Form
         _filling = true;
         var sort = SortOf(_personsGrid);
         _undeclaredTips.Clear();
+        _problemTips.Clear();
         _personsGrid.Rows.Clear();
         _personsGrid.Columns.Clear();
         if (_view is null)
@@ -1510,6 +1514,7 @@ public sealed class MainForm : Form
             var row = _personsGrid.Rows[index];
             row.Tag = person;
             _undeclaredTips.Set(row, UiText.UndeclaredTip(person.Undeclared));
+            _problemTips.Set(row, string.Join(Environment.NewLine, person.Problems.Select(x => $"{x.Code}: {x.Message}")));
             if (person.IsUnmatched)
             {
                 row.DefaultCellStyle.Font = new Font(_personsGrid.Font, FontStyle.Italic);

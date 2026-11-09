@@ -151,6 +151,34 @@ public class MatchStoreTests
     }
 
     [Fact]
+    public void The_rows_below_a_statements_last_payee_row_are_counted_and_said_on_the_rows_nobody_matched()
+    {
+        var store = SqliteStore.InMemory();
+        using (store)
+        {
+            var company = store.AddCompany("10235688", "Näidis OÜ");
+            var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
+            var bytes = Tables.Xlsx(
+                ("Töötajate loend", [TorHeaders.All.ToArray<object?>(),
+                    ["1", 48712219406d, "MAASIKAS", "MARI", new DateTime(2024, 2, 15), 1, "Tööleping", 2, "Kehtiv", null, null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"]], false),
+                ("LHV", [LayoutCatalog.Default.Find("lhv-et-short")!.Headers.ToArray<object?>(),
+                    ["EE497700771001131757", 1, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -905.92, null, "2026100500000001", "palk", "EUR"],
+                    ["EE497700771001131757", 2, new DateTime(2026, 10, 31), null, null, "D", -2.5, null, null, "Kuuhooldustasu", "EUR"], // a fee below the last payee row
+                    ["EE497700771001131757", 3, new DateTime(2026, 10, 31), null, null, null, 12345.67, null, null, "Lõppsaldo", "EUR"], // the closing balance
+                    [null, null, null, null, null, null, null, null, null, null, null]], false)); // a blank tail: not a row
+            var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
+            store.LinkImport(period.Id, file.Id);
+
+            new MatchRunner(store).Run(period.Id);
+            var view = new ReviewWorkspace(store, TaxRates.Year2026).Load(period.Id);
+
+            Assert.DoesNotContain(view.Unmatched.Payments, p => p.Amount == 2.5m || p.Amount == 12345.67m); // the cut stands (decision 29)
+            var said = Assert.Single(view.Unmatched.Problems, p => p.Code == MatchProblem.RowsBelowLastPayee);
+            Assert.Contains("[rows 3–4]: 2 row(s) below the last payee row", said.Message, StringComparison.Ordinal); // the sheet's rows 3 and 4, under the header
+        }
+    }
+
+    [Fact]
     public void A_run_must_come_from_the_periods_files_and_rows()
     {
         var (store, company, period, file) = Setup();

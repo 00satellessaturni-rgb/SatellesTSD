@@ -20,6 +20,34 @@ public sealed class PeriodMatcher
 
     public MatchCatalog Catalog => _catalog;
 
+    /// <summary>What the search says of a source's rows below its last payee row (decision 140): they stay out (the workbook's cut,
+    /// 29) but are counted and said, since a fee or the closing balance may lie there and the parser cannot tell the one from
+    /// the other; a header row among them is said as such; a source with no payee row at all is said as that. Computed from
+    /// the rows, so a month searched before this rule is told the same when opened.</summary>
+    public static IReadOnlyList<MatchProblem> RowsBelowLastPayee(MatchSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var lastNamed = source.Rows.LastOrDefault(r => !string.IsNullOrEmpty(r.Counterparty))?.RowNo ?? 0;
+        var below = source.Rows.Where(r => r.RowNo > lastNamed && r.SkipReason != SkipReason.Blank).ToList();
+        var problems = new List<MatchProblem>();
+        foreach (var header in below.Where(r => r.SkipReason == SkipReason.Header))
+        {
+            problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{header.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: header.RowNo));
+        }
+
+        var rows = below.Where(r => r.SkipReason != SkipReason.Header).ToList();
+        if (rows.Count == 0)
+        {
+            return problems;
+        }
+
+        var span = rows.Count == 1 ? $"row {rows[0].RowNo}" : $"rows {rows[0].RowNo}–{rows[^1].RowNo}";
+        problems.Add(lastNamed == 0
+            ? new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: no row names a payee, so none of its {rows.Count} row(s) were listed — check the layout's payee column.", Source: source.Name, RowNo: rows[0].RowNo)
+            : new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: {rows.Count} row(s) below the last payee row were not listed — a fee or the closing balance may be among them; see the statement.", Source: source.Name, RowNo: rows[0].RowNo));
+        return problems;
+    }
+
     public MatchResult Run(int year, int month, IReadOnlyList<MatchPerson> persons, IReadOnlyList<MatchSource> sources)
     {
         ArgumentNullException.ThrowIfNull(persons);
@@ -141,6 +169,7 @@ public sealed class PeriodMatcher
         foreach (var source in sources)
         {
             var lastNamed = source.Rows.LastOrDefault(r => !string.IsNullOrEmpty(r.Counterparty))?.RowNo ?? 0;
+            problems.AddRange(RowsBelowLastPayee(source));
             foreach (var row in source.Rows)
             {
                 if (row.RowNo > lastNamed || matchedRows.Contains((source.Name, row.RowNo)))

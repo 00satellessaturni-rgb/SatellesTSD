@@ -42,6 +42,8 @@ public class PeriodMatcherTests
         Row(13, "2026-10-13", "Peeter Kask", -100m, "Lõpparve"),
         Row(14, "2026-09-02", "AN®ELIKA BABITŠEVA", -1000m, "Laen"),
         Row(15, "2026-10-31", null, 12345.67m, "Lõppsaldo", Direction.Unknown, SkipReason.NoName),
+        Row(16, null, null, null, null, Direction.Unknown, SkipReason.Blank), // a blank line below the cut: not counted
+        Row(17, "2026-10-31", null, -0.5m, "Hooldustasu", skip: SkipReason.NoName), // a fee below the balance: counted
     ]);
 
     private static readonly MatchSource Kassa = new("Kassa", "kassa", LayoutKind.Table,
@@ -140,6 +142,24 @@ public class PeriodMatcherTests
         Assert.Contains(result.Problems, p => p.Code == MatchProblem.HeaderRow && p.RowNo == 12);
         Assert.DoesNotContain(result.Hits, h => h.Row.RowNo == 12); // a pasted header row is left out
         Assert.DoesNotContain(result.Hits, h => h.Row.RowNo == 15); // the balance line after the last named row: the workbook never reached it
+        Assert.DoesNotContain(result.Hits, h => h.Row.RowNo >= 16);
+        var below = Assert.Single(result.Problems, p => p.Code == MatchProblem.RowsBelowLastPayee); // but they are counted and said (decision 140), the blank line not
+        Assert.Equal(("Swedbank *2353", 15), (below.Source, below.RowNo));
+        Assert.StartsWith("Swedbank *2353 [rows 15–17]: 2 row(s) below the last payee row were not listed", below.Message);
+
+        // a header pasted below the cut is said as a header; a source with no payee row at all is said as that
+        var tail = new MatchSource("B", "lhv-et-short", LayoutKind.Bank,
+        [
+            Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk"),
+            Row(3, "2026-10-12", null, null, "Selgitus", Direction.Unknown, SkipReason.Header), // a pasted header: no payee cell of its own
+            Row(4, "2026-10-31", null, 100m, "Lõppsaldo", Direction.Unknown, SkipReason.NoName),
+        ]);
+        var tailProblems = PeriodMatcher.RowsBelowLastPayee(tail with { Rows = tail.Rows.Where(r => r.RowNo > 2).ToList() }); // the header first, no payee row left
+        Assert.Contains(tailProblems, p => p.Code == MatchProblem.HeaderRow && p.RowNo == 3);
+        Assert.Contains(tailProblems, p => p.Code == MatchProblem.RowsBelowLastPayee && p.Message.Contains("no row names a payee", StringComparison.Ordinal) && p.Message.Contains("1 row(s)", StringComparison.Ordinal));
+        var withPayee = PeriodMatcher.RowsBelowLastPayee(tail);
+        Assert.Contains(withPayee, p => p.Code == MatchProblem.HeaderRow && p.RowNo == 3);
+        Assert.Contains(withPayee, p => p.Code == MatchProblem.RowsBelowLastPayee && p.Message.StartsWith("B [row 4]: 1 row(s) below", StringComparison.Ordinal));
     }
 
     [Fact]
