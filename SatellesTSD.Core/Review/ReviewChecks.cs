@@ -18,18 +18,26 @@ public static class ReviewChecks
     public const string ForeignCurrency = "FOREIGN_CURRENCY";
     public const string DuplicateRow = "DUPLICATE_ROW";
 
+    /// <summary>Money that came in (a credit row) is no payout, whatever category it was given (decision 141).</summary>
+    public const string MoneyIn = "MONEY_IN";
+
     /// <summary>Whether an amount is in euros: the statement names no currency (the banks' euro accounts), or names the euro.</summary>
     public static bool IsEuro(string? currency) =>
         string.IsNullOrWhiteSpace(currency) || currency.Trim().Equals("EUR", StringComparison.OrdinalIgnoreCase) || currency.Trim() == "€";
 
     /// <param name="duplicate">The row is a copy of an earlier source's row (the run's DUPLICATE_ROW): the original counts, this one never.</param>
-    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false)
+    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown)
     {
         ArgumentNullException.ThrowIfNull(rates);
         var refusals = new List<Refusal>();
         if (!IsEuro(currency))
         {
             refusals.Add(new Refusal(ForeignCurrency, $"The amount is in {currency!.Trim()}, not in euros; declare the euro amount on a line added by hand."));
+        }
+
+        if (direction == Import.Direction.Credit)
+        {
+            refusals.Add(new Refusal(MoneyIn, "The row is money in, not a payout, and is not declared here; a salary paid back is a correction of the payment it refunds, made in e-MTA."));
         }
 
         if (duplicate)

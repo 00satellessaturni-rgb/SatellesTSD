@@ -549,9 +549,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var euro = ReviewChecks.IsEuro(hit.Row.Currency);
         var duplicate = hit.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal);
         var amountOk = hit.Row.Amount is not null && (!shared || person is not null) && !duplicate;
-        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null && !twin;
+        // money that came in is no payout, whatever category the accountant gave the row (decision 141)
+        var moneyIn = hit.Row.Direction == Direction.Credit;
+        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
         var declare = overlay?.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate);
+        var blockers = ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -642,7 +644,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var sums = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var payment in payments)
         {
-            if (payment.Category is { } name && catalog.Find(name) is { IsSalary: true } && payment.InPeriod && payment.AmountOk)
+            if (payment.Category is { } name && catalog.Find(name) is { IsSalary: true } && payment.InPeriod && payment.AmountOk && payment.Direction != Direction.Credit)
             {
                 sums[payment.Source] = sums.GetValueOrDefault(payment.Source) + payment.Amount;
             }
@@ -710,8 +712,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             }
             else if (!payment.Declare)
             {
-                var foreign = !ReviewChecks.IsEuro(payment.Currency);
-                list.Add(new Undeclared(payment, Undeclared.NotDeclared, Codes(payment.Blockers), foreign));
+                // no error of the review's: another currency is declared in euros by hand (87), money in is no payout (141)
+                var byChoice = !ReviewChecks.IsEuro(payment.Currency) || payment.Direction == Direction.Credit;
+                list.Add(new Undeclared(payment, Undeclared.NotDeclared, Codes(payment.Blockers), byChoice));
             }
         }
 

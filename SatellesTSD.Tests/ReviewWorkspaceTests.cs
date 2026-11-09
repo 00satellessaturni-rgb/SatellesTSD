@@ -813,6 +813,23 @@ public class ReviewWorkspaceTests
             var again = Assert.Single(byHand.Unmatched.Payments, p => p.Payee == "KATI KASK");
             Assert.Equal(("Üür", (Guid?)null, false), (again.Category, again.DefaultPersonId, again.Declare));
             Assert.Equal(2, store.Persons(company.Id).Count);
+
+            // given to an employee as salary (decision 141): not declared by default, refused when ticked, out of the salary sums
+            var mari = byHand.Persons[0];
+            var before = mari.SalaryTotal;
+            workspace.SetPerson(again, mari.PersonId);
+            workspace.SetCategory(again, "Palgad");
+            var given = workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.PersonId);
+            var credit = given.Payments.Single(p => p.Payee == "KATI KASK");
+            Assert.Equal((Direction.Credit, "10", false, false), (credit.Direction, credit.TypeCode, credit.DefaultDeclare, credit.Declare));
+            Assert.Contains(credit.Blockers, b => b.Code == ReviewChecks.MoneyIn);
+            Assert.Equal(before, given.SalaryTotal); // money in adds nothing to PALK NETO KOKKU
+            var undeclared = Assert.Single(given.Undeclared, u => u.Payment.RowId == credit.RowId);
+            Assert.True(undeclared.ByChoice); // no error of the review's: the row is what it is
+            Assert.Equal(mari.UndeclaredSum, given.UndeclaredSum); // and no "Deklareerimata" money either
+            workspace.SetDeclare(credit, true);
+            var ticked = workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.PersonId).Payments.Single(p => p.Payee == "KATI KASK");
+            Assert.Contains(ticked.Checks, c => c.Code == ReviewChecks.MoneyIn); // refused when ticked all the same
         }
     }
 

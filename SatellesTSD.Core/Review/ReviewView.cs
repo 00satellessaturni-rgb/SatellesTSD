@@ -138,7 +138,7 @@ public sealed class ReviewPerson
     /// <summary>The income not declared, added up by one rule for the grid and the report (decision 100): a euro amount
     /// that was read and is no copy of another source's row; null when nothing goes undeclared.</summary>
     public decimal? UndeclaredSum => Undeclared.Count == 0 ? null
-        : Undeclared.Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal)).Sum(u => u.Payment.Amount);
+        : Undeclared.Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && u.Payment.Direction != Import.Direction.Credit).Sum(u => u.Payment.Amount);
 
     /// <summary>The register entry standing for the person (the one "Kande olek" shows) when it is paused (kande olek 3), else null.</summary>
     public Import.TorEntry? PausedEntry => Register?.Entry is { StateId: Import.TorStates.Paused } entry ? entry : null;
