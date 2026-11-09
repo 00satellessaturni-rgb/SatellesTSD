@@ -243,9 +243,9 @@ internal static class UiText
     public const string ModeEach = "iga makse eraldi reana";
     public const string ModeTotals = "koondina liigi kaupa";
     public const string RatesMissing = "Selle aasta maksumäärad ja kuumäär ei ole programmis: kuu ridu ei saa koostada enne, kui uus versioon need toob.";
-    public const string RunStale = "failid muutusid pärast otsingut (Otsi maksed uuesti)";
-    public const string RunStaleRefused = "Perioodi failid muutusid pärast maksete otsingut: read koostatakse alles uue otsingu järel. Vajuta „Otsi maksed“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
-    public const string RunStaleExport = "Perioodi failid muutusid pärast maksete otsingut: read ei sisalda kõiki makseid. Vajuta enne eksporti „Otsi maksed“ ja „Koosta read“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
+    public const string RunStale = "maksed otsimata või failid muutusid pärast otsingut (Otsi maksed)";
+    public const string RunStaleRefused = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: read koostatakse alles otsingu järel. Vajuta „Otsi maksed“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
+    public const string RunStaleExport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: read ei sisalda kõiki makseid. Vajuta enne eksporti „Otsi maksed“ ja „Koosta read“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).";
     public const string StoreSetAside = "kõrvale pandud";
     public const string DeclareModeRefused = "Selle kuu read on e-MTA-s juba teises lõikes (iga makse eraldi või koond liigi kaupa). Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.";
 

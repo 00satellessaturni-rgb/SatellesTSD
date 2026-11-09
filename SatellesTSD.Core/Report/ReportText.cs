@@ -121,6 +121,9 @@ public static class ReportText
         _ => status.ToString(),
     };
 
+    /// <summary>The note written on the card of a rent payee the register lists for the first time (decision 109).</summary>
+    public const string PayeeNowEmployee = "Isik oli enne registrisse kandmist üüri saaja: töötamise liik, SM miinimumkohustus ja maksuvaba tulu avaldus on nüüd pandud nagu registri töötajal — kontrolli kaarti.";
+
     public static string ActionText(LineAction action) => action switch
     {
         LineAction.R => "R uus",

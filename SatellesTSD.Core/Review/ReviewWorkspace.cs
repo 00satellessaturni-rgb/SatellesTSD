@@ -47,11 +47,18 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// the view holds the files and the persons of the company only.</summary>
     /// <summary>Whether the linked files are no longer those the run read: the same filter as the run's (register sheets, and
     /// statement sheets with a layout), compared by sheet id — not by import time, an older file can be linked after the run.</summary>
-    private bool IsStale(StoredMatchRun storedRun, MatchResult run, IReadOnlyList<ImportFile> files)
+    /// <remarks>Without a run, the month is stale as soon as a file to search is linked: lines built then would come from no
+    /// search at all (every bank-row line retired). A month of hand lines only, with no such file, needs no search.</remarks>
+    private bool IsStale(StoredMatchRun? storedRun, MatchResult? run, IReadOnlyList<ImportFile> files)
     {
         var sheets = files.SelectMany(f => _store.Sheets(f.Id)).ToList();
         var tor = sheets.Where(s => s.Kind == SheetKind.Tor).Select(s => s.Id).ToHashSet();
         var statements = sheets.Where(s => s is { Kind: SheetKind.Statement, Layout: not null }).Select(s => s.Id).ToHashSet();
+        if (storedRun is null || run is null)
+        {
+            return tor.Count + statements.Count > 0;
+        }
+
         var runTor = storedRun.TorSheetId is { } t ? new HashSet<Guid> { t } : [];
         var runStatements = run.Sources.Select(s => s.SheetId).OfType<Guid>().ToHashSet();
         return !tor.SetEquals(runTor) || !statements.SetEquals(runStatements);
@@ -209,7 +216,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Company = company,
             Run = run,
             StoredRun = storedRun,
-            RunIsStale = storedRun is not null && run is not null && IsStale(storedRun, run, files),
+            RunIsStale = IsStale(storedRun, run, files),
             Catalog = catalog,
             Files = files,
             Sources = sources,

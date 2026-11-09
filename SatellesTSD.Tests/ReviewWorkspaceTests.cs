@@ -795,6 +795,31 @@ public class ReviewWorkspaceTests
             Assert.Equal(kati.Id, RegisterPersons.Find(persons, SearchPerson.Of("49001010008", "KASK", "KATI"))!.Id);
             Assert.Equal(kati.Id, RegisterPersons.Find(persons, SearchPerson.Of(null, "Kask", "Kati"))!.Id);
             Assert.Null(RegisterPersons.Find(persons, SearchPerson.Of(null, "Kask", "Mari")));
+
+            // the register lists the payee the next month: an employee now, with the employment's type, the minimum and the
+            // exemption an employee of the register gets, said on the card — the payee binding kept, so the rent month still finds them
+            var entry = new TorEntry(1, "1", "49001010008", "KATI", "KASK", "EE", new DateOnly(2026, 11, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+            var employee = RegisterPersons.Ensure(store, company.Id, MatchPerson.FromTor([entry], 2026, 11)[0], persons);
+            Assert.Equal((kati.Id, "49001010008", "payee:KATI KASK", "1", true, true), (employee.Id, employee.PersonalCode, employee.RegisterKey, employee.TorEmploymentTypeId, employee.SocialTaxMinimumApplies, employee.BasicExemptionApplied));
+            Assert.Contains(Core.Report.ReportText.PayeeNowEmployee, employee.Notes, StringComparison.Ordinal);
+
+            // once only: the accountant's later word on the card stands — the type cleared on the card ("—") included
+            store.UpdatePerson(employee with { SocialTaxMinimumApplies = false, TorEmploymentTypeId = null });
+            var again = RegisterPersons.Ensure(store, company.Id, MatchPerson.FromTor([entry], 2026, 12)[0], store.Persons(company.Id));
+            Assert.Equal((false, employee.Notes, (string?)null), (again.SocialTaxMinimumApplies, again.Notes, again.TorEmploymentTypeId));
+        }
+
+        // a register row without a type id meets a payee: the defaults once, the note once, whatever the row's type says
+        var (store2, company2, period2, workspace2) = RunWithRenter();
+        using (store2)
+        {
+            workspace2.Load(period2.Id);
+            var untyped = new TorEntry(1, "1", "49001010008", "KATI", "KASK", "EE", new DateOnly(2026, 11, 1), null, null, null, "2", "Kehtiv", null, null, null, null, [], null);
+            var first = RegisterPersons.Ensure(store2, company2.Id, MatchPerson.FromTor([untyped], 2026, 11)[0], store2.Persons(company2.Id));
+            Assert.True(first.SocialTaxMinimumApplies);
+            store2.UpdatePerson(first with { SocialTaxMinimumApplies = false });
+            var second = RegisterPersons.Ensure(store2, company2.Id, MatchPerson.FromTor([untyped], 2026, 12)[0], store2.Persons(company2.Id));
+            Assert.Equal((false, first.Notes), (second.SocialTaxMinimumApplies, second.Notes));
         }
 
         Assert.Null(PayeePersons.NamesOf("KINNISVARA O.Ü."));

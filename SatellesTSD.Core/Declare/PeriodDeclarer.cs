@@ -186,8 +186,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         if (view.RunIsStale)
         {
-            // the run never saw a file linked (or kept one unlinked) since: its lines would miss or double payments
-            throw new DeclareException(RunStale, "The period's files changed after the payments were searched; search again (Otsi maksed) before building the lines.");
+            // the run never saw a file linked (or kept one unlinked) since, or there is no run and files to search: the lines
+            // would miss or double payments, or retire every bank-row line
+            throw new DeclareException(RunStale, view.Run is null
+                ? "The period's files have not been searched; search (Otsi maksed) before building the lines."
+                : "The period's files changed after the payments were searched; search again (Otsi maksed) before building the lines.");
         }
 
         var period = view.Period;
@@ -458,8 +461,21 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             problems.Add($"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.");
             foreach (var source in monthPayments.Select(m => m.Key))
             {
-                claimed.Add(source); // what stands, stands; nothing is cancelled
-                if (bySource.TryGetValue(source, out var held))
+                // what stands on the server stands, nothing is cancelled; a draft, allocated in an earlier build beside the
+                // refused payment's own draft (gone now), would go out with the month's exemption or minimum once more — it
+                // goes, to be allocated afresh once the payment is put right
+                claimed.Add(source);
+                if (!bySource.TryGetValue(source, out var held))
+                {
+                    continue;
+                }
+
+                if (held.Status == PaymentStatus.Draft)
+                {
+                    _store.DeleteDraft(held.Id);
+                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = references[source].Reference, Note = NotAllocated });
+                }
+                else
                 {
                     lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = references[source].Reference, Note = NotAllocated });
                 }

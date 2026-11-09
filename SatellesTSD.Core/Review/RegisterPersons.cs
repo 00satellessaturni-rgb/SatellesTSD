@@ -1,4 +1,5 @@
 using SatellesTSD.Core.Matching;
+using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Store;
 
 namespace SatellesTSD.Core.Review;
@@ -65,6 +66,25 @@ public static class RegisterPersons
             if (string.Equals(found.RegisterKey, key, StringComparison.Ordinal))
             {
                 return found;
+            }
+
+            if (found.RegisterKey?.StartsWith(PayeePersons.KeyPrefix, StringComparison.Ordinal) == true && found.TorEmploymentTypeId is null
+                && (found.Notes ?? "").Contains(Report.ReportText.PayeeNowEmployee, StringComparison.Ordinal) == false)
+            {
+                // a person made for a rent payee (decision 108), whom the register lists for the first time: an employee
+                // now, with what an employee of the register gets — the employment's type, the social-tax minimum and the
+                // basic exemption (a resident's) — said on the card, since the rent months showed neither. Once only: the
+                // type written and the card's note mark it (a register row without a type id writes none; the card's "—"
+                // clears it), so the accountant's later word on the card stands.
+                var employee = found with
+                {
+                    TorEmploymentTypeId = registerPerson.Entry.TypeId,
+                    SocialTaxMinimumApplies = true,
+                    BasicExemptionApplied = found.Residency == Residency.Resident,
+                    Notes = string.IsNullOrWhiteSpace(found.Notes) ? Report.ReportText.PayeeNowEmployee : found.Notes + Environment.NewLine + Report.ReportText.PayeeNowEmployee,
+                };
+                store.UpdatePerson(employee);
+                return employee;
             }
 
             if (found.RegisterKey is not null)

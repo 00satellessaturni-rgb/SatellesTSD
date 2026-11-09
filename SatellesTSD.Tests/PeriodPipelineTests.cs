@@ -178,6 +178,25 @@ public class PeriodPipelineTests
             pipeline.UnlinkFile(period.Id, second.Id);
             Assert.False(workspace.Load(period.Id).RunIsStale);
             Assert.Null(Record.Exception(() => declarer.Build(period.Id)));
+
+            // the run cleared (the way to unlink a file it took): files to search and no search is stale too — a build then
+            // would retire every bank-row line; the search made again, the month builds
+            var lines = store.Payments(period.Id).Count;
+            pipeline.ClearRun(period.Id);
+            Assert.True(workspace.Load(period.Id).RunIsStale);
+            var refusal = Assert.Throws<DeclareException>(() => declarer.Build(period.Id));
+            Assert.Equal(PeriodDeclarer.RunStale, refusal.Code);
+            Assert.Contains("not been searched", refusal.Message, StringComparison.Ordinal);
+            Assert.Equal(lines, store.Payments(period.Id).Count);
+            Assert.False(declarer.DraftsCurrent(period.Id));
+            pipeline.RunMatch(period.Id);
+            Assert.False(workspace.Load(period.Id).RunIsStale);
+            Assert.Null(Record.Exception(() => declarer.Build(period.Id)));
+
+            // a month with no file to search (hand lines only) needs no search
+            var november = store.GetOrCreatePeriod(period.CompanyId, 2026, 11);
+            Assert.False(workspace.Load(november.Id).RunIsStale);
+            Assert.Null(Record.Exception(() => declarer.Build(november.Id)));
         }
     }
 }

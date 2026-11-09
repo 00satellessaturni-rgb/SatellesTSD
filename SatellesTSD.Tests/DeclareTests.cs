@@ -941,16 +941,24 @@ public class DeclareTests
         box.Submitter.Reopen(box.Period.Id);
         Assert.True(box.Lines.Single().Result!.ExemptionUsed > 0m);
 
-        // the salary refused by the review (a type no table knows), its line standing with the exemption; a second payment
-        // would be given the month's exemption again — nothing is allocated, and what stands stands
-        box.Workspace.SetTypeCode(box.Salary, "999");
+        // a second payment by hand: the salary's line stands (it takes the whole exemption), the hand line gets an R draft
         box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        var both = box.Declarer.Build(box.Period.Id);
+        Assert.Equal((1, 1), (both.Count(LineChange.Kept), both.Count(LineChange.New)));
+        Assert.Equal(1, box.Lines.Count(l => l.Status == PaymentStatus.Draft));
+
+        // the salary refused by the review (a type no table knows), its line standing on the server with the exemption: the
+        // hand line's draft goes — it was allocated beside the salary, and would go out with the month's exemption once more;
+        // nothing on the server is cancelled, nothing is allocated
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id)); // straight to the export: the check sees the draft a build would drop, and asks
+        Assert.Equal(1, box.Lines.Count(l => l.Status == PaymentStatus.Draft)); // the dry run undone
         var report = box.Declarer.Build(box.Period.Id);
         var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
         Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal));
-        Assert.Equal(0, report.Count(LineChange.New));
-        Assert.Single(box.Lines);
-        Assert.Equal(PaymentStatus.Accepted, box.Lines.Single().Status);
+        Assert.Equal((0, 1, 0), (report.Count(LineChange.New), report.Count(LineChange.Deleted), report.Count(LineChange.Cancelled)));
+        Assert.Equal(PaymentStatus.Accepted, Assert.Single(box.Lines).Status);
+        Assert.True(box.Declarer.DraftsCurrent(box.Period.Id)); // nothing to export that the review does not say
 
         // the salary put right: both payments are built again, the exemption shared between them
         box.Workspace.SetTypeCode(box.Salary, null);
