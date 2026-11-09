@@ -55,6 +55,48 @@ public class PeriodMatcherTests
     private static MatchResult Run() => Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), MatchSource.Order([Swedbank, Kassa]));
 
     [Fact]
+    public void A_name_of_several_words_takes_its_rows_and_a_row_a_shorter_name_within_it_finds_too()
+    {
+        // decision 143: BEN ALI MARI is found in the bank's spaced spelling; ALI MARI finds the same row by her exact
+        // names — the longer name owns it, said as NAME_CONTAINED (the workbook gave it to the shorter)
+        IReadOnlyList<TorEntry> register = [Entry(2, "48712219406", "BEN ALI", "MARI"), Entry(3, "38810140309", "ALI", "MARI")];
+        var source = new MatchSource("LHV", "lhv-et-short", LayoutKind.Bank,
+        [
+            Row(2, "2026-10-05", "Mari Ben Ali", -500m, "Palk"),
+            Row(3, "2026-10-06", "Mari Ali", -300m, "Palk"),
+            Row(4, "2026-10-07", "Mari Sen Ali", -100m, "Palk"), // ALI MARI's by her exact names; BEN ALI's search ends at the exact level with row 2
+        ]);
+        var result = Matcher.Run(2026, 10, MatchPerson.FromTor(register, 2026, 10), [source]);
+        var benAli = result.Hits.Single(h => h.Row.RowNo == 2);
+        Assert.Equal(("48712219406", true, false), (benAli.PersonKey, benAli.Counted, benAli.MaskUsed));
+        Assert.Equal(("38810140309", true), (result.Hits.Single(h => h.Row.RowNo == 3).PersonKey, result.Hits.Single(h => h.Row.RowNo == 3).Counted));
+        Assert.Equal(("38810140309", true), (result.Hits.Single(h => h.Row.RowNo == 4).PersonKey, result.Hits.Single(h => h.Row.RowNo == 4).Counted));
+        Assert.Equal(500m, result.SalarySum("48712219406", "LHV"));
+        Assert.Equal(400m, result.SalarySum("38810140309", "LHV"));
+        var contained = Assert.Single(result.Problems, p => p.Code == MatchProblem.NameContained);
+        Assert.Equal(("48712219406", "LHV", 2), (contained.PersonKey, contained.Source, contained.RowNo));
+        Assert.Contains("ALI MARI", contained.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(result.Problems, p => p.Code is MatchProblem.SharedRow or MatchProblem.AmbiguousMask);
+
+        // BEN ALI MARI alone in the register: the row is hers plainly, nothing said
+        var alone = Matcher.Run(2026, 10, MatchPerson.FromTor([register[0]], 2026, 10), [source]);
+        Assert.Equal(("48712219406", true), (alone.Hits.Single(h => h.Row.RowNo == 2).PersonKey, alone.Hits.Single(h => h.Row.RowNo == 2).Counted));
+        Assert.DoesNotContain(alone.Problems, p => p.Code is MatchProblem.NameContained or MatchProblem.SharedRow);
+
+        // two names of a length on one row stay shared, as before: namesakes
+        var namesakes = Matcher.Run(2026, 10, MatchPerson.FromTor([register[0], Entry(3, "38810140309", "BEN ALI", "MARI")], 2026, 10), [source]);
+        Assert.Contains(namesakes.Problems, p => p.Code == MatchProblem.SharedRow && p.RowNo == 2);
+        Assert.All(namesakes.Hits.Where(h => h.Row.RowNo == 2), h => Assert.False(h.Counted));
+
+        // a cell naming two people: the longer name does not hold the other's words, so the row stays shared
+        var twoPeople = new MatchSource("LHV", "lhv-et-short", LayoutKind.Bank, [Row(2, "2026-10-05", "Mari Ben Ali ja Jaan Tamm", -800m, "Palk")]);
+        var shared = Matcher.Run(2026, 10, MatchPerson.FromTor([register[0], Entry(3, "38810140309", "TAMM", "JAAN")], 2026, 10), [twoPeople]);
+        Assert.Contains(shared.Problems, p => p.Code == MatchProblem.SharedRow && p.RowNo == 2);
+        Assert.DoesNotContain(shared.Problems, p => p.Code == MatchProblem.NameContained);
+        Assert.All(shared.Hits.Where(h => h.Row.RowNo == 2), h => Assert.False(h.Counted));
+    }
+
+    [Fact]
     public void Persons_are_one_per_code_with_the_employment_of_the_month()
     {
         var persons = MatchPerson.FromTor(Register, 2026, 10);

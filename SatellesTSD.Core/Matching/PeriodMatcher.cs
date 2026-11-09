@@ -152,6 +152,35 @@ public sealed class PeriodMatcher
             }
         }
 
+        // a row two persons found by their exact names where one name is part of the other's (ALI MARI within BEN ALI
+        // MARI): the longer name owns the row — the cell says all its words (decision 143; the workbook, which never found
+        // the longer name, gave the row to the shorter)
+        foreach (var group in hits.GroupBy(h => (h.Source, h.Row.RowNo)).Where(g => g.Count() > 1 && g.All(h => h.PersonKey is not null && !h.MaskUsed)).ToList())
+        {
+            static List<string> WordsOf(MatchHit h) => NameSearch.Words(h.LastMask).Concat(NameSearch.Words(h.FirstMask)).Select(w => w.ToUpperInvariant()).ToList();
+            var byWords = group.OrderByDescending(h => WordsOf(h).Count).ToList();
+            var owner = WordsOf(byWords[0]);
+            if (WordsOf(byWords[1]).Count == owner.Count)
+            {
+                continue; // namesakes, or two names of a length: shared, as below
+            }
+
+            // each shorter name's words among the longer's (ALI MARI within BEN ALI MARI); a cell naming two people
+            // ("Mari Ben Ali ja Jaan Tamm") stays shared
+            if (byWords.Skip(1).Any(h => WordsOf(h).GroupBy(w => w).Any(g => owner.Count(w => w == g.Key) < g.Count())))
+            {
+                continue;
+            }
+
+            var ownerName = persons.First(p => p.Key == byWords[0].PersonKey).Person.FullName;
+            var shorter = string.Join(", ", byWords.Skip(1).Select(h => persons.First(p => p.Key == h.PersonKey).Person.FullName));
+            problems.Add(new MatchProblem(MatchProblem.NameContained, $"{group.Key.Source} [{group.Key.RowNo}] was found for {ownerName} and for {shorter}, whose name is part of theirs; counted for {ownerName}.", byWords[0].PersonKey, group.Key.Source, group.Key.RowNo));
+            foreach (var hit in byWords.Skip(1))
+            {
+                hits.Remove(hit);
+            }
+        }
+
         // a row two persons found by their exact names: the workbook summed it for both
         foreach (var group in hits.GroupBy(h => (h.Source, h.Row.RowNo)).Where(g => g.Count() > 1))
         {

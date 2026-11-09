@@ -165,10 +165,100 @@ public class NameSearchTests
     }
 
     [Fact]
+    public void A_name_of_several_words_is_found_as_consecutive_tokens_in_the_banks_spaced_spelling()
+    {
+        // decision 143, past the workbook: the words of a two-word surname or a double first name match that many
+        // consecutive tokens, in order, at the exact level — no mask, so no uniqueness check
+        var benAli = Person("BEN ALI", "MARI");
+        var spaced = Find(benAli, "Mari Ben Ali");
+        Assert.Equal([0], spaced.Hits);
+        Assert.Equal((false, ""), (spaced.MaskUsed, spaced.FullMask));
+        Assert.Equal([0], Find(benAli, "Ben Ali Mari").Hits); // the surname first, as the banks mostly write it
+        Assert.Equal([0], Find(benAli, "Ben Ali, Mari").Hits); // the symbols deleted first, as before
+        Assert.Equal([0], Find(Person("MAASIKAS", "ANNA MARIA"), "Anna Maria Maasikas").Hits);
+        Assert.Equal([0], Find(Person("BEN ALI", "ANNA MARIA"), "Anna Maria Ben Ali").Hits);
+
+        // the words out of order or apart are not that name: nothing at the exact level, and no mask makes them one
+        Assert.Empty(Find(benAli, "Mari Ali Ben").Hits);
+        Assert.Empty(Find(benAli, "Ben Mari Ali").Hits);
+        Assert.Empty(Find(Person("MAASIKAS", "ANNA MARIA"), "Maria Anna Maasikas").Hits);
+
+        // the glued and the hyphenated spellings are found as the workbook found them: through the one-word mask over
+        // the space, tried before the spaced masks, with the uniqueness check — a masked level, so the spaced spelling
+        // found at the exact level leaves a glued row of the same source for the hand (the first level that hits takes it)
+        var glued = Find(benAli, "Mari BenAli");
+        Assert.Equal([0], glued.Hits);
+        Assert.Equal((true, "BEN*ALI MARI"), (glued.MaskUsed, glued.FullMask));
+        var hyphened = Find(benAli, "Mari Ben-Ali");
+        Assert.Equal([0], hyphened.Hits);
+        Assert.Equal("BEN*ALI", hyphened.LastMask);
+        Assert.Equal([0], Find(benAli, "Mari Ben Ali", "Mari BenAli").Hits);
+        var behind = Find(benAli, "Kati Ben Ali", "Mari BenAli"); // another person's spaced row does not end the search before the glued one
+        Assert.Equal([1], behind.Hits);
+        Assert.Equal("BEN*ALI", behind.LastMask);
+        var joined = Find(Person("MAASIKAS", "ANNA MARIA"), "Hanna Maria Maasikas", "Anna-Maria Maasikas"); // the joining before a masked letter
+        Assert.Equal([1], joined.Hits);
+        Assert.Equal("ANNA*MARIA", joined.FirstMask);
+        Assert.Equal(["BEN*ALI", "*EN ALI", "B*N ALI", "BE* ALI", "BEN *LI", "BEN A*I", "BEN AL*"], NameSearch.MasksInOrder("BEN ALI"));
+        Assert.Equal(NameSearch.Masks("TAMM"), NameSearch.MasksInOrder("TAMM"));
+
+        // a one-word name the glued spelling of a spaced name is: the spaced name's hit through the mask asks the
+        // competitors, as the workbook did, and the row is the one-word name's
+        var mariliis = Person("TAMM", "MARILIIS", "9");
+        var mariLiis = Search.Search(Person("TAMM", "MARI LIIS"), ["Mariliis Tamm"], [mariliis]);
+        Assert.True(mariLiis.Ambiguous);
+        Assert.Empty(mariLiis.Hits);
+        Assert.Equal([0], Find(mariliis, "Mariliis Tamm").Hits);
+
+        // a letter masked in one of the words still asks for both words, consecutive
+        var masked = Find(benAli, "Mari Ben Aly");
+        Assert.Equal([0], masked.Hits);
+        Assert.Equal((true, "BEN AL*"), (masked.MaskUsed, masked.LastMask));
+
+        // the uniqueness check: a competitor whose surname holds the masked words takes the rows, as before — and so does
+        // one whose surname is one word of them: "Mari Sen Ali" found through "*EN ALI" could be ALI MARI's row
+        var ambiguous = Search.Search(benAli, ["Mari Ben Aly"], [benAli, Person("BEN ALY", "MARI", "9")]);
+        Assert.True(ambiguous.Ambiguous);
+        Assert.Empty(ambiguous.Hits);
+        var oneWord = Search.Search(benAli, ["Mari Sen Ali"], [benAli, Person("ALI", "MARI", "9")]);
+        Assert.True(oneWord.Ambiguous);
+        Assert.Empty(oneWord.Hits);
+        Assert.Equal([0], Find(Person("ALI", "MARI", "9"), "Mari Sen Ali").Hits); // whose row it is
+        Assert.True(NameSearch.CouldMean(Person("ALI", "MARI", "9"), "*EN ALI", "MARI"));
+        Assert.True(NameSearch.CouldMean(Person("MAASIKAS", "MARIA", "9"), "MAASIKAS", "ANNA MAR*"));
+        Assert.False(NameSearch.CouldMean(Person("TAMM", "MARI", "9"), "*EN ALI", "MARI"));
+        Assert.False(NameSearch.CouldMean(Person("ANDERSON", "ANNA", "9"), "DE J*NG", "ANNA")); // holds a word of the mask, is none of them: no token of the cell is theirs
+        Assert.True(NameSearch.CouldMean(Person("DE JONG", "ANNA", "9"), "DE J*NG", "ANNA"));
+        Assert.Equal([0], Search.Search(Person("DE JONG", "ANNA"), ["Anna De Jung"], [Person("ANDERSON", "ANNA", "9")]).Hits);
+
+        // an exact spaced hit asks nothing of competitors, as no exact hit does; a one-word name within it finds the row
+        // too — the matcher gives the row to the longer name (NAME_CONTAINED), where the workbook gave it to the shorter
+        var exact = Search.Search(benAli, ["Mari Ben Ali"], [benAli, Person("ALI", "MARI", "9"), Person("BEN ALY", "MARI", "8")]);
+        Assert.Equal([0], exact.Hits);
+        Assert.False(exact.Ambiguous);
+        Assert.Equal([0], Find(Person("ALI", "MARI", "9"), "Mari Ben Ali").Hits);
+
+        // the whole surname span is taken before the first name is sought, on one side of it
+        Assert.Empty(Find(Person("BEN ALI", "ALI"), "Ben Ali").Hits);
+        Assert.Equal([0], Find(Person("BEN ALI", "ALI"), "Ali Ben Ali").Hits);
+        Assert.Empty(Find(Person("BEN ALI", "ANNA MARIA"), "Anna Ben Ali Maria").Hits); // the first name's words must stand together
+
+        // a one-letter word masked would be "*" alone, any token: such a mask means nothing
+        Assert.Empty(Find(Person("LI A", "MARI"), "Mari Li Tamm").Hits);
+        Assert.Empty(Find(Person("TAMM", "ANNA M"), "Anna Kask Tamm").Hits);
+
+        // the span helper itself
+        Assert.Equal((1, 2), NameSearch.SpanOf(["Mari", "Ben", "Ali"], "BEN ALI"));
+        Assert.Equal((2, 1), NameSearch.SpanOf(["Mari", "Ben", "Ali"], "AL*"));
+        Assert.Equal((-1, 0), NameSearch.SpanOf(["Mari", "Ben-Ali"], "BEN ALI")); // the glued spelling is the mask's, not the span's
+        Assert.Equal((-1, 0), NameSearch.SpanOf(["Mari", "Ben"], "BEN ALI"));
+        Assert.Equal((-1, 0), NameSearch.SpanOf(["Mari", "Ben", "Ali"], "   "));
+        Assert.Equal((-1, 0), NameSearch.SpanOf(["Mari", "Ben", "Ali"], "* ALI"));
+    }
+
+    [Fact]
     public void Names_the_workbook_could_not_match_are_still_not_matched()
     {
-        Assert.Empty(Find(Person("BEN ALI", "MARI"), "Mari Ben Ali").Hits); // two words never equal one token
-        Assert.Empty(Find(Person("MAASIKAS", "ANNA MARIA"), "Anna Maria Maasikas").Hits);
         Assert.Empty(Find(Person("", "MARI"), "Mari Maasikas").Hits);
         Assert.Empty(Find(Person("MAASIKAS", ""), "Mari Maasikas").Hits);
         Assert.Empty(Find(Person("MAASIKAS", "MARI"), null, "", "   ").Hits);

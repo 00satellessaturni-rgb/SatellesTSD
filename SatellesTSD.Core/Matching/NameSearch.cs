@@ -58,7 +58,9 @@ public sealed record SheetSearch(IReadOnlyList<int> Hits, string LastMask, strin
 /// name is a wildcard). When that finds nothing the names are masked one letter at a time ("*AMM", "T*MM", "TA*M",
 /// "TAM*"): the last name first, and once a row carries the last name, the first name — through its aliases first
 /// (SERHII = SERGEI …), then its masks. A masked or alias hit stands only when the masks could not also mean another
-/// person of the register.</summary>
+/// person of the register. Past the workbook (decision 143): a name of several words is Like that many consecutive
+/// tokens, so "Mari Ben Ali" is found for the surname BEN ALI at the exact level, where the workbook needed the glued
+/// spelling and the mask over the space.</summary>
 public sealed class NameSearch(MatchCatalog catalog)
 {
     /// <summary>The characters the workbook deleted from a name cell before splitting it (RemoveSymbols).</summary>
@@ -84,8 +86,64 @@ public sealed class NameSearch(MatchCatalog catalog)
         return cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
+    /// <summary>Where a name (or its mask) sits in a cell's tokens: a one-word name is Like one token, as the workbook
+    /// had it; a name of several words — a two-word surname, a double first name — is Like that many consecutive tokens,
+    /// in order (decision 143, past the workbook, which could never find the bank's spaced spelling of such a name; the
+    /// glued or hyphenated spelling is found as the workbook found it, through the one-word mask over the space). A mask
+    /// one word of which is "*" alone (a one-letter word masked) means nothing: it would take any token. Returns the
+    /// first token's index and the word count, or -1 when no token sequence matches.</summary>
+    public static (int Index, int Count) SpanOf(IReadOnlyList<string> tokens, string mask)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+        ArgumentNullException.ThrowIfNull(mask);
+        var words = mask.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0 || words.Any(w => w == "*"))
+        {
+            return (-1, 0);
+        }
+
+        for (var start = 0; start + words.Length <= tokens.Count; start++)
+        {
+            var all = true;
+            for (var w = 0; w < words.Length && all; w++)
+            {
+                all = LikePattern.IsMatch(tokens[start + w], words[w]);
+            }
+
+            if (all)
+            {
+                return (start, words.Length);
+            }
+        }
+
+        return (-1, 0);
+    }
+
+    /// <summary>The words of a name or a mask: one for the workbook's names, several for a name with spaces.</summary>
+    public static string[] Words(string mask) => mask.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>Whether another person of the register could be meant by the masks (the workbook's IsUniqueResult: a
+    /// last name holding the last mask, a first name Like the first mask). A mask of several words also means a person
+    /// whose name is one of its words, whole — "Mari Sen Ali" found for BEN ALI through "*EN ALI" could be ALI MARI's
+    /// row; a surname merely holding a word of it (ANDERSON, "DE") is no competitor, no token of the cell is theirs.</summary>
+    public static bool CouldMean(SearchPerson other, string lastMask, string firstMask)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        var lastWords = Words(lastMask);
+        var firstWords = Words(firstMask);
+        var last = LikePattern.IsMatch(other.LastName, "*" + lastMask + "*") || (lastWords.Length > 1 && lastWords.Any(w => LikePattern.IsMatch(other.LastName, w)));
+        var first = LikePattern.IsMatch(other.FirstName, firstMask) || (firstWords.Length > 1 && firstWords.Any(w => LikePattern.IsMatch(other.FirstName, w)));
+        return last && first;
+    }
+
+    /// <summary>The masks of a name in the order the search tries them: for a name of several words, the one-word masks
+    /// first (the space masked: the glued or hyphenated spelling, which the workbook could find), then the spaced ones
+    /// (a letter masked, the words still apart); a one-word name's masks stay in the workbook's order.</summary>
+    public static IEnumerable<string> MasksInOrder(string name) => Masks(name).OrderBy(m => Words(m).Length > 1 ? 1 : 0);
+
     /// <summary>The masks of a name in the workbook's order: one letter at a time replaced by "*", from the first;
-    /// a name shorter than two characters has none.</summary>
+    /// a name shorter than two characters has none. In a name of several words the space is masked like a letter, so
+    /// a glued or hyphenated spelling ("BenAli", "Ben-Ali") is found through "BEN*ALI" — as the workbook found it.</summary>
     public static IReadOnlyList<string> Masks(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -119,20 +177,22 @@ public sealed class NameSearch(MatchCatalog catalog)
 
         var tokens = names.Select(Tokens).ToList();
         var lastMasks = new List<string> { person.LastName };
-        lastMasks.AddRange(Masks(person.LastName));
+        lastMasks.AddRange(MasksInOrder(person.LastName));
         var aliasGroup = _catalog.AliasGroupOf(person.FirstName);
         var competitors = others.Where(o => o.Key != person.Key && person.Competes(o)).ToList();
 
         foreach (var lastMask in lastMasks)
         {
             // the rows carrying the last name at this level, each with the tokens left for the first name
-            var candidates = new List<(int Row, List<string> Others)>();
+            // the tokens left for the first name, on either side of the last name's span: a first name of several words
+            // must stand together on one side, as it stands in the cell
+            var candidates = new List<(int Row, List<string> Before, List<string> After)>();
             for (var i = 0; i < tokens.Count; i++)
             {
-                var index = tokens[i].ToList().FindIndex(t => LikePattern.IsMatch(t, lastMask));
+                var (index, count) = SpanOf(tokens[i], lastMask);
                 if (index >= 0)
                 {
-                    candidates.Add((i, tokens[i].Where((_, j) => j != index).ToList()));
+                    candidates.Add((i, tokens[i].Take(index).ToList(), tokens[i].Skip(index + count).ToList()));
                 }
             }
 
@@ -146,17 +206,17 @@ public sealed class NameSearch(MatchCatalog catalog)
             {
                 // every row that qualifies, each with the first-name mask that hit it (at the alias level: its own alias)
                 var hits = new List<(int Row, string Mask)>();
-                foreach (var (row, rest) in candidates)
+                foreach (var (row, before, after) in candidates)
                 {
                     if (isAlias)
                     {
-                        var alias = rest.Select(t => aliasGroup!.FirstOrDefault(a => string.Equals(a, t, StringComparison.OrdinalIgnoreCase))).FirstOrDefault(a => a is not null);
+                        var alias = before.Concat(after).Select(t => aliasGroup!.FirstOrDefault(a => string.Equals(a, t, StringComparison.OrdinalIgnoreCase))).FirstOrDefault(a => a is not null);
                         if (alias is not null)
                         {
                             hits.Add((row, alias.ToUpperInvariant()));
                         }
                     }
-                    else if (rest.Any(t => LikePattern.IsMatch(t, firstMask)))
+                    else if (SpanOf(before, firstMask).Index >= 0 || SpanOf(after, firstMask).Index >= 0)
                     {
                         hits.Add((row, firstMask));
                     }
@@ -180,7 +240,7 @@ public sealed class NameSearch(MatchCatalog catalog)
                 SearchPerson? conflict = null;
                 foreach (var group in hits.GroupBy(h => h.Mask, StringComparer.Ordinal))
                 {
-                    var competitor = competitors.FirstOrDefault(o => LikePattern.IsMatch(o.LastName, "*" + lastMask + "*") && LikePattern.IsMatch(o.FirstName, group.Key));
+                    var competitor = competitors.FirstOrDefault(o => CouldMean(o, lastMask, group.Key));
                     if (competitor is null)
                     {
                         kept.AddRange(group);
@@ -198,8 +258,13 @@ public sealed class NameSearch(MatchCatalog catalog)
                 return new SheetSearch(kept.Select(h => h.Row).ToList(), lastMask, shownFirst, true, conflict, dropped, kept.Select(h => h.Mask).ToList());
             }
 
-            // the last name was found but no first-name variant: the workbook went to the next source here
-            return SheetSearch.None;
+            // the last name was found but no first-name variant: the workbook went to the next source here — at its own,
+            // one-word levels; a span of several words found with no first name beside it is another person's row
+            // ("Kati Ben Ali"), and the search goes on to the masks that may still find this person's ("Mari BenAli")
+            if (Words(lastMask).Length == 1)
+            {
+                return SheetSearch.None;
+            }
         }
 
         return SheetSearch.None;
@@ -213,7 +278,7 @@ public sealed class NameSearch(MatchCatalog catalog)
             yield return (firstName, true);
         }
 
-        foreach (var mask in Masks(firstName))
+        foreach (var mask in MasksInOrder(firstName))
         {
             yield return (mask, false);
         }

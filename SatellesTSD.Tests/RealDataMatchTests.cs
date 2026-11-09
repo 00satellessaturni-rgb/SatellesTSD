@@ -13,7 +13,10 @@ public class RealDataMatchTests
 {
     private static readonly Importer Importer = new(LayoutCatalog.Default, new ExcelTableReader());
 
-    private sealed record Comparison(string Company, int Rows, int Same, IReadOnlyList<string> Different, IReadOnlyList<string> OnlyInReport, IReadOnlyList<string> Allowed, IReadOnlyList<string> SumDifferences);
+    /// <param name="Allowed">Rows the workbook left unmatched that the app gives a person it found elsewhere (decision 27).</param>
+    /// <param name="SpacedNames">Rows the workbook left unmatched that the app gives a person whose name holds a space (decision 143: the
+    /// workbook could never find the bank's spaced spelling of a two-word name).</param>
+    private sealed record Comparison(string Company, int Rows, int Same, IReadOnlyList<string> Different, IReadOnlyList<string> OnlyInReport, IReadOnlyList<string> Allowed, IReadOnlyList<string> SumDifferences, IReadOnlyList<string> SpacedNames);
 
     [Fact]
     public void Every_report_of_the_workbook_is_reproduced_row_for_row()
@@ -39,7 +42,11 @@ public class RealDataMatchTests
         var allowed = comparisons.Sum(c => c.Allowed.Count);
         Assert.True(allowed * 1000 <= rows * 5, $"{allowed} allowed differences in {rows} rows is more than the known handful"); // 0.5 % over all
         Assert.All(comparisons, c => Assert.True(c.Allowed.Count <= 3, $"{c.Company}: {c.Allowed.Count} allowed differences, more than the known handful: {string.Join("; ", c.Allowed)}"));
-        Assert.True(comparisons.Sum(c => c.Same) + allowed == rows);
+        // decision 143: the rows of persons with a space in a name, which the workbook could never find — the known few, in one company
+        var spaced = comparisons.Sum(c => c.SpacedNames.Count);
+        Assert.True(spaced * 1000 <= rows * 5, $"{spaced} rows found for spaced names in {rows} rows is more than the known few");
+        Assert.True(comparisons.Count(c => c.SpacedNames.Count > 0) <= 1, $"spaced names found in several companies: {string.Join("; ", comparisons.Where(c => c.SpacedNames.Count > 0).Select(c => $"{c.Company}: {string.Join(", ", c.SpacedNames)}"))}");
+        Assert.True(comparisons.Sum(c => c.Same) + allowed + spaced == rows);
     }
 
     private static Comparison Compare(string folder)
@@ -101,6 +108,7 @@ public class RealDataMatchTests
         var same = 0;
         var different = new List<string>();
         var allowed = new List<string>();
+        var spacedNames = new List<string>();
         var onlyInReport = new List<string>();
         var personsTheReportFound = expected.Values.SelectMany(l => l).Select(e => e.Code).Where(c => c.Length > 0).ToHashSet(StringComparer.Ordinal);
         foreach (var (reference, exp) in expected)
@@ -123,6 +131,13 @@ public class RealDataMatchTests
                 // decision 27: the workbook took only the rows spelt like the first row it found for a person; the app takes every row that
                 // qualifies at that level — so a row the workbook left unmatched may go to a person the workbook itself found elsewhere
                 allowed.Add(reference);
+            }
+            else if (exp.Count == 1 && act.Count == 1 && exp[0].Code.Length == 0 && (exp[0].Text.Length == 0 || exp[0].Text == "[TÖR-väline palgad]")
+                     && act[0].Code.Length > 0 && (act[0].Hit.LastMask.Contains(' ') || act[0].Hit.FirstMask.Contains(' ')))
+            {
+                // decision 143: a name of several words is found in the bank's spaced spelling, which the workbook could never match —
+                // only a hit through a mask holding a space counts here (a one-word hit of such a person is a difference like any other)
+                spacedNames.Add(reference);
             }
             else
             {
@@ -154,7 +169,7 @@ public class RealDataMatchTests
         }
 
         var sumDifferences = new List<string>();
-        var allowedSet = allowed.ToHashSet(StringComparer.Ordinal);
+        var allowedSet = allowed.Concat(spacedNames).ToHashSet(StringComparer.Ordinal);
         foreach (var ((code, source), exp) in reportSums)
         {
             var person = persons.FirstOrDefault(p => p.Person.PersonalCode == code);
@@ -166,7 +181,7 @@ public class RealDataMatchTests
             }
         }
 
-        return new Comparison(company, expected.Count, same, different, onlyInReport, allowed, sumDifferences);
+        return new Comparison(company, expected.Count, same, different, onlyInReport, allowed, sumDifferences, spacedNames);
     }
 
     /// <summary>The report's month: the Kontroll-kp column, else the commonest month of the hits.</summary>
