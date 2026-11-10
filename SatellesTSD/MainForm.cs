@@ -1847,9 +1847,9 @@ public sealed class MainForm : Form
             return Unsaved.Dropped;
         }
 
-        if (answer != DialogResult.Yes || _personPanel.Collect() is not { } edited)
+        if (answer != DialogResult.Yes || _personPanel.Collect() is not { } edited || !MrrPrefixAccepted(edited))
         {
-            return Unsaved.Kept; // cancelled, or a field is no number (the card said which): the edits stay
+            return Unsaved.Kept; // cancelled, a field is no number (the card said which), or the MRR code's prefix not stood by: the edits stay
         }
 
         try
@@ -2681,11 +2681,28 @@ public sealed class MainForm : Form
         ReloadView();
     }
 
+    /// <summary>An MTA non-resident code typed with what looks like a country code before it is asked about, since MTA
+    /// takes the code without one and a code may yet begin with letters of its own (decision 155). True when there is
+    /// nothing to ask, or the accountant says the code stands as typed.</summary>
+    private bool MrrPrefixAccepted(Person edited)
+    {
+        var typed = edited.MrrCode?.Trim();
+        return string.Equals(typed, _personPanel.Presented?.MrrCode?.Trim(), StringComparison.OrdinalIgnoreCase)
+            || Core.Xbrl.MrrCodes.Problem(typed) is not null // refused by the save itself
+            || Core.Xbrl.MrrCodes.CountryPrefix(typed) is not { } prefix
+            || Confirm(UiText.MrrPrefixQuestion(typed!, prefix), UiText.PersonPanel);
+    }
+
     private void SavePerson(Person edited, bool confirmResidency, bool confirmPension)
     {
         if (_services is null)
         {
             return;
+        }
+
+        if (!MrrPrefixAccepted(edited))
+        {
+            return; // the typed values stay on the card
         }
 
         try

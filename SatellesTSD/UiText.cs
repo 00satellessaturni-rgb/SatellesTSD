@@ -114,6 +114,16 @@ internal static class UiText
     // the person panel
     public const string PersonPanel = "Isik";
     public const string MrrCode = "MTA mitteresidendi kood";
+
+    public static string MrrPrefixQuestion(string code, string prefix) =>
+        $"MTA mitteresidendi kood „{code}“ algab riigi tähisega {prefix}. MTA võtab koodi ilma riigi tähiseta. Kas salvestada kood nii, nagu see on?";
+
+    public static string CompanyCodeAsMrr(string code) =>
+        $"Kood „{code}“ ei ole 8-kohaline äriregistri kood ega 11-kohaline isikukood. Fail nimetab selle MTA mitteresidendi koodiks (MRR_KOOD). Kas see on õige?";
+
+    public const string CompanyCodeSigns = "Koodis võivad olla ainult ladina tähed A–Z ja numbrid 0–9, ilma tühikute ja muude märkideta.";
+
+    public static string CompanyCodeShape(string label) => $"Kood ei vasta valitud liigile ({label}): äriregistri kood on 8 numbrit, isikukood 11 numbrit.";
     public const string ResidenceCountry = "Maksuresidentsuse riik";
     public const string ConfirmByHand = "kinnita käsitsi";
     public const string PensionMemberLabel = "II sammas";

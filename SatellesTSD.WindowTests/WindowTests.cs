@@ -724,6 +724,113 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_new_companys_code_has_the_shape_of_what_the_file_will_call_it()
+    {
+        // by its shape: an Estonian registry code or a personal code passes; anything else is an MRR code, and is asked about
+        Assert.Null(CompanyDialog.CodeProblem("10235688", null));
+        Assert.False(CompanyDialog.AsksWhetherMrr("10235688", null));
+        Assert.Null(CompanyDialog.CodeProblem("38810140309", null));
+        Assert.False(CompanyDialog.AsksWhetherMrr("38810140309", null));
+        Assert.Null(CompanyDialog.CodeProblem("65758008", null)); // a foreign company's code: nothing wrong with it
+        Assert.True(CompanyDialog.AsksWhetherMrr("65758008", null)); // but is it one, or a slip?
+        Assert.True(CompanyDialog.AsksWhetherMrr("1023568", null)); // a registry code a digit short reads as an MRR code: asked
+        Assert.False(CompanyDialog.AsksWhetherMrr("65758008", Core.Xbrl.PayeeId.MrrKood)); // the card says so: no question
+
+        // signs that no code has; a code that is not what the card calls it
+        Assert.Equal(UiText.CompanyCodeSigns, CompanyDialog.CodeProblem("1023 5688", null));
+        Assert.Equal(UiText.CompanyCodeSigns, CompanyDialog.CodeProblem("LT-65758008", Core.Xbrl.PayeeId.MrrKood));
+        Assert.Equal(UiText.CompanyCodeShape(Core.Xbrl.PayeeId.Ariregistrikood), CompanyDialog.CodeProblem("1023568", Core.Xbrl.PayeeId.Ariregistrikood));
+        Assert.Equal(UiText.CompanyCodeShape(Core.Xbrl.PayeeId.Isikukood), CompanyDialog.CodeProblem("10235688", Core.Xbrl.PayeeId.Isikukood));
+        Assert.Null(CompanyDialog.CodeProblem("65758008", Core.Xbrl.PayeeId.Ariregistrikood)); // eight digits called a registry code: the card's word
+    }
+
+    [Fact]
+    public void The_company_dialog_asks_about_a_code_that_reads_as_an_MRR_code_and_stays_open_on_a_no()
+    {
+        Ui.Run(() =>
+        {
+            using var dialog = new CompanyDialog { StartPosition = FormStartPosition.Manual, Location = new Point(-4000, -4000) };
+            var asked = new List<string>();
+            var answer = false;
+            dialog.AskingMrr = question => { asked.Add(question); return answer; };
+            dialog.Show();
+            dialog.NameBox.Text = "Užsienio MB";
+            dialog.CodeBox.Text = "65758008";
+
+            // No: the dialog stays open, to correct the code
+            ((Button)dialog.AcceptButton!).PerformClick();
+            Assert.Equal(UiText.CompanyCodeAsMrr("65758008"), Assert.Single(asked));
+            Assert.Equal(DialogResult.None, dialog.DialogResult);
+
+            // Yes: accepted as typed
+            answer = true;
+            ((Button)dialog.AcceptButton!).PerformClick();
+            Assert.Equal((2, DialogResult.OK), (asked.Count, dialog.DialogResult));
+
+            // an Estonian registry code asks nothing
+            using var plain = new CompanyDialog { StartPosition = FormStartPosition.Manual, Location = new Point(-4000, -4000) };
+            plain.AskingMrr = question => { asked.Add(question); return false; };
+            plain.Show();
+            plain.NameBox.Text = "Näidis OÜ";
+            plain.CodeBox.Text = "10235688";
+            ((Button)plain.AcceptButton!).PerformClick();
+            Assert.Equal((2, DialogResult.OK), (asked.Count, plain.DialogResult));
+        });
+    }
+
+    [Fact]
+    public void An_MRR_code_typed_with_a_country_code_before_it_is_asked_about_on_the_save_and_on_the_unsaved_question()
+    {
+        using var fixture = new WindowFixture();
+        var questions = new List<string>();
+        var answer = false;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Mari(form);
+            var card = form.PersonEditor;
+            card.MrrBox.Text = "LV40003689779";
+            Assert.True(card.IsDirty);
+
+            // Salvesta, and No to the question: nothing saved, the card as typed
+            card.SaveButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(UiText.MrrPrefixQuestion("LV40003689779", "LV"), Assert.Single(questions));
+            Assert.Null(StoredMari(form).MrrCode);
+            Assert.Equal((true, "LV40003689779"), (card.IsDirty, card.MrrBox.Text));
+
+            // another person picked, Yes to saving, No to the prefix: the edits stay and the selection goes back
+            form.AnsweringUnsaved = () => DialogResult.Yes;
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[1].Cells[0];
+            Ui.Pump();
+            Assert.Equal(2, questions.Count);
+            Assert.Null(StoredMari(form).MrrCode);
+            Assert.Equal((0, true), (form.PersonsGrid.CurrentRow!.Index, card.IsDirty));
+
+            // Yes to the prefix: saved as typed
+            answer = true;
+            card.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && !card.IsDirty, what: "the save");
+            Assert.Equal("LV40003689779", StoredMari(form).MrrCode);
+
+            // a code with a letter of its own asks nothing
+            Mari(form);
+            form.PersonEditor.MrrBox.Text = "A0003689779";
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && !form.PersonEditor.IsDirty, what: "the second save");
+            Assert.Equal((3, "A0003689779"), (questions.Count, StoredMari(form).MrrCode));
+        }, (question, _) =>
+        {
+            if (question.Contains("mitteresidendi kood", StringComparison.Ordinal))
+            {
+                questions.Add(question);
+                return answer;
+            }
+
+            return true;
+        }));
+    }
+
+    [Fact]
     public void The_correction_reason_is_asked_for_each_section_the_file_carries_of_the_reasons_that_fit_it()
     {
         Ui.Run(() =>

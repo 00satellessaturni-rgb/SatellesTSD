@@ -17,6 +17,24 @@ public static class DeclarationValidator
         {
             problems.Add("The registry code (äriregistrikood) is empty.");
         }
+        else
+        {
+            // the payer's code has the shape its label says (decision 155): MTA matches the header against the declarer
+            var payer = declaration.RegistryCode.Trim();
+            var misshapen = declaration.RegistryCodeType switch
+            {
+                // what the window can do about it: the kind is the company card's to say; the code itself is fixed once
+                // the company is made, so a wrong one means the company made anew
+                PayeeId.Ariregistrikood when payer.Length != 8 || !payer.All(char.IsAsciiDigit) => $"The payer's code '{payer}' is labelled ARIREGISTRIKOOD but is not eight digits; say on the company card (Ettevõte → Muuda) what kind of code it is, or make the company anew if the code itself is wrong.",
+                PayeeId.Isikukood when payer.Length != 11 || !payer.All(char.IsAsciiDigit) => $"The payer's code '{payer}' is labelled ISIKUKOOD but is not eleven digits; say on the company card (Ettevõte → Muuda) what kind of code it is, or make the company anew if the code itself is wrong.",
+                PayeeId.MrrKood => MrrCodes.Problem(payer) is { } problem ? $"The payer's code: {problem} The company's code cannot be changed: make the company anew with the code as MTA has it." : null,
+                _ => null,
+            };
+            if (misshapen is not null)
+            {
+                problems.Add(misshapen);
+            }
+        }
 
         if (declaration.Sections.Count == 0)
         {
@@ -71,6 +89,10 @@ public static class DeclarationValidator
                 if (line.Payee is null)
                 {
                     problems.Add($"{where}: an R or M line needs the payee (identifierReference).");
+                }
+                else if (line.Payee.Description == PayeeId.MrrKood && MrrCodes.Problem(line.Payee.Code) is { } mrrProblem)
+                {
+                    problems.Add($"{where}: {mrrProblem} Correct it on the person card.");
                 }
 
                 if (line.DocumentDate is not { } date)

@@ -108,6 +108,10 @@ public sealed class CompanyDialog : FieldDialog
 
     internal ComboBox PayerTypeBox => _payerType;
 
+    internal TextBox CodeBox => _code;
+
+    internal TextBox NameBox => _name;
+
     protected override bool Accept()
     {
         if (RegistryCode.Length == 0 || CompanyTitle.Length == 0)
@@ -116,8 +120,59 @@ public sealed class CompanyDialog : FieldDialog
             return false;
         }
 
+        // the code has the shape of what the file will call it (decision 155); an existing company's code stays as it is,
+        // so only the kind chosen for it is held against it — the export would refuse the file otherwise
+        if (_code.ReadOnly)
+        {
+            if (PayerCodeType is not null && RegistryCode.All(char.IsAsciiLetterOrDigit) && CodeProblem(RegistryCode, PayerCodeType) is { } misfit)
+            {
+                Complain(misfit);
+                return false;
+            }
+        }
+        else
+        {
+            if (CodeProblem(RegistryCode, PayerCodeType) is { } problem)
+            {
+                Complain(problem);
+                return false;
+            }
+
+            if (AsksWhetherMrr(RegistryCode, PayerCodeType) && !(AskingMrr ?? Ask)(UiText.CompanyCodeAsMrr(RegistryCode)))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
+
+    /// <summary>What is wrong with a new company's code for what the file will call it, or null: signs other than letters
+    /// and digits; a code labelled a registry code that is not eight digits, or a personal code that is not eleven.</summary>
+    internal static string? CodeProblem(string code, string? chosenType)
+    {
+        if (!code.All(char.IsAsciiLetterOrDigit))
+        {
+            return UiText.CompanyCodeSigns;
+        }
+
+        var label = PayerCodes.DescriptionOf(code, chosenType);
+        return (label == PayeeId.Ariregistrikood && (code.Length != 8 || !code.All(char.IsAsciiDigit)))
+            || (label == PayeeId.Isikukood && (code.Length != 11 || !code.All(char.IsAsciiDigit)))
+            ? UiText.CompanyCodeShape(label)
+            : null;
+    }
+
+    /// <summary>Whether to ask if the code really is an MRR code: neither an Estonian registry code nor a personal code,
+    /// and the card does not say what it is — right for a foreign company, a slip for a mistyped registry code.</summary>
+    internal static bool AsksWhetherMrr(string code, string? chosenType) =>
+        chosenType is null && PayerCodes.DescriptionOf(code, null) == PayeeId.MrrKood;
+
+    /// <summary>Answers the "is it an MRR code?" question for a test, in place of the message box.</summary>
+    internal Func<string, bool>? AskingMrr;
+
+    private bool Ask(string question) =>
+        MessageBox.Show(this, question, Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
 }
 
 /// <summary>A person added by hand: names, the Estonian personal code, the residency and the employment type.</summary>

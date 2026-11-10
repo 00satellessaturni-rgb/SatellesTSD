@@ -569,6 +569,34 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void An_MTA_non_resident_code_with_a_space_or_another_sign_is_refused_on_the_card()
+    {
+        var (store, company, period, workspace) = Run();
+        using (store)
+        {
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            Assert.Equal(ReviewWorkspace.MrrInvalid, Assert.Throws<ReviewException>(() => workspace.SavePerson(mari with { MrrCode = "A000 3689779" })).Code);
+            Assert.Equal(ReviewWorkspace.MrrInvalid, Assert.Throws<ReviewException>(() => workspace.SavePerson(mari with { MrrCode = "LV-12345" })).Code);
+            Assert.Null(store.Persons(company.Id).Single(p => p.Id == mari.Id).MrrCode); // nothing was saved
+
+            // letters and digits: saved, trimmed; a country code before it is the window's question, not the store's refusal
+            Assert.Equal("A0003689779", workspace.SavePerson(mari with { MrrCode = " A0003689779 " }).MrrCode);
+            var fresh = store.Persons(company.Id).Single(p => p.Id == mari.Id);
+            Assert.Equal("LV40003689779", workspace.SavePerson(fresh with { MrrCode = "LV40003689779" }).MrrCode);
+            fresh = store.Persons(company.Id).Single(p => p.Id == mari.Id);
+            Assert.Null(workspace.SavePerson(fresh with { MrrCode = " " }).MrrCode); // taken away again
+
+            // a code the store already holds from before the check does not stand in the way of another edit; typed anew, it is refused
+            fresh = store.Persons(company.Id).Single(p => p.Id == mari.Id);
+            store.UpdatePerson(fresh with { MrrCode = "A000 3689779" });
+            fresh = store.Persons(company.Id).Single(p => p.Id == mari.Id);
+            Assert.Equal(("uus märkus", "A000 3689779"), (workspace.SavePerson(fresh with { Notes = "uus märkus" }).Notes, store.Persons(company.Id).Single(p => p.Id == mari.Id).MrrCode));
+            fresh = store.Persons(company.Id).Single(p => p.Id == mari.Id);
+            Assert.Equal(ReviewWorkspace.MrrInvalid, Assert.Throws<ReviewException>(() => workspace.SavePerson(fresh with { MrrCode = "A000 368 9779" })).Code);
+        }
+    }
+
+    [Fact]
     public void A_person_added_by_hand_needs_names_and_an_unused_valid_code_and_shows_once_they_have_a_line()
     {
         var (store, company, period, workspace) = Run();

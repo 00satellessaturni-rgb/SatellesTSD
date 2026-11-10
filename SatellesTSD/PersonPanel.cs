@@ -143,6 +143,8 @@ public sealed class PersonPanel : UserControl
 
     internal TextBox FirstNameBox => _first;
 
+    internal TextBox MrrBox => _mrr;
+
     public bool ConfirmResidency => _confirmResidency.Checked;
 
     public bool ConfirmPension => _confirmPension.Checked;

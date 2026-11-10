@@ -16,6 +16,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     public const string PeriodNotDraft = "PERIOD_NOT_DRAFT";
     public const string PersonExists = "PERSON_EXISTS";
     public const string NameMissing = "NAME_MISSING";
+
+    /// <summary>The MTA non-resident code typed on the card is none for certain: a space or another sign in it (decision 155).</summary>
+    public const string MrrInvalid = "MRR_INVALID";
     public const string CodeInvalid = ReviewChecks.CodeInvalid; // the card's save and the review's refusal name the fault alike
     public const string LineMissing = "LINE_MISSING";
     public const string AmountInvalid = "AMOUNT_INVALID";
@@ -636,12 +639,20 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var rate = Pick(edited.PensionRate, basis?.PensionRate, fresh.PensionRate);
         var pensionChanged = confirmPension || fresh.FundedPensionMember != member || fresh.PensionRate != rate;
         var today = Today();
+        // refused as typed: a code the store already holds (saved before this was checked) does not stand in the way of
+        // another edit of the card — the export names it if the person is declared by it
+        var mrr = PickText(edited.MrrCode, basis?.MrrCode, fresh.MrrCode);
+        if (!string.Equals(mrr, Clean(fresh.MrrCode), StringComparison.Ordinal) && Xbrl.MrrCodes.Problem(mrr) is { } mrrProblem)
+        {
+            throw new ReviewException(MrrInvalid, mrrProblem);
+        }
+
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
             LastName = edited.LastName.Trim(),
             PersonalCode = code,
-            MrrCode = PickText(edited.MrrCode, basis?.MrrCode, fresh.MrrCode),
+            MrrCode = mrr,
             Residency = residency,
             ResidenceCountry = residenceCountry,
             ResidencyCheckedOn = residencyChanged ? today : fresh.ResidencyCheckedOn,

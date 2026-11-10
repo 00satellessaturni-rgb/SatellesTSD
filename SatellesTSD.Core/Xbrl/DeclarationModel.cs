@@ -62,6 +62,53 @@ public static class PayerCodes
         : PayeeId.MrrKood;
 }
 
+/// <summary>The MTA non-resident code's shape, as far as it is certain (decision 155): letters and digits only — MTA's
+/// example is A0003689779 — and no country prefix before it. The length is not known and not checked.</summary>
+public static class MrrCodes
+{
+    private static readonly Lazy<HashSet<string>> Countries = new(() =>
+    {
+        var codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "EL", "UK", "XK" };
+        foreach (var culture in System.Globalization.CultureInfo.GetCultures(System.Globalization.CultureTypes.SpecificCultures))
+        {
+            try
+            {
+                codes.Add(new System.Globalization.RegionInfo(culture.Name).TwoLetterISORegionName);
+            }
+            catch (ArgumentException)
+            {
+                // a culture without a region of its own
+            }
+        }
+
+        return codes;
+    });
+
+    /// <summary>What is wrong with the code for certain, or null: a space, a hyphen or any character that is no letter or
+    /// digit. A blank code has no problem — it is no code.</summary>
+    public static string? Problem(string? code)
+    {
+        var text = code?.Trim();
+        if (string.IsNullOrEmpty(text) || text.All(char.IsAsciiLetterOrDigit))
+        {
+            return null;
+        }
+
+        return $"'{text}' is not an MTA non-resident code: it holds Latin letters A–Z and digits only, without spaces or other signs.";
+    }
+
+    /// <summary>The country code the text begins with, when it looks like one before the code proper (two letters that
+    /// are a country's, then more): MTA takes the code without a prefix. A hint for a question, not a certainty — a
+    /// code may begin with a letter of its own.</summary>
+    public static string? CountryPrefix(string? code)
+    {
+        var text = code?.Trim();
+        return text is { Length: > 2 } && char.IsAsciiLetter(text[0]) && char.IsAsciiLetter(text[1]) && Countries.Value.Contains(text[..2])
+            ? text[..2].ToUpperInvariant()
+            : null;
+    }
+}
+
 /// <summary>A SYNDMUS2017ap event block: TSD01 (arvestuse kuupäev) on every payment, TSD02 on refunds.</summary>
 public sealed record MeasurableEvent(string Id, DateOnly Start, DateOnly? End = null)
 {

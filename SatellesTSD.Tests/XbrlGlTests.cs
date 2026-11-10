@@ -180,6 +180,45 @@ public class XbrlGlTests
     }
 
     [Fact]
+    public void A_code_of_the_wrong_shape_is_named_before_the_file_is_written()
+    {
+        // the MTA non-resident code: letters and digits only (MTA's example A0003689779); the length is not known
+        Assert.Null(MrrCodes.Problem("A0003689779"));
+        Assert.Null(MrrCodes.Problem(" a0003689779 "));
+        Assert.Null(MrrCodes.Problem(null));
+        Assert.Null(MrrCodes.Problem("  "));
+        Assert.All(new[] { "A000 3689779", "LV-12345", "A0003689779.", "A0003689779/1", "Ä123" }, c => Assert.Contains("Latin letters A–Z and digits only", MrrCodes.Problem(c)));
+
+        // a country code before the code proper is a hint for a question, never a refusal
+        Assert.Equal("LV", MrrCodes.CountryPrefix("LV40003689779"));
+        Assert.Equal("EE", MrrCodes.CountryPrefix("ee12345678"));
+        Assert.Equal("EL", MrrCodes.CountryPrefix("EL123456789")); // Greece, as MTA's lists write it
+        Assert.Null(MrrCodes.CountryPrefix("A0003689779")); // one letter of its own
+        Assert.Null(MrrCodes.CountryPrefix("ZZ12345")); // two letters no country has
+        Assert.Null(MrrCodes.CountryPrefix("LV"));
+        Assert.Null(MrrCodes.CountryPrefix(null));
+
+        // a payee named by a misshapen MRR code: the line is named, the file not written
+        var day = new DateOnly(2026, 10, 10);
+        var spaced = SalaryLine("spaced", 1, day) with { Payee = PayeeId.Mrr("A000 3689779") };
+        var fine = SalaryLine("fine", 2, day) with { Payee = PayeeId.Mrr("A0003689779") };
+        var problems = DeclarationValidator.Validate(Empty(new SectionEntries(Section.EE0201001, null, [spaced, fine])));
+        var problem = Assert.Single(problems);
+        Assert.Contains("spaced", problem);
+        Assert.Contains("'A000 3689779' is not an MTA non-resident code", problem);
+
+        // the payer's code has the shape its label says
+        Declaration Payer(string code, string label) => Empty(new SectionEntries(Section.EE0201001, null, [fine])) with { RegistryCode = code, RegistryCodeType = label };
+        Assert.Empty(DeclarationValidator.Validate(Payer("10235688", PayeeId.Ariregistrikood)));
+        Assert.Empty(DeclarationValidator.Validate(Payer("38810140309", PayeeId.Isikukood)));
+        Assert.Empty(DeclarationValidator.Validate(Payer("65758008", PayeeId.MrrKood)));
+        Assert.Contains("labelled ARIREGISTRIKOOD but is not eight digits", Assert.Single(DeclarationValidator.Validate(Payer("1023568", PayeeId.Ariregistrikood))));
+        Assert.Contains("labelled ISIKUKOOD but is not eleven digits", Assert.Single(DeclarationValidator.Validate(Payer("10235688", PayeeId.Isikukood))));
+        Assert.Contains("The payer's code: '6575 8008'", Assert.Single(DeclarationValidator.Validate(Payer("6575 8008", PayeeId.MrrKood))));
+        Assert.Throws<InvalidOperationException>(() => XbrlGlWriter.Write(Payer("1023568", PayeeId.Ariregistrikood)));
+    }
+
+    [Fact]
     public void A_file_without_any_section_is_refused()
     {
         var problems = DeclarationValidator.Validate(Empty());
