@@ -46,7 +46,8 @@ VBA) is in [docs/reference](docs/reference).
    whatever was entered after the upgrade is then in the aside file only.
 4. If the window ever fails, it writes `%AppData%\SatellesTSD\viga.log`; send that file along.
 
-Command-line switches: `--store <file>` opens that store instead of the remembered one; `--settings <file>`
+Command-line switches: `--store <file>` opens that store instead of the remembered one, once: the remembered
+store, company and month stay as they were until a store is chosen in the window; `--settings <file>`
 reads and writes the settings there instead of `%AppData%` (both take a path after them).
 
 ## A month, step by step

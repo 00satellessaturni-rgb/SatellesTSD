@@ -724,6 +724,107 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_store_named_on_the_command_line_is_a_one_off_the_settings_do_not_remember()
+    {
+        using var fixture = new WindowFixture();
+        var other = Path.Combine(fixture.Folder, "teine.db");
+        using (var store = SatellesTSD.Infrastructure.SqliteStore.Open(other))
+        {
+            store.GetOrCreatePeriod(store.AddCompany("00000001", "Aaa OÜ").Id, 2026, 9);
+            store.AddCompany(WindowFixture.RegistryCode, "Zzz OÜ"); // the remembered company's code is in this store too: it is not what the one-off shows
+        }
+
+        void Remembered(bool salaryOnly)
+        {
+            var saved = AppSettings.Load(fixture.SettingsPath);
+            Assert.Equal((fixture.StorePath, WindowFixture.RegistryCode, 2026, 10, salaryOnly), (saved.StorePath, saved.LastCompany, saved.LastYear, saved.LastMonth, saved.PersonsSalaryOnly));
+        }
+
+        MainForm Start(string? storeOverride)
+        {
+            var form = new MainForm(fixture.SettingsPath, AppSettings.Load(fixture.SettingsPath), storeOverride)
+            {
+                StartPosition = FormStartPosition.Manual, Location = new Point(-4000, -4000), Confirming = (_, _) => true, Failing = fixture.Failures.Add,
+            };
+            form.Show();
+            Ui.Until(() => !form.IsBusy, what: "the window to go idle after opening");
+            return form;
+        }
+
+        Ui.Run(() =>
+        {
+            // started on another store by the switch: its first company is shown, and the month picked in it is not remembered
+            var form = Start(other);
+            try
+            {
+                Assert.True(form.StoreIsOneOff);
+                Assert.Contains("00000001", form.CompanyBox.SelectedItem?.ToString(), StringComparison.Ordinal); // the store's first company, not the remembered code
+                Remembered(salaryOnly: false);
+                form.MonthBox.SelectedIndex = 8; // September, the other store's month
+                Ui.Pump();
+                Assert.Equal((2026, 9), (form.View!.Period.Year, form.View.Period.Month));
+                Remembered(salaryOnly: false);
+
+                // the window's own preferences are saved as ever
+                form.SalaryOnlyItem.PerformClick();
+                Ui.Pump();
+                Remembered(salaryOnly: true);
+            }
+            finally
+            {
+                fixture.Close(form);
+            }
+
+            Remembered(salaryOnly: true); // nor at the closing
+
+            // the next plain start opens the remembered store, its company and its month
+            form = Start(null);
+            try
+            {
+                Assert.False(form.StoreIsOneOff);
+                Assert.Contains(WindowFixture.RegistryCode, form.CompanyBox.SelectedItem?.ToString(), StringComparison.Ordinal);
+                Assert.Equal((2026, 10), (form.View!.Period.Year, form.View.Period.Month));
+            }
+            finally
+            {
+                fixture.Close(form);
+            }
+
+            // the switch naming the remembered store itself is no one-off: the window remembers as ever
+            form = Start(fixture.StorePath.ToUpperInvariant());
+            try
+            {
+                Assert.False(form.StoreIsOneOff);
+                form.MonthBox.SelectedIndex = 8;
+                Ui.Pump();
+                var again = AppSettings.Load(fixture.SettingsPath);
+                Assert.Equal((WindowFixture.RegistryCode, 9), (again.LastCompany, again.LastMonth)); // what the window shows is remembered again
+                Assert.Equal(fixture.StorePath, again.StorePath, ignoreCase: true);
+            }
+            finally
+            {
+                fixture.Close(form);
+            }
+        
+            // a one-off again, and a store chosen in the window (the dialog's way in): remembered from there on
+            form = Start(other);
+            try
+            {
+                Assert.True(form.StoreIsOneOff);
+                form.OpenChosenStore(other);
+                Ui.Until(() => !form.IsBusy, what: "the chosen store to open");
+                Assert.False(form.StoreIsOneOff);
+                var chosen = AppSettings.Load(fixture.SettingsPath);
+                Assert.Equal((other, "00000001"), (chosen.StorePath, chosen.LastCompany));
+            }
+            finally
+            {
+                fixture.Close(form);
+            }
+        });
+    }
+
+    [Fact]
     public void Unsaved_edits_on_the_card_stay_when_the_question_is_cancelled_or_the_save_fails_and_the_action_stops()
     {
         using var fixture = new WindowFixture();

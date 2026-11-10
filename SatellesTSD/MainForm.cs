@@ -110,6 +110,15 @@ public sealed class MainForm : Form
         _settingsPath = settingsPath;
         _settings = settings;
         _storeOverride = storeOverride;
+        // a store named on the command line that is not the remembered one is a one-off: the settings keep the store, the
+        // company and the month they had until a store is chosen in the window (decision 147)
+        _remembered = (settings.StorePath, settings.LastCompany, settings.LastYear, settings.LastMonth);
+        _oneOff = storeOverride is not null && !FileIdentity.Same(storeOverride, settings.StorePath);
+        if (_oneOff)
+        {
+            _settings.LastCompany = null; // the other store's company means nothing here: the one-off store shows its first
+        }
+
         // the published program alone looks for updates: a build folder's copy or a test host's window never touches the share
         UpdatesEnabled = Environment.ProcessPath is { } exe && string.Equals(Path.GetFileName(exe), Updater.ExeName, StringComparison.OrdinalIgnoreCase)
             && typeof(MainForm).Assembly.Location.Length == 0;
@@ -1114,11 +1123,17 @@ public sealed class MainForm : Form
 
         if (path is not null)
         {
-            OpenStore(path);
+            OpenChosenStore(path);
         }
     }
 
-    private void OpenStore(string path)
+    /// <summary>Opens a store as the dialog's choice does: remembered from here on. The dialog itself is modal; a test
+    /// comes in here.</summary>
+    internal void OpenChosenStore(string path) => OpenStore(path, chosen: true);
+
+    /// <param name="chosen">The accountant chose the store in the window: it is remembered from here on, a one-off start's
+    /// store no longer standing in the way.</param>
+    private void OpenStore(string path, bool chosen = false)
     {
         CommitPendingNote(); // a note being typed goes to the store it was typed for, before that store closes
         if (!SettleCard()) // against the store it was typed for, before that store closes
@@ -1138,7 +1153,7 @@ public sealed class MainForm : Form
         }
         catch (Exception e) when (OfferStoreRestore(path, e))
         {
-            OpenStore(path); // the copy put back opens as this build's
+            OpenStore(path, chosen); // the copy put back opens as this build's
             return;
         }
         catch (Exception e)
@@ -1150,6 +1165,11 @@ public sealed class MainForm : Form
         }
 
         _storeLabel.Text = path;
+        if (chosen)
+        {
+            _oneOff = false; // chosen in the window: remembered again, with the company and the month shown in it
+        }
+
         _settings.StorePath = path;
         SaveSettings();
         _personPanel.LookupsAvailable = _services.Pipeline.HasLookups;
@@ -2795,10 +2815,23 @@ public sealed class MainForm : Form
         MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
+    private readonly (string? StorePath, string? Company, int? Year, int? Month) _remembered; // as the settings had them at the start
+    private bool _oneOff; // the open store is the command line's one-off: its place, company and month are not remembered
+
+    /// <summary>Whether the store shown is a one-off of the command line, which the settings do not remember.</summary>
+    internal bool StoreIsOneOff => _oneOff;
+
     private void SaveSettings()
     {
         try
         {
+            if (_oneOff)
+            {
+                // the window's own preferences are saved as ever; the store, the company and the month stay as remembered
+                _settings.SavedWith(_remembered.StorePath, _remembered.Company, _remembered.Year, _remembered.Month).Save(_settingsPath);
+                return;
+            }
+
             _settings.Save(_settingsPath);
         }
         catch (IOException)

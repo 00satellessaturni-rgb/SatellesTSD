@@ -73,6 +73,15 @@ public sealed class AppSettings
         return new AppSettings();
     }
 
+    /// <summary>A copy that names another store, company and month: what is written while a one-off store is open, so
+    /// the remembered ones stand (decision 147).</summary>
+    public AppSettings SavedWith(string? storePath, string? lastCompany, int? lastYear, int? lastMonth)
+    {
+        var copy = (AppSettings)MemberwiseClone();
+        (copy.StorePath, copy.LastCompany, copy.LastYear, copy.LastMonth) = (storePath, lastCompany, lastYear, lastMonth);
+        return copy;
+    }
+
     public void Save(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
