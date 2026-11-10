@@ -620,6 +620,48 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void A_report_that_places_a_line_elsewhere_than_the_file_did_is_another_files_and_is_refused()
+    {
+        var (store, _, period, person) = Setup();
+        using (store)
+        {
+            // the first file carries two lines, at 1 and 2; a correction file carries the second of them alone, at 1
+            var a = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var b = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var first = store.AddSubmission(period.Id, "f.xml", "u", [a.Id, b.Id], DateTime.UtcNow, new Dictionary<Guid, int> { [a.Id] = 1, [b.Id] = 2 });
+
+            // the correction's report read onto the first file: b's key is in both, but at another place
+            var wrong = Assert.Throws<InvalidOperationException>(() => store.RecordFeedback(first.Id, Clean("EE0201001", b.LineNumber, 1)));
+            Assert.Contains("another submission", wrong.Message);
+            Assert.Contains($"{b.LineNumber} at 1, here 2", wrong.Message);
+            Assert.All(new[] { a, b }, p => Assert.Equal(PaymentStatus.Sent, store.History(period.Id, Section.EE0201001, p.LineNumber)[^1].Status)); // nothing took a verdict
+            Assert.Empty(store.Feedback(b.Id));
+            Assert.Null(store.Submissions(period.Id).Single().Result);
+
+            // the file's own report, each line where the file had it: read
+            store.RecordFeedback(first.Id, Clean("EE0201001", b.LineNumber, 2));
+            Assert.Equal(PaymentStatus.Accepted, store.History(period.Id, Section.EE0201001, b.LineNumber)[^1].Status);
+
+            // a line the report gives no place (a refused one) is let through; so is a file sent before the places were kept
+            store.RecordFeedback(first.Id, Coloured("EE0201001", a.LineNumber, "ERROR_BLACK", "KR_XBRL_VALJAMAKSED_14"));
+            Assert.Equal(PaymentStatus.Rejected, store.History(period.Id, Section.EE0201001, a.LineNumber)[^1].Status);
+            var c = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var old = store.AddSubmission(period.Id, "vana.xml", "v", [c.Id], DateTime.UtcNow);
+            store.RecordFeedback(old.Id, Clean("EE0201001", c.LineNumber, 7));
+            Assert.Equal(PaymentStatus.Accepted, store.History(period.Id, Section.EE0201001, c.LineNumber)[^1].Status);
+
+            // a withdrawn file's places go with it: the line sent again sits where the new file has it
+            var d = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var taken = store.AddSubmission(period.Id, "t.xml", "t", [d.Id], DateTime.UtcNow, new Dictionary<Guid, int> { [d.Id] = 5 });
+            store.WithdrawSubmission(taken.Id);
+            var again = store.AddSubmission(period.Id, "t2.xml", "t2", [d.Id], DateTime.UtcNow, new Dictionary<Guid, int> { [d.Id] = 1 });
+            Assert.Throws<InvalidOperationException>(() => store.RecordFeedback(again.Id, Clean("EE0201001", d.LineNumber, 5)));
+            store.RecordFeedback(again.Id, Clean("EE0201001", d.LineNumber, 1));
+            Assert.Equal(PaymentStatus.Accepted, store.History(period.Id, Section.EE0201001, d.LineNumber)[^1].Status);
+        }
+    }
+
+    [Fact]
     public void A_report_that_names_a_line_of_another_file_is_refused()
     {
         var (store, _, period, person) = Setup();

@@ -56,7 +56,9 @@ public interface IStore : IImportStore, IMatchStore, ILookupStore, IReviewStore
     void DeleteDraft(Guid paymentId);
 
     /// <summary>Records that a file with these lines was produced: the lines become Sent.</summary>
-    Submission AddSubmission(Guid periodId, string fileName, string uniqueId, IReadOnlyCollection<Guid> paymentIds, DateTime at);
+    /// <param name="counters">Each line's lineNumberCounter in this file, by payment id, when the file's maker knows them: a
+    /// feedback report is checked against them (decision 153).</param>
+    Submission AddSubmission(Guid periodId, string fileName, string uniqueId, IReadOnlyCollection<Guid> paymentIds, DateTime at, IReadOnlyDictionary<Guid, int>? counters = null);
 
     /// <summary>A file that was exported but never uploaded: the submission is removed and its lines go back to Draft.
     /// Refused once any feedback was recorded.</summary>

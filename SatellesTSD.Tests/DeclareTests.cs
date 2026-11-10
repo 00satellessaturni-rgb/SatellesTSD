@@ -469,6 +469,13 @@ public class DeclareTests
         Assert.Equal((Path.GetFileName(first.Path), first.Path), (stored.FileName, stored.FilePath));
         Assert.Equal(stored, first.Submission with { General = stored.General });
 
+        // the export tells the store where each line sits in the file: a report placing the line elsewhere is another file's (decision 153)
+        var line = box.Lines.Single();
+        static FeedbackReport At(string key, int counter) => FeedbackReader.Read(System.Xml.Linq.XDocument.Parse($"<processing result=\"OK\"><entryHeader><entryNumber>EE0201001</entryNumber><validations><validation><errorLevel>OK</errorLevel><errorCode>OK</errorCode><errorDescription>ok</errorDescription><lineReferences><lineReference><lineInternalId>{key}</lineInternalId><lineNumberCounter>{counter}</lineNumberCounter></lineReference></lineReferences></validation></validations></entryHeader></processing>"));
+        Assert.Equal(1, first.Declaration.Sections.Single().Lines.Single().Counter);
+        Assert.Contains("another submission", Assert.Throws<InvalidOperationException>(() => box.Store.RecordFeedback(first.Submission.Id, At(line.LineNumber, 2))).Message);
+        Assert.Equal(PaymentStatus.Sent, box.Lines.Single().Status);
+
         // taken back: the file is renamed, so the upload dialog no longer offers it, and still there to look at
         var aside = box.Submitter.Withdraw(first.Submission.Id);
         Assert.Equal((WithdrawnFileState.SetAside, first.Path + PeriodSubmitter.WithdrawnSuffix, stored.FileName), (aside.State, aside.Path, aside.FileName));

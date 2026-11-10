@@ -118,6 +118,10 @@ public sealed partial class SqliteStore : IStore
     }
 
     private bool? _hasPayerColumn;
+    private bool? _hasCounterColumn;
+
+    /// <summary>Whether the payment table carries the v12 column: a store opened at an older version (the upgrade tests) has none.</summary>
+    private bool HasCounterColumn => _hasCounterColumn ??= Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('payment') WHERE name = 'file_counter'") > 0;
 
     /// <summary>Whether the company table carries the v10 column: a store opened at an older version (the upgrade tests) has none.</summary>
     private bool HasPayerColumn => _hasPayerColumn ??= Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('company') WHERE name = 'payer_code_type'") > 0;
@@ -534,7 +538,7 @@ public sealed partial class SqliteStore : IStore
 
     // ---------------------------------------------------------------- submissions and feedback
 
-    public Submission AddSubmission(Guid periodId, string fileName, string uniqueId, IReadOnlyCollection<Guid> paymentIds, DateTime at)
+    public Submission AddSubmission(Guid periodId, string fileName, string uniqueId, IReadOnlyCollection<Guid> paymentIds, DateTime at, IReadOnlyDictionary<Guid, int>? counters = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         ArgumentException.ThrowIfNullOrWhiteSpace(uniqueId);
@@ -557,6 +561,12 @@ public sealed partial class SqliteStore : IStore
             {
                 throw new InvalidOperationException($"Payment {paymentId} is not a Draft of period {periodId}; only drafts go into a new file.");
             }
+
+            if (counters is not null && HasCounterColumn && counters.TryGetValue(paymentId, out var counter))
+            {
+                // where the line sits in this file: MTA's report points back by it, and is checked against it (decision 153)
+                Exec("UPDATE payment SET file_counter = $counter WHERE id = $id", ("$id", G(paymentId)), ("$counter", counter));
+            }
         }
 
         tx.Commit();
@@ -576,7 +586,9 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException("The submission already has a verdict on it (feedback or a line resolved by hand); it was uploaded and cannot be withdrawn.");
         }
 
-        Exec("UPDATE payment SET status = $draft, submission_id = NULL WHERE submission_id = $id AND status = $sent",
+        Exec(HasCounterColumn
+                ? "UPDATE payment SET status = $draft, submission_id = NULL, file_counter = NULL WHERE submission_id = $id AND status = $sent"
+                : "UPDATE payment SET status = $draft, submission_id = NULL WHERE submission_id = $id AND status = $sent",
             ("$id", G(submissionId)), ("$draft", PaymentStatus.Draft.ToString()), ("$sent", PaymentStatus.Sent.ToString()));
         Exec("DELETE FROM submission WHERE id = $id", ("$id", G(submissionId)));
         tx.Commit();
@@ -614,6 +626,22 @@ public sealed partial class SqliteStore : IStore
         if (foreign.Count > 0)
         {
             throw new InvalidOperationException($"The report names lines this file did not carry ({string.Join(", ", foreign)}); it belongs to another submission.");
+        }
+
+        // a report of another file that happens to carry the same keys (a later correction read onto the first file, say)
+        // places them elsewhere: each line's lineNumberCounter is its position in its own file. Checked where both sides
+        // know it — a file sent before the counters were kept, and a line the report gives none, are let through (decision 153).
+        if (HasCounterColumn)
+        {
+            var placed = Query("SELECT id, file_counter FROM payment WHERE submission_id = $submission AND file_counter IS NOT NULL",
+                r => (Id: Guid.Parse(r.GetString(0)), Counter: (int)r.GetInt64(1)), ("$submission", G(submissionId))).ToDictionary(p => p.Id, p => p.Counter);
+            var elsewhere = outcomes
+                .Where(o => o.Counter is { } said && placed.TryGetValue(byKey[new LineKey(o.EntryNumber, o.LineNumber)].Id, out var own) && own != said)
+                .Select(o => $"{o.EntryNumber}/{o.LineNumber} at {o.Counter}, here {placed[byKey[new LineKey(o.EntryNumber, o.LineNumber)].Id]}").ToList();
+            if (elsewhere.Count > 0)
+            {
+                throw new InvalidOperationException($"The report places lines elsewhere than this file did ({string.Join("; ", elsewhere)}); it belongs to another submission.");
+            }
         }
 
         // a report read within the millisecond of the one before (two reads of the same file in a row) gets the next
@@ -873,6 +901,7 @@ public sealed partial class SqliteStore : IStore
 
         tx.Commit();
         _hasPayerColumn = null; // the columns may have changed
+        _hasCounterColumn = null;
     }
 
     private string? _openedPath;
@@ -1222,6 +1251,12 @@ public sealed partial class SqliteStore : IStore
         UPDATE review_line SET amount = NULL WHERE row_id IS NOT NULL;
         DROP INDEX review_line_by_row;
         CREATE UNIQUE INDEX review_line_by_row ON review_line (period_id, row_id) WHERE row_id IS NOT NULL AND amount IS NULL;
+        """,
+
+        // v12 — a sent line's lineNumberCounter in its file (decision 153): what a feedback report is checked against, so a
+        // report of another file is not read onto this one. Null for a draft and for a line sent before this.
+        """
+        ALTER TABLE payment ADD COLUMN file_counter INTEGER;
         """,
     ];
 

@@ -126,6 +126,9 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             }
         }
 
+        // where each line sits in this file, for the store: a feedback report is checked against it (decision 153)
+        var placed = declaration.Sections.SelectMany(s => s.Lines.Select(l => (Key: (s.Section, l.LineNumber), l.Counter))).ToDictionary(x => x.Key, x => x.Counter);
+        var counters = drafts.Where(d => placed.ContainsKey((d.Section, d.LineNumber))).ToDictionary(d => d.Id, d => placed[(d.Section, d.LineNumber)]);
         Directory.CreateDirectory(folder);
         var fileName = $"tsd-{company.RegistryCode}-{period.Year:0000}-{period.Month:00}-{now:yyyyMMdd-HHmmss}.xml";
         var path = Path.Combine(folder, fileName);
@@ -135,7 +138,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         {
             _store.InTransaction(() =>
             {
-                submission = _store.AddSubmission(periodId, path, uniqueId, drafts.Select(d => d.Id).ToList(), now.UtcDateTime);
+                submission = _store.AddSubmission(periodId, path, uniqueId, drafts.Select(d => d.Id).ToList(), now.UtcDateTime, counters);
                 _store.SetPeriodState(periodId, PeriodState.Exported, now.UtcDateTime);
             });
         }
