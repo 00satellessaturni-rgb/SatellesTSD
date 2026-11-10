@@ -59,6 +59,12 @@ public sealed record PensionFinding(PensionStatus Status, DateOnly? WithholdingS
     public bool MemberOn(DateOnly date) =>
         Status != PensionStatus.NotJoined && WithholdingStart is { } start && date >= start && (ContributionsEnded is not { } ended || date < ended);
 
+    /// <summary>Joined, yet the page names no withholding start, and the day is before the contributions ended (or no end
+    /// is named): whether the person is a member that day cannot be told from the page, and "not a member" is not the
+    /// default (decision 162). From the day the contributions ended on, "not a member" is the answer.</summary>
+    public bool MembershipUnknownOn(DateOnly date) =>
+        Status != PensionStatus.NotJoined && WithholdingStart is null && (ContributionsEnded is not { } ended || date < ended);
+
     /// <summary>The rate in force on the day, or null when no row of the table covers it (never a default).</summary>
     public decimal? RateOn(DateOnly date) => Rates.FirstOrDefault(r => r.Covers(date))?.Rate;
 

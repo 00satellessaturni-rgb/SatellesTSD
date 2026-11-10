@@ -326,9 +326,14 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
         var pensionRecord = await RecordedOrAskedAsync(current, LookupKind.Pension, controlDate, force, steps, cancellationToken).ConfigureAwait(false);
         PensionFinding? pensionFinding = pensionRecord?.FindingJson is { } pj ? JsonSerializer.Deserialize<PensionFinding>(pj, Json) : null;
-        if (pensionFinding is null)
+        // an answer that cannot say whether the person is a member on the day is no answer for the day (decision 162)
+        var pensionFailure = pensionFinding is null ? pensionRecord?.Failure ?? "no answer"
+            : pensionFinding.MembershipUnknownOn(controlDate)
+                ? $"the person has joined but the page names no withholding start{(pensionFinding.ContributionsEnded is { } ended ? $", only that the contributions end on {ended:dd.MM.yyyy}, after {controlDate:dd.MM.yyyy}" : "")}: a member or not on the day is not known"
+                : null;
+        if (pensionFailure is not null)
         {
-            problems.Add($"{Failed}: pension — {pensionRecord?.Failure ?? "no answer"}; the facts stand as they were.");
+            problems.Add($"{Failed}: pension — {pensionFailure}; the facts stand as they were.");
             current = Fresh(current);
             if (current.PensionSource == LookupSource.Derived)
             {
@@ -345,7 +350,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             return Outcome();
         }
 
-        ApplyPension(Fresh(current), pensionFinding, LookupSource.Pensionikeskus, controlDate, CheckedOn(pensionRecord!), pensionBack, steps, problems, disagreements);
+        ApplyPension(Fresh(current), pensionFinding!, LookupSource.Pensionikeskus, controlDate, CheckedOn(pensionRecord!), pensionBack, steps, problems, disagreements);
         return Outcome();
     }
 
@@ -397,7 +402,9 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     {
         var source = kind == LookupKind.Residency ? LookupSource.Emta : LookupSource.Pensionikeskus;
         var code = person.PersonalCode!.Trim();
-        if (!force && _store.LatestLookup(person.Id, kind, controlDate) is { Succeeded: true } recorded && recorded.Source == source && recorded.PersonalCode == code)
+        if (!force && _store.LatestLookup(person.Id, kind, controlDate) is { Succeeded: true } recorded && recorded.Source == source && recorded.PersonalCode == code
+            // a pension answer that cannot tell the day's membership is no answer for the day: asked again, as a failed one is (decision 162)
+            && !(kind == LookupKind.Pension && JsonSerializer.Deserialize<PensionFinding>(recorded.FindingJson!, Json) is { } known && known.MembershipUnknownOn(controlDate)))
         {
             steps.Add($"{kind.ToString().ToLowerInvariant()} answer of {recorded.CheckedAt:dd.MM.yyyy HH:mm} reused");
             return recorded;

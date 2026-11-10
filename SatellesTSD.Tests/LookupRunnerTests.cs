@@ -308,6 +308,66 @@ public class LookupRunnerTests
     }
 
     [Fact]
+    public async Task A_joined_person_with_only_an_end_named_is_unknown_before_it_and_not_a_member_from_it()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            // joined, no withholding start on the page, the contributions end on 15.11.2026: on the control date (31.10)
+            // the person may well still be a member — the answer is no answer for the day, and the facts stand
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406") with { FundedPensionMember = true, PensionRate = 0.02m, PensionSource = LookupSource.Pensionikeskus });
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var onlyEnd = new PensionFinding(PensionStatus.Joined, null, new DateOnly(2026, 11, 15), []);
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(onlyEnd, null) } };
+            Assert.True(onlyEnd.MembershipUnknownOn(Control));
+            Assert.False(onlyEnd.MemberOn(Control));
+
+            var report = await Runner(store, residency, pension).RunAsync(period.Id);
+
+            var outcome = Assert.Single(report.Persons);
+            var problem = Assert.Single(outcome.Problems);
+            Assert.StartsWith(LookupRunner.Failed, problem);
+            Assert.Contains("15.11.2026", problem);
+            Assert.Contains("31.10.2026", problem);
+            var person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((true, 0.02m, LookupSource.Pensionikeskus), (person.FundedPensionMember, person.PensionRate, person.PensionSource));
+            Assert.Null(person.FactsControlDate); // the facts are not of this day
+
+            // such an answer is not reused, as a failed one is not: the next run of the month asks Pensionikeskus again
+            // (the residency's answer is reused), and takes the page once it names the start
+            pension.Answers["48712219406"] = LookupResult<PensionFinding>.Found(Member(0.04m), null);
+            var next = await Runner(store, residency, pension).RunAsync(period.Id);
+            Assert.Equal((1, 2), (residency.Asked.Count, pension.Asked.Count));
+            Assert.Empty(next.Persons.Single().Problems);
+            person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((true, 0.04m, Control), (person.FundedPensionMember, person.PensionRate, person.FactsControlDate));
+            pension.Answers["48712219406"] = LookupResult<PensionFinding>.Found(onlyEnd, null);
+
+            // a person never checked stays unknown, never "not a member"
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309"));
+            residency.Answers["38810140309"] = LookupResult<ResidencyFinding>.Found(Resident(), null);
+            pension.Answers["38810140309"] = LookupResult<PensionFinding>.Found(onlyEnd, null);
+            await Runner(store, residency, pension).RunAsync(period.Id);
+            var jaan = store.FindPerson(company.Id, "38810140309")!;
+            Assert.Equal(((bool?)null, LookupSource.Unknown), (jaan.FundedPensionMember, jaan.PensionSource));
+
+            // the contributions ended on or before the day: "not a member" is the answer, start or no start
+            var ended = new PensionFinding(PensionStatus.Joined, null, new DateOnly(2026, 10, 31), []);
+            Assert.False(ended.MembershipUnknownOn(Control));
+            pension.Answers["48712219406"] = LookupResult<PensionFinding>.Found(ended, null);
+            var again = await Runner(store, residency, pension).LookUpAsync(person, Control, afresh: true);
+            Assert.Empty(again.Problems);
+            person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((false, (decimal?)null, LookupSource.Pensionikeskus, Control), (person.FundedPensionMember, person.PensionRate, person.PensionSource, person.FactsControlDate));
+
+            // with a start named nothing is unknown; a finding with no date at all (the parser refuses such a page) is unknown on every day
+            Assert.False(Member(0.02m).MembershipUnknownOn(Control));
+            Assert.False(NotJoined.MembershipUnknownOn(Control));
+            Assert.True(new PensionFinding(PensionStatus.ObligedByBirthYear, null, null, []).MembershipUnknownOn(Control));
+        }
+    }
+
+    [Fact]
     public async Task A_corrected_personal_code_is_asked_about_afresh()
     {
         var (store, company, period) = Setup();
