@@ -15,7 +15,9 @@ the program finds it at its next start and offers the update (in the title and o
 5. Copies it to <OutputFolder>\SatellesTSD-v<version>\, writes release.txt (version, commit, date, the exe's
    size and SHA-256) into it, zips the folder next to it, and appends a line to <OutputFolder>\publish.log.
    A folder already there for the same version is refused unless -Force.
-6. Unless -LocalOnly: refuses a version not newer than the one on offer, copies the zip to the release folder
+6. Unless -LocalOnly: refuses a version that is not above every version ever on offer there (a withdrawn one
+   counts: the copies that installed it compare version numbers only, so a build numbered at or below it
+   would never reach them - a fix takes a number above the withdrawn one), copies the zip to the release folder
    on the NAS (via a .partial file, its SHA-256 checked), then writes latest.txt - last, so no copy is ever
    offered a file still being copied. The previous latest.txt is kept as latest.previous.txt. -Withdraw puts
    it back and sets the withdrawn zip aside (once per release).
@@ -100,7 +102,7 @@ if ($Withdraw) {
             Write-Host "WARNING: SatellesTSD-v$withdrawn.zip could not be set aside (a PC may be copying it). In a minute, rename it by hand to SatellesTSD-v$withdrawn.zip.withdrawn - do not run -Withdraw again." -ForegroundColor Yellow
         }
     }
-    Write-Host "Withdrawn: $withdrawn. Offered now: $restored. Copies already updated keep it; publish a newer version to replace it everywhere." -ForegroundColor Green
+    Write-Host "Withdrawn: $withdrawn. Offered now: $restored. Copies already updated keep it; publish a version above $withdrawn to replace it everywhere." -ForegroundColor Green
     exit 0
 }
 
@@ -139,12 +141,58 @@ function Normalize-Version([string]$text) {
     return New-Object Version($parts[0], $parts[1], $parts[2], $parts[3])
 }
 
+# The versions the release folder has ever had on offer: the "published" and "withdrew" lines of its publish.log
+# (a publish writes its line last, after latest.txt, so an interrupted one left none), and what the manifests there
+# name - on offer now, before that, and withdrawn. Only what reads as a version as the program reads one (up to
+# four parts of digits) counts: a line damaged by hand never stops a release.
+function Get-AnnouncedVersions([string]$folder) {
+    $found = New-Object 'System.Collections.Generic.List[Version]'
+    $shape = '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
+    $log = Join-Path $folder 'publish.log'
+    if (Test-Path -LiteralPath $log) {
+        foreach ($line in [IO.File]::ReadAllText($log, $utf8) -split "`n") {
+            $hit = [regex]::Match($line, '\s(?:published|withdrew)\s+([0-9]+(?:\.[0-9]+)*)')
+            if ($hit.Success -and $hit.Groups[1].Value -match $shape) { $found.Add((Normalize-Version $hit.Groups[1].Value)) }
+        }
+    }
+    foreach ($name in 'latest.txt', 'latest.previous.txt', 'latest.withdrawn.txt') {
+        $path = Join-Path $folder $name
+        if (Test-Path -LiteralPath $path) {
+            $named = (Read-Manifest $path)['version']
+            if ($named -match $shape) { $found.Add((Normalize-Version $named)) }
+        }
+    }
+    return ,$found
+}
+
+# A release takes a number above every version the release folder has ever had on offer, a withdrawn one included:
+# the copies that installed a build compare numbers only, so a fix published after a withdrawal under the withdrawn
+# number - or under any number below it - would never reach the copies that took the withdrawn build.
+function Refuse-AnnouncedVersion([string]$folder, [string]$version) {
+    if (-not (Test-Path -LiteralPath $folder -PathType Container)) { return }
+    $mine = Normalize-Version $version
+    $live = Join-Path $folder 'latest.txt'
+    if (Test-Path -LiteralPath $live) {
+        $onOffer = (Read-Manifest $live)['version']
+        if ($onOffer -match '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$' -and (Normalize-Version $onOffer) -eq $mine) {
+            Refuse "$version is on offer in the release folder now (latest.txt): it is published already. For a new build, raise the version in the csproj first."
+        }
+    }
+    $highest = $null
+    foreach ($v in (Get-AnnouncedVersions $folder)) { if ($null -eq $highest -or $v -gt $highest) { $highest = $v } }
+    if ($null -ne $highest -and $mine -le $highest) {
+        Refuse "$version is not above $($highest.ToString(3)), the highest version the release folder has ever had on offer (its publish.log and manifests; a withdrawn one counts). The copies that installed that one compare version numbers only and would never take a build numbered at or below it: raise the version in the csproj above it first."
+    }
+}
+
 # --- the version -----------------------------------------------------------------------------
 $csproj = [IO.File]::ReadAllText($project, $utf8)
 $m = [regex]::Match($csproj, '<Version>([0-9]+(?:\.[0-9]+)*)</Version>')
 if (-not $m.Success) { Refuse 'no numeric <Version> (such as 0.10.0) in SatellesTSD\SatellesTSD.csproj.' }
 $version = $m.Groups[1].Value
 Write-Host "Version: $version (commit $($commit.Substring(0, 7))$(if ($dirty) { ', DIRTY TREE' }))"
+# said before the build, which takes minutes; asked again where the release folder is written to
+if (-not $LocalOnly -and -not $dirty) { Refuse-AnnouncedVersion $ReleaseFolder $version }
 
 # --- where to --------------------------------------------------------------------------------
 if (-not $OutputFolder) { $OutputFolder = Join-Path $repo 'release' }
@@ -225,6 +273,7 @@ if (Test-Path -LiteralPath $manifest) {
     $announced = $liveManifest['file']
     if ($live -and ((Normalize-Version $version) -le (Normalize-Version $live))) { Refuse "$version is not newer than the published $live. Raise the version in the csproj first." }
 }
+Refuse-AnnouncedVersion $ReleaseFolder $version
 $zipName = "$name.zip"
 $nasZip = Join-Path $ReleaseFolder $zipName
 $zipHash = Sha256 $zip

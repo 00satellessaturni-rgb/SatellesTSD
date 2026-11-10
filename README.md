@@ -129,7 +129,8 @@ window title shows), publishes a self-contained win-x64 single-file build with t
 beside the exe, puts `release\SatellesTSD-v<version>\` with a `release.txt` (version, commit, SHA-256) and a
 zip next to it, and then sends the zip to the release folder on the NAS with a `latest.txt` naming it, written
 last. Every copy of the program offers the new version at its next start. Raise `<Version>` before every
-release; a version not newer than the one on offer is refused. `-LocalOnly` stops before the NAS;
+release; a version that is not above every version ever on offer there is refused (a withdrawn one counts:
+the copies that installed it compare version numbers only, so a fix takes a number above the withdrawn one). `-LocalOnly` stops before the NAS;
 `-ReleaseFolder` names another folder (the usual one is the constant in `Updater.cs`); `-Withdraw` puts the
 previous release back on offer — it stops the copies that have not updated yet, and does not take the version
 back from those that have (they go back by hand, as above); `-OutputFolder` sends the local output elsewhere. `-AllowDirty` is for trying
