@@ -335,6 +335,66 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void A_refused_files_lines_take_the_verdict_of_a_later_report_that_shows_them_saved()
+    {
+        var refusal = FeedbackReader.Load(Path.Combine(AppContext.BaseDirectory, "Fixtures", "feedback", "APA_TSD_20260330_tagasisideraport_faili_enda_veaga.xml"));
+        var (store, _, period, person) = Setup();
+        using (store)
+        {
+            PaymentStatus Last(StoredPayment p) => store.History(period.Id, Section.EE0201001, p.LineNumber)[^1].Status;
+
+            // the file refused as a whole (an open declaration, say), put right in e-MTA and uploaded again: saved this time
+            var r = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file = store.AddSubmission(period.Id, "f.xml", "u", [r.Id], DateTime.UtcNow);
+            store.RecordFeedback(file.Id, refusal);
+            Assert.Equal(PaymentStatus.Rejected, Last(r));
+            store.RecordFeedback(file.Id, Clean("EE0201001", r.LineNumber, 1));
+            Assert.Equal(PaymentStatus.Accepted, Last(r)); // MTA's word: the line stands on the server
+            Assert.Equal([Severity.Black, Severity.None], store.Feedback(r.Id).Select(f => f.Severity));
+            Assert.Equal(LineKeyRules.KeyExists, Assert.Throws<LineKeyException>(() => store.AddPayment(SalaryDraft(store, period, person, LineAction.R, r.LineNumber))).Code); // no second R under the key
+
+            // saved with a finding to put right: the change is owed, as for any saved line
+            var red = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file2 = store.AddSubmission(period.Id, "f2.xml", "u2", [red.Id], DateTime.UtcNow);
+            store.RecordFeedback(file2.Id, refusal);
+            store.RecordFeedback(file2.Id, Coloured("EE0201001", red.LineNumber, "ERROR_RED", "KR_XBRL_VALJAMAKSED_8"));
+            Assert.Equal(PaymentStatus.NeedsChange, Last(red));
+
+            // a cancellation in such a file is a cancellation done
+            var t = store.AddPayment(StoredPayment.New(period.Id, person.Id, Section.EE0201001, PaymentLine.Cancellation(r.LineNumber, 0), null, null));
+            var file3 = store.AddSubmission(period.Id, "f3.xml", "u3", [t.Id], DateTime.UtcNow);
+            store.RecordFeedback(file3.Id, refusal);
+            Assert.Equal(PaymentStatus.Rejected, Last(r)); // the T's own version, the key's last
+            store.RecordFeedback(file3.Id, Clean("EE0201001", r.LineNumber, 1));
+            Assert.Equal(PaymentStatus.Cancelled, Last(r));
+
+            // still refused where the report refuses the line itself
+            var black = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file4 = store.AddSubmission(period.Id, "f4.xml", "u4", [black.Id], DateTime.UtcNow);
+            store.RecordFeedback(file4.Id, refusal);
+            store.RecordFeedback(file4.Id, Coloured("EE0201001", black.LineNumber, "ERROR_BLACK", "KR_XBRL_VALJAMAKSED_14"));
+            Assert.Equal(PaymentStatus.Rejected, Last(black));
+
+            // and where a later version of the key exists (a draft built since the refusal): that one speaks for the key
+            var again = store.AddPayment(SalaryDraft(store, period, person, LineAction.R, black.LineNumber));
+            store.RecordFeedback(file4.Id, Clean("EE0201001", black.LineNumber, 1));
+            Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Draft], store.History(period.Id, Section.EE0201001, black.LineNumber).Select(v => v.Status));
+            Assert.Equal(again.Id, store.History(period.Id, Section.EE0201001, black.LineNumber)[^1].Id);
+
+            // a later version that is itself refused speaks for nothing: a change sent on top, both files refused, the first saved again
+            var first = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file5 = store.AddSubmission(period.Id, "f5.xml", "u5", [first.Id], DateTime.UtcNow);
+            var change = store.AddPayment(SalaryDraft(store, period, person, LineAction.M, first.LineNumber, gross: 1100m));
+            var file6 = store.AddSubmission(period.Id, "f6.xml", "u6", [change.Id], DateTime.UtcNow);
+            store.RecordFeedback(file5.Id, refusal);
+            store.RecordFeedback(file6.Id, refusal);
+            Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Rejected], store.History(period.Id, Section.EE0201001, first.LineNumber).Select(v => v.Status));
+            store.RecordFeedback(file5.Id, Clean("EE0201001", first.LineNumber, 1));
+            Assert.Equal([PaymentStatus.Accepted, PaymentStatus.Rejected], store.History(period.Id, Section.EE0201001, first.LineNumber).Select(v => v.Status));
+        }
+    }
+
+    [Fact]
     public void Nothing_may_follow_a_cancellation_until_its_verdict_is_in()
     {
         var (store, _, period, person) = Setup();

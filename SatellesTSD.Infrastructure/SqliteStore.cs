@@ -649,7 +649,14 @@ public sealed partial class SqliteStore : IStore
             var payment = byKey[new LineKey(outcome.EntryNumber, outcome.LineNumber)];
             var codes = outcome.Messages.Select(m => m.Code).ToHashSet(StringComparer.Ordinal);
             var wasPending = payment.Pending; // a report read again onto a version long settled says nothing new of the key
-            if (payment.Pending)
+            // a refused version the report now shows saved — the same file uploaded again after a file-level refusal (an
+            // open declaration, say) was put right in e-MTA — takes MTA's word: it stands on the server. Not when a later
+            // version of the key stands (a draft built since): that one speaks for the key now; a later version that is itself
+            // refused speaks for nothing (decision 151).
+            var lifted = payment.Status == PaymentStatus.Rejected
+                && outcome.Severity is Severity.None or Severity.Warning or Severity.Blue or Severity.Red
+                && !History(payment.PeriodId, payment.Section, payment.LineNumber).Any(v => v.Version > payment.Version && v.Status != PaymentStatus.Rejected);
+            if (payment.Pending || lifted)
             {
                 var status = outcome.Severity switch
                 {
