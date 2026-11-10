@@ -1463,6 +1463,197 @@ public class WindowTests
         }
     }
 
+    [Fact]
+    public void Removing_a_line_added_by_hand_asks_first_and_a_no_keeps_it()
+    {
+        using var fixture = new WindowFixture(prepare: (store, company, period, _) =>
+            new ReviewWorkspace(store).AddHandLine(period.Id, store.FindPerson(company.Id, SatellesTSD.Tests.ReviewFixtures.MariCode)!.Id, new DateOnly(2026, 10, 15), 120m, "Mari Maasikas", "haigusleht", "Haigusleht"));
+        var asked = new List<string>();
+        var answer = false;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            int HandLines() => form.Services!.Store.ReviewLines(form.View!.Period.Id).Count(l => l.IsByHand);
+            void PickHandLine()
+            {
+                Mari(form);
+                var row = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Single(r => r.Tag is ReviewPayment { IsByHand: true });
+                form.PaymentsGrid.CurrentCell = row.Cells[0];
+                Ui.Pump();
+            }
+
+            Assert.Equal(1, HandLines());
+            PickHandLine();
+            Assert.True(form.RemoveLineButton.Enabled);
+            form.RemoveLineButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(UiText.RemoveLineConfirm, Assert.Single(asked));
+            Assert.Equal(1, HandLines()); // No: the line stays
+
+            answer = true;
+            PickHandLine();
+            form.RemoveLineButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(2, asked.Count);
+            Assert.Equal(0, HandLines());
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, title) =>
+        {
+            if (title != UiText.RemoveLine)
+            {
+                return true;
+            }
+
+            asked.Add(question);
+            return answer;
+        }));
+    }
+
+    [Fact]
+    public void Closing_the_window_in_the_middle_of_a_run_is_refused_with_a_notice()
+    {
+        var residency = new GatedResidency();
+        using var fixture = new WindowFixture()
+        {
+            Services = path => new AppServices(path, residency, new NoPension(), new LookupOptions(TimeSpan.Zero)),
+        };
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var notices = new List<string>();
+            form.Informing = notices.Add;
+            form.LookupButton.PerformClick();
+            Ui.Until(() => residency.Waiting, what: "the first query");
+
+            form.Close();
+            Ui.Pump();
+            Assert.Equal(UiText.BusyClosing, Assert.Single(notices));
+            Assert.True(form.Visible); // the window stays; the run is told to stop
+            residency.Release();
+            Ui.Until(() => !form.IsBusy, what: "the run's end");
+            Assert.Empty(fixture.Failures);
+        }));
+    }
+
+    [Fact]
+    public void The_report_goes_to_the_folder_named_and_the_question_about_opening_it_is_asked_after()
+    {
+        using var fixture = new WindowFixture();
+        var asked = new List<string>();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Directory.CreateDirectory(fixture.ExportFolder);
+            var descriptions = new List<string>();
+            string? folder = null;
+            form.ChoosingFolder = description =>
+            {
+                descriptions.Add(description);
+                return folder;
+            };
+
+            // the folder dialog cancelled: nothing is written, nothing asked
+            form.ReportButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && descriptions.Count == 1, what: "the cancelled export");
+            Ui.Pump();
+            Assert.Equal(UiText.ReportFolder, descriptions[0]);
+            Assert.Empty(Directory.GetFiles(fixture.ExportFolder, "*.xlsx"));
+            Assert.Empty(asked);
+
+            // a folder named: the workbook is written there, and only then the question is put (answered No: no Explorer window)
+            folder = fixture.ExportFolder;
+            form.ReportButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && asked.Count == 1, what: "the export");
+            var written = Assert.Single(Directory.GetFiles(fixture.ExportFolder, "*.xlsx"));
+            Assert.Contains(written, asked[0], StringComparison.Ordinal);
+            Assert.Contains(UiText.OpenFolderQuestion, asked[0], StringComparison.Ordinal);
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, title) =>
+        {
+            if (title != UiText.ExportReport)
+            {
+                return true;
+            }
+
+            asked.Add(question);
+            return false;
+        }));
+    }
+
+    [Fact]
+    public void Marking_a_month_confirmed_with_lines_still_waiting_asks_first_and_a_no_leaves_it_uploaded()
+    {
+        using var fixture = new WindowFixture();
+        var asked = new List<string>();
+        var answer = false;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            panel.BuildButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 1, what: "the build");
+            form.Services!.Submitter.Export(form.View!.Period.Id, fixture.ExportFolder);
+            form.Reload();
+            Ui.Pump();
+            panel.UploadedButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(PeriodState.Uploaded, form.View!.Period.State);
+
+            // the line still waits for its answer: the question is put; No leaves the month as it was
+            Assert.True(panel.ConfirmedButton.Enabled);
+            panel.ConfirmedButton.PerformClick();
+            Ui.Pump();
+            Assert.Contains(UiText.ConfirmForce, Assert.Single(asked), StringComparison.Ordinal);
+            Assert.Equal(PeriodState.Uploaded, form.View!.Period.State);
+
+            answer = true;
+            panel.ConfirmedButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(2, asked.Count);
+            Assert.Equal(PeriodState.Confirmed, form.View!.Period.State);
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, title) =>
+        {
+            if (title != UiText.MarkConfirmed)
+            {
+                return true;
+            }
+
+            asked.Add(question);
+            return answer;
+        }));
+    }
+
+    [Fact]
+    public void A_field_that_does_not_read_is_complained_about_through_the_seam_on_the_card_and_in_a_dialog()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            // the card: a figure that is no number is said, nothing is saved, the text stays for correcting
+            var complaints = new List<string>();
+            form.PersonEditor.Complaining = complaints.Add;
+            Mari(form);
+            var before = StoredMari(form);
+            form.PersonEditor.ExemptionBox.Text = "abc";
+            form.PersonEditor.SaveButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(UiText.NotANumber, Assert.Single(complaints));
+            Assert.Equal(before, StoredMari(form));
+            Assert.Equal("abc", form.PersonEditor.ExemptionBox.Text);
+            Assert.Empty(fixture.Failures);
+            form.PersonEditor.ExemptionBox.Text = 700m.ToString("0.00", System.Globalization.CultureInfo.CurrentCulture);
+
+            // a dialog of fields: an empty name is said, and the dialog stays open
+            using var dialog = new PersonDialog { StartPosition = FormStartPosition.Manual, Location = new Point(-4000, -4000) };
+            var said = new List<string>();
+            dialog.Complaining = said.Add;
+            dialog.Show();
+            ((Button)dialog.AcceptButton!).PerformClick();
+            Assert.Single(said);
+            Assert.Equal(DialogResult.None, dialog.DialogResult);
+            dialog.Close();
+        }));
+    }
+
     /// <summary>EMTA faked: every query waits until the test lets them go, so the window is seen mid-run.</summary>
     private sealed class GatedResidency : IResidencyLookup
     {

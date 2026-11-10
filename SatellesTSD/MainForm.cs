@@ -262,6 +262,8 @@ public sealed class MainForm : Form
         _personsGrid.SelectionChanged += (_, _) => RowChanged();
         _personsGrid.CurrentCellChanged += (_, _) => RowChanged();
         _paymentsGrid.SelectionChanged += (_, _) => { if (!_filling) { _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true }; } };
+        // a current cell set by the program raises SelectionChanged while the old row is still current: the command follows the row here too
+        _paymentsGrid.CurrentCellChanged += (_, _) => { if (!_filling) { _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true }; } };
         // a tick or a pick is a decision at once; a note is one when its editing ends
         _paymentsGrid.CurrentCellDirtyStateChanged += (_, _) =>
         {
@@ -393,6 +395,38 @@ public sealed class MainForm : Form
         MessageBox.Show(this, text, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    /// <summary>A notice of something that went wrong short of a failure (a check that got no answer): the same seam as
+    /// <see cref="Inform"/>, a warning's icon on the box.</summary>
+    private void Warn(string text, string title)
+    {
+        if (Informing is { } take)
+        {
+            take(text);
+            return;
+        }
+
+        MessageBox.Show(this, text, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    /// <summary>Names a folder in place of the folder dialog (the description shown; null = cancelled): the window tests set it.</summary>
+    internal Func<string, string?>? ChoosingFolder;
+
+    /// <summary>The folder the accountant picks, starting from the one last used; null when the dialog is cancelled.</summary>
+    private string? ChooseFolder(string description)
+    {
+        if (ChoosingFolder is { } choose)
+        {
+            return choose(description);
+        }
+
+        using var folders = new FolderBrowserDialog { Description = description, UseDescriptionForTitle = true, SelectedPath = _settings.ExportFolder ?? "" };
+        return folders.ShowDialog(this) == DialogResult.OK ? folders.SelectedPath : null;
+    }
+
+    internal ToolStripMenuItem RemoveLineButton => _removeLineButton;
+
+    internal ToolStripMenuItem ReportButton => _reportButton;
+
     internal void Reload() => ReloadView();
 
     internal void RefillCompanies() => FillCompanies();
@@ -466,10 +500,10 @@ public sealed class MainForm : Form
                     break;
                 case ReleaseState.UpToDate:
                     var elsewhere = !string.Equals(result.Folder, Updater.DefaultReleaseFolder, StringComparison.OrdinalIgnoreCase);
-                    MessageBox.Show(this, UiText.UpToDate + (elsewhere ? $"\n\n{UiText.UpdateFolderOverride}\n{result.Folder}" : ""), UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Inform(UiText.UpToDate + (elsewhere ? $"\n\n{UiText.UpdateFolderOverride}\n{result.Folder}" : ""), UiText.UpdateTitle);
                     break;
                 default:
-                    MessageBox.Show(this, $"{Words(result)}\n{result.Detail}\n\n{UiText.UpdateFolderLine} {result.Folder}", UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    Warn($"{Words(result)}\n{result.Detail}\n\n{UiText.UpdateFolderLine} {result.Folder}", UiText.UpdateTitle);
                     break;
             }
         }
@@ -531,10 +565,10 @@ public sealed class MainForm : Form
         switch (Updater.InstallBlockOf(ExePath, System.Diagnostics.Debugger.IsAttached))
         {
             case InstallBlock.BuildFolder:
-                MessageBox.Show(this, UiText.UpdateBlockedBuild, UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Inform(UiText.UpdateBlockedBuild, UiText.UpdateTitle);
                 return;
             case InstallBlock.NetworkDrive:
-                MessageBox.Show(this, $"{UiText.UpdateBlockedNetwork}\n{ExePath}", UiText.UpdateTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Inform($"{UiText.UpdateBlockedNetwork}\n{ExePath}", UiText.UpdateTitle);
                 return;
         }
 
@@ -682,8 +716,8 @@ public sealed class MainForm : Form
     }
 
     /// <summary>A question answered Yes or No, where No is an answer of its own and not a way out.</summary>
-    private bool AskYesNo(string question, string title) =>
-        Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+    private bool AskYesNo(string question, string title, MessageBoxIcon icon = MessageBoxIcon.Question) =>
+        Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.YesNo, icon) == DialogResult.Yes;
 
     private bool Confirm(string question, string title) =>
         Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
@@ -843,13 +877,12 @@ public sealed class MainForm : Form
             return;
         }
 
-        using var folders = new FolderBrowserDialog { Description = UiText.ExportFolder, UseDescriptionForTitle = true, SelectedPath = _settings.ExportFolder ?? "" };
-        if (folders.ShowDialog(this) != DialogResult.OK)
+        if (ChooseFolder(UiText.ExportFolder) is not { } exportFolder)
         {
             return;
         }
 
-        _settings.ExportFolder = folders.SelectedPath;
+        _settings.ExportFolder = exportFolder;
         SaveSettings();
         IReadOnlyDictionary<Core.Model.Section, string>? reasons = null;
         if (_services.Submitter.NeedsCorrectionReason(_view.Period.Id))
@@ -866,7 +899,7 @@ public sealed class MainForm : Form
 
         var services = _services;
         var periodId = _view.Period.Id;
-        var folder = folders.SelectedPath;
+        var folder = exportFolder;
         ExportResult? result = null;
         await RunBusyAsync(async () =>
         {
@@ -915,17 +948,15 @@ public sealed class MainForm : Form
             }
         }
 
-        using var folders = new FolderBrowserDialog { Description = UiText.ReportFolder, UseDescriptionForTitle = true, SelectedPath = _settings.ExportFolder ?? "" };
-        if (folders.ShowDialog(this) != DialogResult.OK)
+        if (ChooseFolder(UiText.ReportFolder) is not { } folder)
         {
             return;
         }
 
-        _settings.ExportFolder = folders.SelectedPath;
+        _settings.ExportFolder = folder;
         SaveSettings();
         var services = _services;
         var periodId = _view.Period.Id;
-        var folder = folders.SelectedPath;
         ReportExportResult? result = null;
         await RunBusyAsync(async () =>
         {
@@ -937,7 +968,7 @@ public sealed class MainForm : Form
             Log($"{UiText.ExportReport}: {result.Path} ({result.Sheets} lehte)");
         });
         ReloadView();
-        if (result is not null && MessageBox.Show(this, $"{UiText.ReportSaved}\n{result.Path}\n\n{UiText.OpenFolderQuestion}", UiText.ExportReport, MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
+        if (result is not null && AskYesNo($"{UiText.ReportSaved}\n{result.Path}\n\n{UiText.OpenFolderQuestion}", UiText.ExportReport, MessageBoxIcon.Information))
         {
             try
             {
@@ -977,7 +1008,7 @@ public sealed class MainForm : Form
         }
         catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
         {
-            if (MessageBox.Show(this, e.Message + Environment.NewLine + Environment.NewLine + UiText.ConfirmForce, UiText.MarkConfirmed, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            if (AskYesNo(e.Message + Environment.NewLine + Environment.NewLine + UiText.ConfirmForce, UiText.MarkConfirmed))
             {
                 try
                 {
@@ -1146,7 +1177,7 @@ public sealed class MainForm : Form
         {
             e.Cancel = true;
             _lookups?.Cancel();
-            MessageBox.Show(this, UiText.BusyClosing, UiText.Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Inform(UiText.BusyClosing, UiText.Title);
             return;
         }
 
@@ -2758,7 +2789,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (MessageBox.Show(this, UiText.RemoveLineConfirm, UiText.RemoveLine, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (!Confirm(UiText.RemoveLineConfirm, UiText.RemoveLine))
         {
             return;
         }

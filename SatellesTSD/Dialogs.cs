@@ -66,7 +66,19 @@ public abstract class FieldDialog : Form
 
     protected static string? Null(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
-    protected void Complain(string message) => MessageBox.Show(this, message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    /// <summary>Takes a complaint about the fields in place of the message box (the window tests set it).</summary>
+    internal Action<string>? Complaining;
+
+    protected void Complain(string message)
+    {
+        if (Complaining is { } take)
+        {
+            take(message);
+            return;
+        }
+
+        MessageBox.Show(this, message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
 }
 
 /// <summary>A new client company: registry code and name.</summary>
@@ -384,14 +396,33 @@ public sealed class LayoutsDialog : Form
         }
         catch (Exception e)
         {
-            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Tell(e.Message);
         }
     }
+
+    /// <summary>The question asked before a layout is deleted (the text, the title): true = go on. A message box by default.</summary>
+    internal Func<string, string, bool>? Confirming;
+
+    /// <summary>A refusal shown. A message box by default.</summary>
+    internal Action<string>? Warning;
+
+    private void Tell(string message)
+    {
+        if (Warning is { } take)
+        {
+            take(message);
+            return;
+        }
+
+        MessageBox.Show(this, message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    internal void DeleteSelected() => Delete();
 
     private void Delete()
     {
         if (_list.SelectedItems.Count == 0 || _list.SelectedItems[0].Tag is not StatementLayout layout
-            || MessageBox.Show(this, UiText.DeleteLayoutConfirm(layout.Id), UiText.DeleteLayout, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+            || !(Confirming ?? ((text, title) => MessageBox.Show(this, text, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK))(UiText.DeleteLayoutConfirm(layout.Id), UiText.DeleteLayout))
         {
             return;
         }
@@ -403,7 +434,7 @@ public sealed class LayoutsDialog : Form
         }
         catch (Exception e)
         {
-            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Tell(e.Message);
         }
 
         Fill();

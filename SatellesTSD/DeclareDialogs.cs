@@ -8,6 +8,9 @@ namespace SatellesTSD;
 /// <summary>The upload checklist shown once a file is written: where it is, and what to do in e-MTA.</summary>
 public sealed class ChecklistDialog : Form
 {
+    /// <summary>A refusal shown (Explorer could not be started). A message box by default; a window test sets it.</summary>
+    internal Action<string>? Warning;
+
     public ChecklistDialog(ExportResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
@@ -32,7 +35,14 @@ public sealed class ChecklistDialog : Form
             }
             catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                if (Warning is { } take)
+                {
+                    take(e.Message);
+                }
+                else
+                {
+                    MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
         };
         buttons.Controls.AddRange([ok, open]);

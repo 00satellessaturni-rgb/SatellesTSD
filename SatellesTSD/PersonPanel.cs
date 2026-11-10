@@ -141,6 +141,9 @@ public sealed class PersonPanel : UserControl
 
     internal Button LookUpButton => _lookUp;
 
+    /// <summary>Takes a complaint about the card's fields in place of the message box (the window tests set it).</summary>
+    internal Action<string>? Complaining;
+
     internal TextBox ExemptionBox => _exemptionMonthly;
 
     internal TextBox FirstNameBox => _first;
@@ -226,7 +229,15 @@ public sealed class PersonPanel : UserControl
 
         if (!TryDecimal(_exemptionMonthly.Text, out var exemption) || !TryDecimal(_treatyRate.Text, out var treaty) || !TryInt(_pensionAgeYear.Text, out var pensionAgeYear))
         {
-            MessageBox.Show(this, UiText.NotANumber, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (Complaining is { } take)
+            {
+                take(UiText.NotANumber);
+            }
+            else
+            {
+                MessageBox.Show(this, UiText.NotANumber, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
             return null;
         }
 
