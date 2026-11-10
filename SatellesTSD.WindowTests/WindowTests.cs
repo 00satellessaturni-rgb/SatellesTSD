@@ -831,6 +831,73 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_store_a_newer_version_upgraded_is_told_to_update_and_the_copy_is_offered_only_after_a_failed_update()
+    {
+        using var fixture = new WindowFixture();
+        var newer = Path.Combine(fixture.Folder, "uuem.db");
+        using (SatellesTSD.Infrastructure.SqliteStore.Open(newer))
+        {
+        }
+
+        var backup = $"{newer}.before-v{SatellesTSD.Infrastructure.SqliteStore.SchemaVersion + 1}";
+        File.Copy(newer, backup); // the copy the newer version left before upgrading
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={newer};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = $"INSERT INTO schema_version (version) VALUES ({SatellesTSD.Infrastructure.SqliteStore.SchemaVersion + 1})";
+            command.ExecuteNonQuery();
+        }
+
+        var questions = new List<string>();
+        var notices = new List<string>();
+        var restore = false;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Informing = notices.Add;
+            var putBack = false;
+            string? asked = null;
+            form.FailedUpdateProbe = store => { asked = store; return putBack ? backup : null; };
+
+            // an older copy that no update put back (a second computer, an old folder): told to update, nothing offered
+            form.OpenChosenStore(newer);
+            Ui.Pump();
+            Assert.Equal([UiText.StoreNewerUpdate], notices);
+            Assert.Equal(newer, asked); // asked of the store that would not open
+            Assert.Empty(questions);
+            Assert.Empty(fixture.Failures);
+            Assert.Equal(fixture.StorePath, form.Services!.StorePath); // the store in hand stays
+            Assert.True(File.Exists(backup));
+
+            // the copy a failed update put back: the restore is offered, with the day the copy was made; declined, the update is said
+            putBack = true;
+            form.OpenChosenStore(newer);
+            Ui.Pump();
+            var question = Assert.Single(questions);
+            Assert.Contains(backup, question, StringComparison.Ordinal);
+            Assert.Contains(UiText.StoreBackupMade(File.GetLastWriteTime(backup)), question, StringComparison.Ordinal);
+            Assert.Equal([UiText.StoreNewerUpdate, UiText.StoreNewerDeclined], notices); // not "update": the update is what failed
+            Assert.Equal(fixture.StorePath, form.Services!.StorePath);
+
+            // accepted: the copy is the store again, the upgraded one set aside
+            restore = true;
+            form.OpenChosenStore(newer);
+            Ui.Until(() => !form.IsBusy && form.Services?.StorePath == newer, what: "the restored store to open");
+            Assert.Equal(2, questions.Count);
+            Assert.Single(Directory.GetFiles(fixture.Folder, "uuem.db.newer-v*"));
+        }, (question, _) =>
+        {
+            if (question.Contains(UiText.StoreNewerRestoreQuestion, StringComparison.Ordinal))
+            {
+                questions.Add(question);
+                return restore;
+            }
+
+            return true;
+        }));
+    }
+
+    [Fact]
     public void The_correction_reason_is_asked_for_each_section_the_file_carries_of_the_reasons_that_fit_it()
     {
         Ui.Run(() =>

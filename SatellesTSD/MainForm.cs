@@ -345,6 +345,25 @@ public sealed class MainForm : Form
     /// <summary>Takes a plain notice in place of the message box (the window tests set it).</summary>
     internal Action<string>? Informing;
 
+    /// <summary>Whether a store's copy was made by the update that failed here, in place of the look at the update's
+    /// note and the copy's time — for a test.</summary>
+    internal Func<string, string?>? FailedUpdateProbe;
+
+    /// <summary>The copy of the store from before an upgrade that an update which failed here left behind (on the
+    /// update's record), or null: only that copy is offered to go back to (decision 156).</summary>
+    private string? FailedUpdateCopy(string storePath) => FailedUpdateProbe is { } probe ? probe(storePath) : Updater.FailedUpdateCopy(ExePath, storePath, SqliteStore.SchemaVersion);
+
+    /// <summary>What became of the offer to go back to the store's copy, for what is said after it.</summary>
+    private enum RestoreOffer
+    {
+        NotOffered,
+        Declined,
+        Failed,
+    }
+
+    private RestoreOffer _restoreOffer;
+    private bool _restoredNow; // the store was put back from its copy and is being opened again
+
     /// <summary>Makes the services for a store path in place of the real ones — a test's registers, never the live
     /// sites. Set before the window is shown: the store opens as it loads.</summary>
     internal Func<string, AppServices>? ServicesFactory;
@@ -531,6 +550,10 @@ public sealed class MainForm : Form
 
         // the new version reads the settings and opens the store when it starts: both are let go of just before
         var storePath = _services?.StorePath;
+        // the store the new version will open: the one in hand, else the one the settings remember (a store that could
+        // not be reached at the start is still the one it upgrades); its copies as they stand before this update
+        var upgraded = storePath ?? _storeOverride ?? _settings.StorePath;
+        var copiesBefore = Updater.StoreCopiesOf(upgraded);
         CommitPendingNote(); // a note being typed is saved before the update may close the window
         using var dialog = new UpdateDialog(ExePath, _updateCheck.Folder, release, CurrentVersion, fromStart, () =>
         {
@@ -550,10 +573,17 @@ public sealed class MainForm : Form
             return;
         }
 
+        // the update did not go through. The copy the new version made of the store (one that was not there before, or
+        // is another file now) goes on record: only a copy on record is offered to go back to (decision 156)
+        if (upgraded is not null && Updater.CopyMadeSince(copiesBefore, upgraded) is { } made)
+        {
+            Updater.NoteStoreCopy(ExePath, upgraded, made);
+        }
+
         if (_services is null && storePath is not null)
         {
-            // the update did not go through: the store is taken up again — put back from its copy when the new
-            // version had already upgraded it beyond this build
+            // the store is taken up again — put back from its copy when the new version had already upgraded it beyond
+            // this build
             OpenStore(storePath);
         }
     }
@@ -562,14 +592,20 @@ public sealed class MainForm : Form
     /// it before upgrading, and takes the store up again from it.</summary>
     private bool OfferStoreRestore(string path, Exception failure)
     {
-        if (!SqliteStore.IsNewerThanThisBuild(failure) || SqliteStore.NewerBackupOf(path) is not { } backup)
+        // only the copy the update that failed here made, for the program that update put back (decision 156): any
+        // other older copy of the program — a second computer not yet updated, an old folder, this one weeks after a
+        // failed update — is told to update, never to go back to a copy of weeks ago
+        _restoreOffer = RestoreOffer.NotOffered;
+        if (_restoredNow || !SqliteStore.IsNewerThanThisBuild(failure) || FailedUpdateCopy(path) is not { } backup)
         {
-            return false;
+            return false; // a copy put back just now that is itself too new is not offered again: the window says to update
         }
 
         var aside = SqliteStore.FreeAsidePathFor(SqliteStore.AsidePathFor(path)); // the very name the store will go aside under
-        if (!Confirm($"{UiText.StoreNewerRestore}\n{backup}\n\n{UiText.StoreNewerRestoreQuestion}\n{aside}", UiText.Title))
+        var made = File.GetLastWriteTime(backup);
+        if (!Confirm($"{UiText.StoreNewerRestore}\n{backup}\n{UiText.StoreBackupMade(made)}\n\n{UiText.StoreNewerRestoreQuestion}\n{aside}", UiText.Title))
         {
+            _restoreOffer = RestoreOffer.Declined;
             return false;
         }
 
@@ -581,6 +617,7 @@ public sealed class MainForm : Form
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            _restoreOffer = RestoreOffer.Failed;
             Fail(e);
             return false;
         }
@@ -1184,12 +1221,38 @@ public sealed class MainForm : Form
         }
         catch (Exception e) when (OfferStoreRestore(path, e))
         {
-            OpenStore(path, chosen); // the copy put back opens as this build's
+            _restoredNow = true;
+            try
+            {
+                OpenStore(path, chosen); // the copy put back opens as this build's
+            }
+            finally
+            {
+                _restoredNow = false;
+            }
+
             return;
         }
         catch (Exception e)
         {
-            Fail(e);
+            if (SqliteStore.IsNewerThanThisBuild(e))
+            {
+                // a newer version of the program upgraded the store, said in the accountant's words: this copy is to be
+                // updated — or, after the update that failed here, the copy is there to go back to (declined just now);
+                // a restore that could not be done has said why itself
+                Log($"{UiText.Problem}: {e.Message}");
+                if (_restoreOffer != RestoreOffer.Failed)
+                {
+                    Inform(_restoreOffer == RestoreOffer.Declined ? UiText.StoreNewerDeclined : UiText.StoreNewerUpdate, UiText.Title);
+                }
+
+                _restoreOffer = RestoreOffer.NotOffered;
+            }
+            else
+            {
+                Fail(e);
+            }
+
             if (!another)
             {
                 _storeLabel.Text = UiText.NoStore;
@@ -1211,6 +1274,7 @@ public sealed class MainForm : Form
             _period = null;
         }
 
+        Updater.ForgetStoreCopy(ExePath, path, SqliteStore.SchemaVersion); // opened by a build older than a failed update's upgrade: that episode is over
         _services = opened;
         _services.Workspace.TotalsPerType = _settings.DeclareTotalsPerType;
 

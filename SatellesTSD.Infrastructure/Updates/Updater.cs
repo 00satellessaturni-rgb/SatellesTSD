@@ -360,6 +360,136 @@ public static class Updater
         }
     }
 
+    private const string StoreCopiesName = "store-copies.txt";
+
+    /// <summary>The name a store's copies from before an upgrade begin with (<c>store.db.before-v</c>).</summary>
+    public const string StoreCopyInfix = ".before-v";
+
+    /// <summary>What tells one copy of a store from another made later under the same name: its path and the time and
+    /// size the file system gives it, read back as written — nothing is compared with this computer's clock.</summary>
+    private static string? StoreCopyMark(string storeCopy)
+    {
+        var info = new FileInfo(storeCopy);
+        return info.Exists ? $"{info.LastWriteTimeUtc.Ticks}|{info.Length}|{Path.GetFullPath(storeCopy)}" : null;
+    }
+
+    private static bool IsCopyOf(string line, string storePath) =>
+        line.Split('|', 3) is { Length: 3 } parts && parts[2].StartsWith(Path.GetFullPath(storePath) + StoreCopyInfix, StringComparison.OrdinalIgnoreCase);
+
+    private static string[] StoreCopyRecord(string exePath) =>
+        Path.Combine(StagingFolder(exePath), StoreCopiesName) is var record && File.Exists(record) ? File.ReadAllLines(record, Encoding.UTF8) : [];
+
+    /// <summary>Notes the copy of the store an update that did not go through left behind (the new version made it
+    /// before upgrading the store, then failed): the one copy of that store going back to is offered for, until the
+    /// store opens again (decision 156). One entry per store: the latest failed update's.</summary>
+    public static void NoteStoreCopy(string exePath, string storePath, string storeCopy)
+    {
+        try
+        {
+            if (StoreCopyMark(storeCopy) is not { } mark)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(StagingFolder(exePath));
+            var kept = StoreCopyRecord(exePath).Where(line => line.Trim().Length > 0 && !IsCopyOf(line, storePath)).Append(mark);
+            File.WriteAllLines(Path.Combine(StagingFolder(exePath), StoreCopiesName), kept, Encoding.UTF8);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // without the record the restore is not offered: the window says to update, and the copy stays beside the store
+        }
+    }
+
+    /// <summary>The schema a copy was made before the upgrade to (the N of <c>store.before-vN</c>), or null.</summary>
+    private static int? UpgradeOf(string storeCopy)
+    {
+        var at = storeCopy.LastIndexOf(StoreCopyInfix, StringComparison.OrdinalIgnoreCase);
+        return at >= 0 && int.TryParse(storeCopy[(at + StoreCopyInfix.Length)..], out var version) ? version : null;
+    }
+
+    /// <summary>The copy of this store that an update which failed here left behind, when it is on record, still the
+    /// very file (path, time and size as noted), and made before an upgrade past the build asking (a build that is at
+    /// the copy's schema or beyond has nothing to go back to in it); null otherwise — a copy another computer's upgrade
+    /// made is not on record.</summary>
+    /// <param name="schemaVersion">The schema of the build asking.</param>
+    public static string? FailedUpdateCopy(string exePath, string storePath, int schemaVersion)
+    {
+        try
+        {
+            foreach (var line in StoreCopyRecord(exePath).Where(l => IsCopyOf(l, storePath)))
+            {
+                var copy = line.Split('|', 3)[2];
+                if (UpgradeOf(copy) > schemaVersion && string.Equals(StoreCopyMark(copy), line.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return copy;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The failed update's episode is over for this store when a build OLDER than the upgrade opens it — it
+    /// was put back from the copy, or never upgraded: the entry goes, so nothing of it is offered when another computer
+    /// upgrades the store later. The failed version opening the store itself (a retry of the update) ends nothing: its
+    /// entry stays for the program that is put back again.</summary>
+    /// <param name="schemaVersion">The schema of the build that opened the store.</param>
+    public static void ForgetStoreCopy(string exePath, string storePath, int schemaVersion)
+    {
+        try
+        {
+            bool Over(string line) => IsCopyOf(line, storePath) && (UpgradeOf(line.Split('|', 3)[2]) is not { } upgrade || upgrade > schemaVersion);
+            var lines = StoreCopyRecord(exePath);
+            if (lines.Any(Over))
+            {
+                File.WriteAllLines(Path.Combine(StagingFolder(exePath), StoreCopiesName), lines.Where(l => !Over(l)), Encoding.UTF8);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // the entry stays; the copy it names is still checked to be the very file before anything is offered
+        }
+    }
+
+    /// <summary>A store's copies from before upgrades (<c>store.before-v*</c>), each with what tells it from a later one
+    /// of its name: the time and the size the file system gives it.</summary>
+    public static IReadOnlyDictionary<string, (long Ticks, long Length)> StoreCopiesOf(string? storePath)
+    {
+        var copies = new Dictionary<string, (long Ticks, long Length)>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (storePath is not null && Path.GetDirectoryName(storePath) is { Length: > 0 } folder && Directory.Exists(folder))
+            {
+                foreach (var copy in Directory.GetFiles(folder, Path.GetFileName(storePath) + StoreCopyInfix + "*"))
+                {
+                    var info = new FileInfo(copy);
+                    copies[copy] = (info.LastWriteTimeUtc.Ticks, info.Length);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // what could not be listed is not noted: nothing is offered for it
+        }
+
+        return copies;
+    }
+
+    /// <summary>The copy an update made while it ran: one that was not there before it, or is another file now — the
+    /// latest written of them; null when none.</summary>
+    public static string? CopyMadeSince(IReadOnlyDictionary<string, (long Ticks, long Length)> before, string? storePath)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        return StoreCopiesOf(storePath)
+            .Where(copy => !before.TryGetValue(copy.Key, out var was) || was != copy.Value)
+            .OrderByDescending(copy => copy.Value.Ticks).Select(copy => copy.Key).FirstOrDefault();
+    }
+
     /// <summary>True when exactly this build (version and checksum) already failed to start here.</summary>
     public static bool FailedHere(string exePath, ReleaseManifest release)
     {

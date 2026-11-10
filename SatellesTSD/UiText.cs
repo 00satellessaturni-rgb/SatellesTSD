@@ -556,6 +556,12 @@ internal static class UiText
     public const string UpdateStoreNote = "Kui uus versioon jõudis andmebaasi uuendada, pakub programm järgmisel avamisel andmebaasi varukoopia taastamist.";
     public const string StoreNewerRestore = "Andmebaasi on uuendanud programmi uuem versioon ja see versioon ei saa seda avada. Selle kõrval on varukoopia uuendamise eelsest seisust:";
     public const string StoreNewerRestoreQuestion = "Taastada varukoopia? Uuendatud andmebaas jääb kõrvale nimega";
+
+    public static string StoreBackupMade(DateTime made) => $"Varukoopia on tehtud {made:dd.MM.yyyy HH:mm}; hilisem töö selles ei ole.";
+
+    public const string StoreNewerUpdate = "Andmebaasi on uuendanud programmi uuem versioon ja see versioon ei saa seda avada. Uuenda programm (menüüst Andmebaas) ja ava andmebaas uuesti.";
+
+    public const string StoreNewerDeclined = "Andmebaas jäi avamata: selle on uuendanud versioon, mis siin ei käivitunud. Ava andmebaas uuesti (Andmebaas → Ava andmebaas…), kui soovid varukoopia taastada, või oota parandatud versiooni.";
     public const string StoreRestored = "Andmebaasi varukoopia taastati";
     public const string UpdateNewExited = "Uus versioon ei käivitunud";
     public const string UpdateNotClosed = "Uut versiooni ei õnnestunud sulgeda. Sulge selle aken ja käivita programm uuesti.";

@@ -222,6 +222,69 @@ public class UpdaterTests : IDisposable
     }
 
     [Fact]
+    public void The_copy_a_failed_update_left_is_on_record_for_its_store_until_the_store_opens_again()
+    {
+        var store = Path.Combine(Path.GetDirectoryName(_exe)!, "pood.db");
+        var copy = store + ".before-v99";
+        File.WriteAllText(copy, "the store before the upgrade");
+        Assert.Null(Updater.FailedUpdateCopy(_exe, store, 98)); // no update failed here: nothing on record
+
+        // the failed build's note alone says nothing: it is never removed
+        Directory.CreateDirectory(Updater.StagingFolder(_exe));
+        File.WriteAllText(Path.Combine(Updater.StagingFolder(_exe), "failed.txt"), "0.99.0.0 abc");
+        Assert.Null(Updater.FailedUpdateCopy(_exe, store, 98));
+
+        // noted when the update failed: offered from then on, however long after, whatever the clocks say
+        Updater.NoteStoreCopy(_exe, store, copy);
+        Assert.Equal(copy, Updater.FailedUpdateCopy(_exe, store, 98));
+        Assert.Equal(copy, Updater.FailedUpdateCopy(_exe, store.ToUpperInvariant(), 98), ignoreCase: true);
+        Assert.Null(Updater.FailedUpdateCopy(_exe, Path.Combine(Path.GetDirectoryName(_exe)!, "teine.db"), 98)); // another store's is not this one's
+
+        // another file under the copy's name (another computer's upgrade, months on) is not the one on record
+        File.WriteAllText(copy, "another computer's copy, made later");
+        File.SetLastWriteTimeUtc(copy, new DateTime(2026, 6, 1, 9, 0, 0, DateTimeKind.Utc));
+        Assert.Null(Updater.FailedUpdateCopy(_exe, store, 98));
+
+        // a later failed update's copy takes the store's one entry: the earlier episode's copy is offered no more
+        var later = store + ".before-v100";
+        File.WriteAllText(later, "the store before the later upgrade");
+        Updater.NoteStoreCopy(_exe, store, later);
+        Assert.Equal(later, Updater.FailedUpdateCopy(_exe, store, 98));
+        Assert.Single(File.ReadAllLines(Path.Combine(Updater.StagingFolder(_exe), "store-copies.txt")));
+
+        // another store's entry stands beside it
+        var other = Path.Combine(Path.GetDirectoryName(_exe)!, "teine.db");
+        File.WriteAllText(other + ".before-v99", "teine");
+        Updater.NoteStoreCopy(_exe, other, other + ".before-v99");
+        Assert.Equal(2, File.ReadAllLines(Path.Combine(Updater.StagingFolder(_exe), "store-copies.txt")).Length);
+
+        // a build at the copy's schema or beyond has nothing to go back to in it: not offered to it
+        Assert.Null(Updater.FailedUpdateCopy(_exe, store, 100));
+
+        // the failed version itself opening the store (a retry of the update) ends nothing: the entry stays for the
+        // program that is put back again
+        Updater.ForgetStoreCopy(_exe, store, 100);
+        Assert.Equal(later, Updater.FailedUpdateCopy(_exe, store, 98));
+
+        // the copies an update made while it ran: one that was not there before, or is another file now — the latest written
+        var before = Updater.StoreCopiesOf(store);
+        Assert.Equal(2, before.Count);
+        Assert.Null(Updater.CopyMadeSince(before, store)); // nothing changed: nothing made
+        File.WriteAllText(store + ".before-v101", "made by the update");
+        File.SetLastWriteTimeUtc(store + ".before-v101", new DateTime(2026, 7, 1, 9, 0, 0, DateTimeKind.Utc));
+        Assert.Equal(store + ".before-v101", Updater.CopyMadeSince(before, store));
+        File.SetLastWriteTimeUtc(later, new DateTime(2026, 7, 2, 9, 0, 0, DateTimeKind.Utc)); // and an old name written anew, later still
+        Assert.Equal(later, Updater.CopyMadeSince(before, store));
+        Updater.NoteStoreCopy(_exe, store, later);
+        Assert.Empty(Updater.StoreCopiesOf(null));
+
+        // an older build opens the store as its own again: the episode is over, nothing of it is offered later
+        Updater.ForgetStoreCopy(_exe, store, 98);
+        Assert.Null(Updater.FailedUpdateCopy(_exe, store, 98));
+        Assert.Equal(other + ".before-v99", Updater.FailedUpdateCopy(_exe, other, 98));
+    }
+
+    [Fact]
     public void A_failed_exe_that_cannot_be_moved_aside_leaves_the_program_whole_and_says_so()
     {
         var (_, release) = Publish("0.11.0");
