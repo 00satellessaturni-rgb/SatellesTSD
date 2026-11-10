@@ -77,6 +77,31 @@ public class ReportTests
     }).ToArray();
 
     [Fact]
+    public void The_check_day_is_the_earlier_of_the_two_and_the_type_falls_back_to_the_card()
+    {
+        var company = Guid.NewGuid();
+        var person = Person.New(company, "Mari", "Maasikas", "48712219406");
+        var early = new DateOnly(2026, 11, 3);
+        var late = new DateOnly(2026, 11, 25);
+
+        // the day since which every fact has been checked: the earlier one, whichever fact it belongs to
+        Assert.Null(ReportBuilder.CheckedOn(null));
+        Assert.Null(ReportBuilder.CheckedOn(person));
+        Assert.Equal(early, ReportBuilder.CheckedOn(person with { ResidencyCheckedOn = early, PensionCheckedOn = late }));
+        Assert.Equal(early, ReportBuilder.CheckedOn(person with { ResidencyCheckedOn = late, PensionCheckedOn = early }));
+        Assert.Equal(late, ReportBuilder.CheckedOn(person with { ResidencyCheckedOn = late })); // the one there is
+        Assert.Equal(late, ReportBuilder.CheckedOn(person with { PensionCheckedOn = late }));
+
+        // the type shown: the card's when the card says so; else the register entry's; else the card's for a person the register does not list
+        var typeId = EmploymentTypes.All[1].TorTypeId;
+        var typeName = EmploymentTypes.Find(typeId)!.Name;
+        Assert.Null(ReportBuilder.EmploymentTypeShown(person, null));
+        Assert.Null(ReportBuilder.EmploymentTypeShown(null, null));
+        Assert.Equal(typeName, ReportBuilder.EmploymentTypeShown(person with { TorEmploymentTypeId = typeId }, null));
+        Assert.Equal(typeName, ReportBuilder.EmploymentTypeShown(person with { TorEmploymentTypeId = typeId, TypeFromCard = true }, null));
+    }
+
+    [Fact]
     public void The_book_has_the_workbooks_sheets_in_its_order_and_its_file_name()
     {
         using var box = Ready();

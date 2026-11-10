@@ -1707,7 +1707,7 @@ public sealed class MainForm : Form
                 values.Add(p is null ? "" : UiText.PensionText(p));
                 values.Add(p is null ? "" : CheckedText(p));
                 values.Add(person.Register?.Entry.StartDate?.ToDateTime(TimeOnly.MinValue));
-                values.Add(p is { TypeFromCard: true } && EmploymentTypes.Find(p.TorEmploymentTypeId) is { } cardType ? cardType.Name : person.Register?.Entry.Type ?? EmploymentTypes.Find(p?.TorEmploymentTypeId)?.Name ?? "");
+                values.Add(Core.Report.ReportBuilder.EmploymentTypeShown(p, person.Register?.Entry) ?? "");
                 values.Add(person.Register?.Entry.State ?? "");
                 values.Add(EmploymentEndValue(person.Register));
                 values.Add(PausedEntry(person.Register)?.PauseStart?.ToDateTime(TimeOnly.MinValue));
@@ -3052,11 +3052,8 @@ public sealed class MainForm : Form
     /// "Peatamise algus" shows since when, the tooltip why and until when, as the register gives them.</summary>
     private static TorEntry? PausedEntry(MatchPerson? register) => register?.Entry is { StateId: TorStates.Paused } entry ? entry : null;
 
-    private static string CheckedText(Person person)
-    {
-        var dates = new[] { person.ResidencyCheckedOn, person.PensionCheckedOn }.Where(d => d is not null).Select(d => d!.Value).ToList();
-        return dates.Count == 0 ? "" : UiText.Day(dates.Min());
-    }
+    /// <summary>"Kontrollitud": the report's Kontroll-kp, by the one rule (decision 161).</summary>
+    private static string CheckedText(Person person) => UiText.Day(Core.Report.ReportBuilder.CheckedOn(person));
 
     /// <summary>Where the import dialog opens: the user's Downloads folder, where the exports and statements land;
     /// the folder last picked when there is no Downloads; the documents folder as the last resort.</summary>

@@ -96,7 +96,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             cells.Add(store is null ? ReportCell.Empty : ReportCell.Of(ReportText.PensionText(store)));
             cells.Add(ReportCell.Day(CheckedOn(store)));
             cells.Add(ReportCell.Day(entry?.StartDate));
-            cells.Add(ReportCell.Of(store is { TypeFromCard: true } && EmploymentTypes.Find(store.TorEmploymentTypeId) is { } cardType ? cardType.Name : entry?.Type)); // the type that applies, as the grid shows it
+            cells.Add(ReportCell.Of(EmploymentTypeShown(store, entry))); // the type that applies, as the grid shows it
             cells.Add(ReportCell.Of(entry?.State));
             cells.Add(ReportCell.Day(entry?.EndDate));
             cells.Add(ReportCell.Day(person.PausedEntry?.PauseStart));
@@ -441,12 +441,20 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
 
     private static string Reference(ReviewPayment payment) => payment.IsByHand ? ReportText.ByHandSource : payment.Reference;
 
-    /// <summary>"Kontroll-kp": the day the person's facts were last established — the later of the residency and the
-    /// pension check (a lookup's, or the accountant's hand); nothing while neither was.</summary>
+    /// <summary>"Kontroll-kp" and the grid's "Kontrollitud", one rule for both (decision 161): the day since which every
+    /// fact of the person has been checked — the earlier of the residency and the pension check (a lookup's, or the
+    /// accountant's hand), so that an old day says a check is due; the one there is while only one was made; nothing
+    /// while neither was.</summary>
     public static DateOnly? CheckedOn(Person? person) =>
         person is null ? null
-        : person.ResidencyCheckedOn is { } r && person.PensionCheckedOn is { } p ? (r > p ? r : p)
+        : person.ResidencyCheckedOn is { } r && person.PensionCheckedOn is { } p ? (r < p ? r : p)
         : person.ResidencyCheckedOn ?? person.PensionCheckedOn;
+
+    /// <summary>"Töötamise liik" as the grid and the report show it: the card's type when the card says it applies; else
+    /// the register entry's; else the type on the card, when the register gives none (a person it does not list).</summary>
+    public static string? EmploymentTypeShown(Person? person, TorEntry? entry) =>
+        person is { TypeFromCard: true } && EmploymentTypes.Find(person.TorEmploymentTypeId) is { } cardType ? cardType.Name
+        : entry?.Type ?? EmploymentTypes.Find(person?.TorEmploymentTypeId)?.Name;
 
     private static string? DebitCredit(StatementRow? row) => row is null ? null : row.DcText ?? row.Direction switch
     {
