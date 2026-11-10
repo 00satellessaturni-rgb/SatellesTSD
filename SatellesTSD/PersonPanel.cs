@@ -141,6 +141,8 @@ public sealed class PersonPanel : UserControl
 
     internal TextBox ExemptionBox => _exemptionMonthly;
 
+    internal TextBox FirstNameBox => _first;
+
     public bool ConfirmResidency => _confirmResidency.Checked;
 
     public bool ConfirmPension => _confirmPension.Checked;

@@ -723,6 +723,84 @@ public class WindowTests
         }));
     }
 
+    [Fact]
+    public void Unsaved_edits_on_the_card_stay_when_the_question_is_cancelled_or_the_save_fails_and_the_action_stops()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Mari(form);
+            var card = form.PersonEditor;
+            var answer = DialogResult.Cancel;
+            form.AnsweringUnsaved = () => answer;
+            card.FirstNameBox.Text = ""; // a card the store will refuse (a person needs a first name)
+            Assert.True(card.IsDirty);
+
+            // Cancel: another person picked — the selection goes back, the card stays as typed
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[1].Cells[0];
+            Ui.Pump();
+            Assert.Equal(0, form.PersonsGrid.CurrentRow!.Index);
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+
+            Assert.Equal(["Mari Maasikas"], form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["payee"].Value?.ToString())); // her payments again, not the other person's
+
+            // a search that hides her row is called off the same way: the search goes, the grid is on her again
+            form.PersonsSearch.Text = "tamm";
+            Ui.Pump();
+            Assert.Equal(("", 0), (form.PersonsSearch.Text, form.PersonsGrid.CurrentRow!.Index));
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+            Assert.All(form.PersonsGrid.Rows.Cast<DataGridViewRow>(), r => Assert.True(r.Visible));
+
+            // another month picked: the pickers go back, the view and the settings stay
+            var (month, periodId) = (form.MonthBox.SelectedIndex, form.View!.Period.Id);
+            form.MonthBox.SelectedIndex = month == 0 ? 1 : month - 1;
+            Ui.Pump();
+            Assert.Equal((month, periodId), (form.MonthBox.SelectedIndex, form.View!.Period.Id));
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+
+            // Yes, and the save cannot happen: the failure is said, the card stays as typed, the selection goes back
+            answer = DialogResult.Yes;
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[1].Cells[0];
+            Ui.Pump();
+            Assert.Equal(ReviewWorkspace.NameMissing, Assert.IsType<ReviewException>(Assert.Single(fixture.Failures)).Code);
+            fixture.Failures.Clear();
+            Assert.Equal(0, form.PersonsGrid.CurrentRow!.Index);
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+            Assert.Equal("MARI", StoredMari(form).FirstName);
+
+            // the window's closing and the company's closing are called off the same way
+            answer = DialogResult.Cancel;
+            form.Close();
+            Ui.Pump();
+            Assert.True(form.Visible && !form.IsDisposed);
+            form.CloseCompanyButton.PerformClick();
+            Ui.Pump();
+            Assert.NotNull(form.View);
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+
+            // the card put right and Yes: saved, and the other person shown
+            card.FirstNameBox.Text = "MARI";
+            card.DeclarationBox.SelectedIndex = 2;
+            answer = DialogResult.Yes;
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[1].Cells[0];
+            Ui.Until(() => !form.IsBusy && !card.IsDirty && StoredMari(form).Declaration == DeclarationChoice.Exclude, what: "the save on the way to another person");
+            Ui.Pump();
+            Assert.Empty(fixture.Failures);
+            Assert.Equal(1, form.PersonsGrid.CurrentRow!.Index);
+
+            // No: the edits dropped, the store as it was
+            Mari(form);
+            card.DeclarationBox.SelectedIndex = 0;
+            Assert.True(card.IsDirty);
+            answer = DialogResult.No;
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[1].Cells[0];
+            Ui.Pump();
+            Assert.False(card.IsDirty);
+            Assert.Equal(1, form.PersonsGrid.CurrentRow!.Index);
+            Assert.Equal(DeclarationChoice.Exclude, StoredMari(form).Declaration);
+        }));
+    }
+
     private static void Mari(MainForm form)
     {
         form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];

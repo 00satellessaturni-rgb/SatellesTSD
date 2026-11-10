@@ -221,9 +221,9 @@ public sealed class MainForm : Form
         _openStoreButton.Click += (_, _) => OpenStoreDialog(false);
         _newStoreButton.Click += (_, _) => OpenStoreDialog(true);
         _newCompanyButton.Click += (_, _) => NewCompany();
-        _companyBox.SelectedIndexChanged += (_, _) => { if (!_filling) { FillPeriods(); ReloadView(); } };
-        _yearBox.SelectedIndexChanged += (_, _) => { if (!_filling) { ReloadView(); } };
-        _monthBox.SelectedIndexChanged += (_, _) => { if (!_filling) { ReloadView(); } };
+        _companyBox.SelectedIndexChanged += (_, _) => PeriodPicked(company: true);
+        _yearBox.SelectedIndexChanged += (_, _) => PeriodPicked(company: false);
+        _monthBox.SelectedIndexChanged += (_, _) => PeriodPicked(company: false);
         _importButton.Click += async (_, _) => await ImportAsync();
         _filesButton.Click += (_, _) => ShowFiles();
         _matchButton.Click += async (_, _) => await RunMatchAsync();
@@ -233,7 +233,19 @@ public sealed class MainForm : Form
         _removeLineButton.Click += (_, _) => RemoveLine();
         _newPersonButton.Click += (_, _) => NewPerson();
         _closeCompanyButton.Click += (_, _) => CloseCompany();
-        _personsGrid.SelectionChanged += (_, _) => { if (!_filling) { ShowSelectedPerson(); } };
+        // a row made current in code raises the selection's event while the old row is still the current one, a click
+        // the current cell's first: both are listened to, and a person is shown once per row (the row already shown is
+        // skipped — ShowSelectedPerson notes it, the fills' own calls included)
+        void RowChanged()
+        {
+            if (!_filling && !ReferenceEquals(_personsGrid.CurrentRow, _shownRow))
+            {
+                ShowSelectedPerson();
+            }
+        }
+
+        _personsGrid.SelectionChanged += (_, _) => RowChanged();
+        _personsGrid.CurrentCellChanged += (_, _) => RowChanged();
         _paymentsGrid.SelectionChanged += (_, _) => { if (!_filling) { _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true }; } };
         // a tick or a pick is a decision at once; a note is one when its editing ends
         _paymentsGrid.CurrentCellDirtyStateChanged += (_, _) =>
@@ -270,6 +282,8 @@ public sealed class MainForm : Form
     internal ToolStripItem CloseCompanyButton => _closeCompanyButton;
 
     internal ToolStripComboBox CompanyBox => _companyBox;
+
+    internal ToolStripComboBox MonthBox => _monthBox;
 
     internal Label SalaryTotalLabel => _salaryTotal;
 
@@ -482,7 +496,11 @@ public sealed class MainForm : Form
 
         if (_personPanel.IsDirty)
         {
-            ResolveDirtyPanel();
+            if (ResolveDirtyPanel() == Unsaved.Kept)
+            {
+                return; // the edits stay on the card; the update waits
+            }
+
             ReloadView();
         }
 
@@ -630,9 +648,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard())
         {
-            ResolveDirtyPanel();
+            return;
         }
 
         var services = _services;
@@ -704,7 +722,11 @@ public sealed class MainForm : Form
 
         if (_personPanel.IsDirty)
         {
-            ResolveDirtyPanel(); // the card's edits are in the export or dropped, never saved into a locked month after it
+            if (ResolveDirtyPanel() == Unsaved.Kept) // the card's edits are in the export or dropped, never saved into a locked month after it
+            {
+                return; // or kept on the card: nothing is exported
+            }
+
             ReloadView(); // the card and the grids show what the store holds, whichever way it went — even if the export stops here
             if (_services is null || _view is null)
             {
@@ -802,7 +824,11 @@ public sealed class MainForm : Form
 
         if (_personPanel.IsDirty)
         {
-            ResolveDirtyPanel();
+            if (ResolveDirtyPanel() == Unsaved.Kept)
+            {
+                return; // the edits stay on the card; no report is written
+            }
+
             ReloadView(); // whichever way it went, the grid shows what the store holds before the folder is asked
             if (_services is null || _view is null)
             {
@@ -917,9 +943,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // before the report is read into the store
         {
-            ResolveDirtyPanel(); // before the report is read into the store
+            return;
         }
 
         var services = _services;
@@ -1050,9 +1076,10 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty && !_handedOver)
+        if (!_handedOver && !SettleCard())
         {
-            ResolveDirtyPanel();
+            e.Cancel = true; // the edits stay on the card, the window open
+            return;
         }
 
         if (!_handedOver)
@@ -1094,9 +1121,9 @@ public sealed class MainForm : Form
     private void OpenStore(string path)
     {
         CommitPendingNote(); // a note being typed goes to the store it was typed for, before that store closes
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // against the store it was typed for, before that store closes
         {
-            ResolveDirtyPanel(); // against the store it was typed for, before that store closes
+            return;
         }
 
         _lookups?.Cancel();
@@ -1313,9 +1340,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard())
         {
-            ResolveDirtyPanel();
+            return;
         }
 
         _settings.LastCompany = "";
@@ -1395,6 +1422,43 @@ public sealed class MainForm : Form
 
     // ---------------------------------------------------------------- the view
 
+    private (int Company, int Year, int Month) _picked = (-1, -1, -1); // the company and the month the view was last loaded for
+
+    /// <summary>Another company, year or month picked: the card's unsaved edits are settled first, and kept edits put
+    /// the pickers back where they were — nothing is loaded or remembered for a switch called off (decision 145).</summary>
+    private void PeriodPicked(bool company)
+    {
+        if (_filling)
+        {
+            return;
+        }
+
+        if (!SettleCard())
+        {
+            _filling = true;
+            try
+            {
+                // the year's and the month's lists are still the old company's: they are rebuilt only after the settling
+                _companyBox.SelectedIndex = _picked.Company < _companyBox.Items.Count ? _picked.Company : -1;
+                _yearBox.SelectedIndex = _picked.Year < _yearBox.Items.Count ? _picked.Year : -1;
+                _monthBox.SelectedIndex = _picked.Month < _monthBox.Items.Count ? _picked.Month : -1;
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            return;
+        }
+
+        if (company)
+        {
+            FillPeriods();
+        }
+
+        ReloadView();
+    }
+
     private void ReloadView(Guid? keepPerson = null, PaymentKey? keepPayment = null)
     {
         CommitPendingNote(); // a Märkus being typed is saved before the rows go
@@ -1402,6 +1466,8 @@ public sealed class MainForm : Form
         {
             return; // the store belongs to the run until it ends; the run's end reloads
         }
+
+        _picked = (_companyBox.SelectedIndex, _yearBox.SelectedIndex, _monthBox.SelectedIndex);
 
         keepPerson ??= SelectedPerson?.PersonId;
         var keepUnmatched = keepPerson is null && SelectedPerson?.IsUnmatched == true;
@@ -1625,8 +1691,17 @@ public sealed class MainForm : Form
 
     private void FillPayments() => FillPayments(SelectedPerson);
 
+    private DataGridViewRow? _shownRow; // the persons grid's row the events last showed
+    private bool _goingBack; // the selection is on its way back to the person whose edits stay on the card: nothing is shown or asked meanwhile
+
     private void ShowSelectedPerson()
     {
+        if (_goingBack)
+        {
+            return;
+        }
+
+        _shownRow = _personsGrid.CurrentRow;
         var person = SelectedPerson;
         FillPayments(person);
         if (_busy && _personPanel.IsDirty)
@@ -1639,10 +1714,20 @@ public sealed class MainForm : Form
         var sameAsTyped = _personPanel.IsDirty && _personPanel.PresentedId is { } presented && presented == target?.Id;
         if (!sameAsTyped)
         {
-            // what the accountant typed for another person is saved or dropped, never lost in silence
-            if (_personPanel.IsDirty && ResolveDirtyPanel())
+            // what the accountant typed for another person is saved or dropped, never lost in silence — or kept: the
+            // selection goes back to that person, the card as typed (after the grid's own event, which this is)
+            if (_personPanel.IsDirty)
             {
-                BeginInvoke(() => ReloadView());
+                switch (ResolveDirtyPanel())
+                {
+                    case Unsaved.Kept:
+                        _goingBack = true;
+                        BeginInvoke(ReselectEditedPerson);
+                        return;
+                    case Unsaved.Saved:
+                        BeginInvoke(() => ReloadView());
+                        break;
+                }
             }
 
             if (_view is { } view)
@@ -1658,28 +1743,86 @@ public sealed class MainForm : Form
         _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true };
     }
 
-    /// <summary>Asks about the panel's unsaved edits: Yes saves them (true), No drops them.</summary>
-    private bool ResolveDirtyPanel()
+    /// <summary>What became of the card's unsaved edits: saved, dropped on the accountant's word, or kept on the card —
+    /// the accountant cancelled, or the save could not happen — in which case the action that asked is called off.</summary>
+    internal enum Unsaved
     {
-        var saved = false;
-        var answer = Confirming is { } hook ? (hook(UiText.UnsavedPerson, UiText.PersonPanel) ? DialogResult.Yes : DialogResult.No)
-            : MessageBox.Show(this, UiText.UnsavedPerson, UiText.PersonPanel, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        if (answer == DialogResult.Yes && _services is not null && _personPanel.Collect() is { } edited)
+        Saved,
+        Dropped,
+        Kept,
+    }
+
+    /// <summary>Answers the unsaved-card question for a test (Yes, No or Cancel) in place of the message box; takes
+    /// precedence over <see cref="Confirming"/>, which answers it Yes or No.</summary>
+    internal Func<DialogResult>? AnsweringUnsaved;
+
+    /// <summary>The card's unsaved edits settled before an action goes on: true when the card is clean (nothing typed,
+    /// saved, or dropped), false when the edits stay on the card and the action must stop (decision 145).</summary>
+    private bool SettleCard() => !_personPanel.IsDirty || ResolveDirtyPanel() != Unsaved.Kept;
+
+    /// <summary>Asks about the panel's unsaved edits: Yes saves them, No drops them, Cancel keeps them on the card. A
+    /// save that cannot happen (a field that is no number, the store's refusal) keeps them too: nothing typed is lost
+    /// to an error box.</summary>
+    private Unsaved ResolveDirtyPanel()
+    {
+        var answer = AnsweringUnsaved is { } ask ? ask()
+            : Confirming is { } hook ? (hook(UiText.UnsavedPerson, UiText.PersonPanel) ? DialogResult.Yes : DialogResult.No)
+            : MessageBox.Show(this, UiText.UnsavedPerson, UiText.PersonPanel, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        if (answer == DialogResult.No || (answer == DialogResult.Yes && _services is null))
         {
-            try
-            {
-                var person = _services.Workspace.SavePerson(edited, _personPanel.ConfirmResidency, _personPanel.ConfirmPension, _personPanel.Presented);
-                Log($"{UiText.Save}: {person.LastName} {person.FirstName}");
-                saved = true;
-            }
-            catch (Exception e)
-            {
-                Fail(e);
-            }
+            _personPanel.MarkClean(); // dropped on the accountant's word (or no store to save into)
+            return Unsaved.Dropped;
         }
 
-        _personPanel.MarkClean();
-        return saved;
+        if (answer != DialogResult.Yes || _personPanel.Collect() is not { } edited)
+        {
+            return Unsaved.Kept; // cancelled, or a field is no number (the card said which): the edits stay
+        }
+
+        try
+        {
+            var person = _services!.Workspace.SavePerson(edited, _personPanel.ConfirmResidency, _personPanel.ConfirmPension, _personPanel.Presented);
+            Log($"{UiText.Save}: {person.LastName} {person.FirstName}");
+            _personPanel.MarkClean();
+            return Unsaved.Saved;
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return Unsaved.Kept;
+        }
+    }
+
+    /// <summary>The persons grid back on the person whose edits stay on the card, after a selection change was called off.</summary>
+    private void ReselectEditedPerson()
+    {
+        try
+        {
+            DataGridViewRow? Find() => _personPanel.PresentedId is { } id
+                ? _personsGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag is ReviewPerson { Person.Id: var personId } && personId == id)
+                : null;
+            var row = Find();
+            if (row is { Visible: false })
+            {
+                // the search hid the person being edited: the search goes, so the grid, the payments and the card are
+                // one person's again (the filter's own row changes ask nothing: the way back is still on)
+                _personsSearch.Text = "";
+                row = Find();
+            }
+
+            if (row is { Visible: true } && !ReferenceEquals(row, _personsGrid.CurrentRow))
+            {
+                var column = _personsGrid.CurrentCell?.ColumnIndex is { } current && row.Cells[current].Visible ? current : row.Cells.Cast<DataGridViewCell>().First(c => c.Visible).ColumnIndex;
+                _personsGrid.CurrentCell = row.Cells[column];
+            }
+        }
+        finally
+        {
+            _goingBack = false;
+            _shownRow = _personsGrid.CurrentRow;
+            FillPayments(); // the payments of the person the grid is on, whichever that is (the row may be filtered away)
+            _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true };
+        }
     }
 
     private void BuildPaymentColumns()
@@ -1988,9 +2131,9 @@ public sealed class MainForm : Form
                     return;
                 }
 
-                if (_personPanel.IsDirty)
+                if (!SettleCard())
                 {
-                    ResolveDirtyPanel();
+                    return;
                 }
 
                 var (company, created) = services.Pipeline.EnsureCompany(employer);
@@ -2022,9 +2165,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // before the import holds the store
         {
-            ResolveDirtyPanel(); // before the import holds the store
+            return;
         }
 
         var periodId = period.Id;
@@ -2070,9 +2213,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // before the run holds the store
         {
-            ResolveDirtyPanel(); // before the run holds the store
+            return;
         }
 
         var services = _services;
@@ -2101,9 +2244,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // the registers are asked about the persons as saved, and the card shown afresh with their answers
         {
-            ResolveDirtyPanel(); // the registers are asked about the persons as saved, and the card shown afresh with their answers
+            return;
         }
 
         var services = _services;
@@ -2140,9 +2283,9 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (_personPanel.IsDirty)
+        if (!SettleCard()) // the register is asked about the person as saved, never about half-typed facts
         {
-            ResolveDirtyPanel(); // the register is asked about the person as saved, never about half-typed facts
+            return;
         }
 
         var services = _services;
