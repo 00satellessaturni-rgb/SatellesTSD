@@ -808,16 +808,17 @@ public sealed class MainForm : Form
 
         _settings.ExportFolder = folders.SelectedPath;
         SaveSettings();
-        string? reason = null;
+        IReadOnlyDictionary<Core.Model.Section, string>? reasons = null;
         if (_services.Submitter.NeedsCorrectionReason(_view.Period.Id))
         {
-            using var dialog = new CorrectionReasonDialog();
+            // one reason for each section the file will carry (decision 154)
+            using var dialog = new CorrectionReasonDialog(_services.Submitter.DraftSections(_view.Period.Id));
             if (dialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
             }
 
-            reason = dialog.Reason;
+            reasons = dialog.Reasons;
         }
 
         var services = _services;
@@ -826,7 +827,7 @@ public sealed class MainForm : Form
         ExportResult? result = null;
         await RunBusyAsync(async () =>
         {
-            result = await Task.Run(() => services.Submitter.Export(periodId, folder, reason));
+            result = await Task.Run(() => services.Submitter.Export(periodId, folder, reasons));
             Log($"{UiText.Export}: {result.Path} ({result.Lines} rida, uniqueID {result.Submission.UniqueId})");
         });
         ReloadView();

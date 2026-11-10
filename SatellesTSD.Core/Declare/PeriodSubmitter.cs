@@ -52,7 +52,21 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     /// <summary>Whether the next file corrects confirmed data, so the export needs a PARANDUSPOHJUS.</summary>
     public bool NeedsCorrectionReason(Guid periodId) => FindPeriod(periodId).ConfirmedAt is not null;
 
-    public ExportResult Export(Guid periodId, string folder, string? correctionReason = null)
+    /// <summary>The sections the next file would carry: those of the period's drafts, in the file's order — one
+    /// PARANDUSPOHJUS is asked for each (decision 154).</summary>
+    public IReadOnlyList<Section> DraftSections(Guid periodId) =>
+        _store.Payments(periodId).Where(p => p.Status == PaymentStatus.Draft).Select(p => p.Section).Distinct().OrderBy(s => s).ToList();
+
+    /// <summary>The PARANDUSPOHJUS codes that fit a section: _1 and _2 fit both, _3 (tax liability in another country) the pay section alone, _4 (a benefit granted backwards) the benefits section alone.</summary>
+    public static IReadOnlyList<string> ReasonsFor(Section section) => CorrectionReasons.Where(r => ReasonFor(section, r) is not null).ToList();
+
+    /// <summary>The export with one reason for every section of the file (it must fit them all).</summary>
+    public ExportResult Export(Guid periodId, string folder, string? correctionReason = null) =>
+        Export(periodId, folder, correctionReason is null ? null : DraftSections(periodId).ToDictionary(s => s, _ => correctionReason));
+
+    /// <param name="correctionReasons">The PARANDUSPOHJUS of each section the file carries, when it corrects confirmed data: MTA
+    /// takes one per section, so a file with both sections may name _3 for the one and _4 for the other (decision 154).</param>
+    public ExportResult Export(Guid periodId, string folder, IReadOnlyDictionary<Section, string>? correctionReasons)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         var period = FindPeriod(periodId);
@@ -79,23 +93,35 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             }
         }
 
-        if (period.ConfirmedAt is not null && correctionReason is null)
+        if (period.ConfirmedAt is not null && correctionReasons is null)
         {
             throw new DeclareException(ReasonNeeded, "The declaration was confirmed; a file that changes it names the reason (PARANDUSPOHJUS_1..4).");
         }
 
-        if (correctionReason is not null && !CorrectionReasons.Contains(correctionReason, StringComparer.Ordinal))
+        if (correctionReasons?.Values.FirstOrDefault(r => !CorrectionReasons.Contains(r, StringComparer.Ordinal)) is { } unknown)
         {
-            throw new DeclareException(ReasonNeeded, $"'{correctionReason}' is not a PARANDUSPOHJUS code.");
+            throw new DeclareException(ReasonNeeded, $"'{unknown}' is not a PARANDUSPOHJUS code.");
         }
 
-        var sections = drafts.GroupBy(p => p.Section).OrderBy(g => g.Key)
-            .Select(g => new SectionEntries(g.Key, ReasonFor(g.Key, correctionReason), g.Select(p => p.Line).ToList()))
-            .ToList();
-        if (correctionReason is not null && sections.FirstOrDefault(s => s.CorrectionReason is null) is { } misfit)
+        // a reason per section, as MTA takes it: each section the file carries has one, and one that fits it
+        var sections = new List<SectionEntries>();
+        foreach (var group in drafts.GroupBy(p => p.Section).OrderBy(g => g.Key))
         {
-            throw new DeclareException(ReasonNeeded, $"{correctionReason} does not fit section {misfit.Section}; the file carries lines of it, so name a reason that fits every section in the file.");
+            string? reason = null;
+            if (correctionReasons is not null)
+            {
+                if (!correctionReasons.TryGetValue(group.Key, out var named))
+                {
+                    throw new DeclareException(ReasonNeeded, $"No reason is named for section {group.Key}; the file carries lines of it, and each section it carries names its reason.");
+                }
+
+                reason = ReasonFor(group.Key, named)
+                    ?? throw new DeclareException(ReasonNeeded, $"{named} does not fit section {group.Key}; the file carries lines of it, so name a reason that fits that section.");
+            }
+
+            sections.Add(new SectionEntries(group.Key, reason, group.Select(p => p.Line).ToList()));
         }
+
         var now = _clock.GetLocalNow();
         var uniqueId = Declaration.MakeUniqueId(company.RegistryCode, now.DateTime);
         var declaration = new Declaration(company.RegistryCode, period.Year, period.Month, DateOnly.FromDateTime(now.DateTime), uniqueId, company.Name, SourceApplication, null, sections,

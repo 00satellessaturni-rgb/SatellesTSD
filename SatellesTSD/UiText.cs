@@ -410,6 +410,15 @@ internal static class UiText
     public const string ResolveRejectedConfirm = "Märkida rida e-MTA-s tagasi lükatuks (sinu sõna)?";
     public const string CorrectionReasonTitle = "Paranduse põhjus";
     public const string CorrectionReasonPrompt = "Deklaratsioon on kinnitatud; muutev fail nimetab põhjuse (PARANDUSPOHJUS).";
+    public const string CorrectionReasonPromptPerSection = "Deklaratsioon on kinnitatud; muutev fail nimetab põhjuse (PARANDUSPOHJUS) iga osa kohta, mille ridu ta kannab.";
+
+    /// <summary>A declaration section in few words, for a field's label.</summary>
+    public static string SectionShort(Core.Model.Section section) => section switch
+    {
+        Core.Model.Section.EE0201001 => "Töötasud (01)",
+        Core.Model.Section.EE0201002 => "Hüvitised jm (02)",
+        _ => section.ToString(),
+    };
     public const string ChecklistTitle = "Fail on valmis — üleslaadimine e-MTA-s";
     public const string OpenFolder = "Ava kaust";
     public const string ChecklistSteps =

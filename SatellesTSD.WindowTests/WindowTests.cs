@@ -724,6 +724,29 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_correction_reason_is_asked_for_each_section_the_file_carries_of_the_reasons_that_fit_it()
+    {
+        Ui.Run(() =>
+        {
+            // one section: asked once, as before
+            using (var one = new CorrectionReasonDialog([Section.EE0201001]))
+            {
+                var box = Assert.Single(one.ReasonBoxes).Value;
+                Assert.Equal(["PARANDUSPOHJUS_1", "PARANDUSPOHJUS_2", "PARANDUSPOHJUS_3"], box.Items.Cast<Choice>().Select(c => c.Value));
+                Assert.Equal(new Dictionary<Section, string> { [Section.EE0201001] = "PARANDUSPOHJUS_1" }, one.Reasons);
+            }
+
+            // both sections: a choice each, offering only what fits — 3 for the pay section, 4 for the benefits section
+            using var both = new CorrectionReasonDialog([Section.EE0201001, Section.EE0201002]);
+            Assert.Equal([Section.EE0201001, Section.EE0201002], both.ReasonBoxes.Keys);
+            Assert.Equal(["PARANDUSPOHJUS_1", "PARANDUSPOHJUS_2", "PARANDUSPOHJUS_4"], both.ReasonBoxes[Section.EE0201002].Items.Cast<Choice>().Select(c => c.Value));
+            both.ReasonBoxes[Section.EE0201001].SelectedIndex = 2;
+            both.ReasonBoxes[Section.EE0201002].SelectedIndex = 2;
+            Assert.Equal(("PARANDUSPOHJUS_3", "PARANDUSPOHJUS_4"), (both.Reasons[Section.EE0201001], both.Reasons[Section.EE0201002]));
+        });
+    }
+
+    [Fact]
     public void A_store_that_cannot_be_opened_leaves_the_store_in_hand_open_and_shown()
     {
         using var fixture = new WindowFixture();

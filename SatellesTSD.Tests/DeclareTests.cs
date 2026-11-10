@@ -458,6 +458,53 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_correction_file_names_a_reason_for_each_section_it_carries()
+    {
+        using var box = Ready();
+        var unmatched = box.Workspace.Load(box.Period.Id).Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ");
+        box.Workspace.SetPerson(unmatched, box.Mari.Id);
+        box.Workspace.SetCategory(unmatched, "Üür"); // 57: the benefits section, beside the salary's pay section
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal([Section.EE0201001, Section.EE0201002], box.Submitter.DraftSections(box.Period.Id));
+        var first = box.Submitter.Export(box.Period.Id, box.Folder);
+        Assert.All(first.Declaration.Sections, s => Assert.Null(s.CorrectionReason)); // nothing confirmed yet: no reason asked or written
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.04m });
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 25), 50m, "Mari Maasikas", "lisaüür", "Üür");
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal([Section.EE0201001, Section.EE0201002], box.Submitter.DraftSections(box.Period.Id));
+        Assert.True(box.Submitter.NeedsCorrectionReason(box.Period.Id)); // a correction of confirmed data
+        Assert.Equal([LineAction.M, LineAction.R], box.Lines.Where(l => l.Status == PaymentStatus.Draft).OrderBy(l => l.Section).Select(l => l.Action)); // the salary changed, a rent line added
+
+        // the reasons that fit each section: 3 is the pay section's alone, 4 the benefits section's
+        Assert.Equal(["PARANDUSPOHJUS_1", "PARANDUSPOHJUS_2", "PARANDUSPOHJUS_3"], PeriodSubmitter.ReasonsFor(Section.EE0201001));
+        Assert.Equal(["PARANDUSPOHJUS_1", "PARANDUSPOHJUS_2", "PARANDUSPOHJUS_4"], PeriodSubmitter.ReasonsFor(Section.EE0201002));
+
+        // one reason for the whole file must fit both sections, as before
+        Assert.Equal(PeriodSubmitter.ReasonNeeded, Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder, "PARANDUSPOHJUS_3")).Code);
+
+        // a reason per section: each section the file carries names one, and one that fits it
+        string Refusal(Dictionary<Section, string> reasons) => Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder, reasons)).Message;
+        Assert.Contains("No reason is named for section EE0201002", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3" }));
+        Assert.Contains("PARANDUSPOHJUS_4 does not fit section EE0201001", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_4", [Section.EE0201002] = "PARANDUSPOHJUS_4" }));
+        Assert.Contains("is not a PARANDUSPOHJUS code", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3", [Section.EE0201002] = "x" }));
+        Assert.Empty(box.Store.Submissions(box.Period.Id).Where(s => s.Id != first.Submission.Id)); // nothing was written by the refusals
+
+        var correction = box.Submitter.Export(box.Period.Id, box.Folder, new Dictionary<Section, string> { [Section.EE0201001] = "PARANDUSPOHJUS_3", [Section.EE0201002] = "PARANDUSPOHJUS_4" });
+        Assert.Equal([(Section.EE0201001, "PARANDUSPOHJUS_3"), (Section.EE0201002, "PARANDUSPOHJUS_4")], correction.Declaration.Sections.Select(s => (s.Section, s.CorrectionReason!)));
+        Assert.Empty(new XbrlGlValidator(SchemaRoot).ValidateFile(correction.Path));
+        var read = XbrlGlReader.Load(correction.Path);
+        Assert.Equal(["PARANDUSPOHJUS_3", "PARANDUSPOHJUS_4"], read.Sections.Select(s => s.CorrectionReason));
+    }
+
+    [Fact]
     public void A_withdrawn_exports_file_is_set_aside_under_another_name_and_the_outcome_says_what_became_of_it()
     {
         using var box = Ready();

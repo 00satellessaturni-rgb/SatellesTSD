@@ -44,19 +44,30 @@ public sealed class ChecklistDialog : Form
     }
 }
 
-/// <summary>The reason a file changes a confirmed declaration (PARANDUSPOHJUS_1..4), the accountant's choice.</summary>
+/// <summary>The reason a file changes a confirmed declaration (PARANDUSPOHJUS_1..4), the accountant's choice: one for
+/// each section the file carries, of the reasons that fit that section (decision 154). A file of one section asks once.</summary>
 public sealed class CorrectionReasonDialog : FieldDialog
 {
-    private readonly ComboBox _reason = Combo(PeriodSubmitter.CorrectionReasons.Select(c => new Choice(c, UiText.ReasonText(c))));
+    private readonly Dictionary<Section, ComboBox> _reasons = [];
 
-    public CorrectionReasonDialog() : base(UiText.CorrectionReasonTitle)
+    public CorrectionReasonDialog(IReadOnlyList<Section> sections) : base(UiText.CorrectionReasonTitle)
     {
-        Field("", new Label { Text = UiText.CorrectionReasonPrompt, AutoSize = true, MaximumSize = new Size(320, 0) });
-        Field(UiText.CorrectionReasonTitle, _reason);
+        ArgumentNullException.ThrowIfNull(sections);
+        Field("", new Label { Text = sections.Count > 1 ? UiText.CorrectionReasonPromptPerSection : UiText.CorrectionReasonPrompt, AutoSize = true, MaximumSize = new Size(320, 0) });
+        foreach (var section in sections)
+        {
+            var box = Combo(PeriodSubmitter.ReasonsFor(section).Select(c => new Choice(c, UiText.ReasonText(c))));
+            _reasons[section] = box;
+            Field(sections.Count > 1 ? UiText.SectionShort(section) : UiText.CorrectionReasonTitle, box);
+        }
+
         Buttons();
     }
 
-    public string Reason => ((Choice)_reason.SelectedItem!).Value;
+    /// <summary>The reason picked for each section.</summary>
+    public IReadOnlyDictionary<Section, string> Reasons => _reasons.ToDictionary(r => r.Key, r => ((Choice)r.Value.SelectedItem!).Value);
+
+    internal IReadOnlyDictionary<Section, ComboBox> ReasonBoxes => _reasons;
 }
 
 /// <summary>The workbook's calculator on the new engine: one amount, net or gross, with the facts as toggles; the
