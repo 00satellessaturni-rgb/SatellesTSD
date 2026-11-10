@@ -439,12 +439,25 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
     /// <summary>The lookups for one person, for the day their facts are checked for in the period (their latest
     /// payout of the month, else its last day).</summary>
-    public Task<PersonLookupOutcome> LookUpAsync(Person person, Period period, CancellationToken cancellationToken = default)
+    /// <param name="afresh">Ask the registers now even when an answer for that day is recorded: the card's own check of
+    /// one person (decision 159).</param>
+    public Task<PersonLookupOutcome> LookUpAsync(Person person, Period period, CancellationToken cancellationToken = default, bool afresh = false)
     {
         ArgumentNullException.ThrowIfNull(period);
         RequireDraft(FindPeriod(period.Id), LookupsLocked);
         var runner = Runner();
-        return runner.LookUpAsync(person, runner.ControlDateFor(person, period), cancellationToken);
+        return runner.LookUpAsync(person, runner.ControlDateFor(person, period), cancellationToken, afresh);
+    }
+
+    /// <summary>Gives facts the accountant set by hand back to the register: the answers recorded for the person's day
+    /// are taken over the hand's word (asked only where none is recorded), and the facts are the register's again.</summary>
+    public Task<PersonLookupOutcome> HandBackAsync(Person person, Period period, IReadOnlyCollection<LookupKind> kinds, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(kinds);
+        RequireDraft(FindPeriod(period.Id), LookupsLocked);
+        var runner = Runner();
+        return runner.LookUpAsync(person, runner.ControlDateFor(person, period), cancellationToken, afresh: false, handBack: kinds);
     }
 
     private LookupRunner Runner() =>

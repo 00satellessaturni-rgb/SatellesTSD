@@ -18,11 +18,24 @@ public sealed record LookupOptions(TimeSpan MinInterval, bool Force = false)
 /// just done (none for the first report, which tells the total before any query).</summary>
 public sealed record LookupProgress(int Done, int Total, PersonLookupOutcome? Outcome);
 
+/// <summary>A fact the accountant set by hand that a register's answer speaks against: what the register says for the
+/// control date and what stands on the person (decision 159).</summary>
+/// <param name="Register">Residency: a resident by the register. Pension: a member by it.</param>
+/// <param name="RegisterRate">Pension: the member's rate by the register; none when it names none for the day.</param>
+/// <param name="Derived">Pension: not asked of Pensionikeskus — "not a member" follows from non-residency.</param>
+/// <param name="ByHand">The same fact as the accountant set it (none: a pension left unknown by hand).</param>
+public sealed record LookupDisagreement(LookupKind Kind, bool Register, decimal? RegisterRate, bool Derived, bool? ByHand, decimal? ByHandRate);
+
 /// <summary>What happened to one person in a run.</summary>
 public sealed record PersonLookupOutcome(Guid PersonId, string PersonalCode, string Name, IReadOnlyList<string> Steps, IReadOnlyList<string> Problems)
 {
+    /// <summary>The hand-set facts the answers speak against, kept as they were: for a window that asks whether the
+    /// register's word is taken instead.</summary>
+    public IReadOnlyList<LookupDisagreement> Disagreements { get; init; } = [];
+
     public bool Equals(PersonLookupOutcome? other) =>
-        other is not null && PersonId == other.PersonId && PersonalCode == other.PersonalCode && Name == other.Name && Steps.SequenceEqual(other.Steps, StringComparer.Ordinal) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal);
+        other is not null && PersonId == other.PersonId && PersonalCode == other.PersonalCode && Name == other.Name && Steps.SequenceEqual(other.Steps, StringComparer.Ordinal) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal)
+        && Disagreements.SequenceEqual(other.Disagreements);
 
     public override int GetHashCode() => HashCode.Combine(PersonId, PersonalCode, Name, Steps.Count, Problems.Count);
 }
@@ -209,32 +222,45 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     }
 
     /// <summary>The lookups for one person.</summary>
-    public async Task<PersonLookupOutcome> LookUpAsync(Person person, DateOnly controlDate, CancellationToken cancellationToken = default)
+    /// <param name="afresh">Ask the registers now even when an answer for the control date is recorded (the card's own
+    /// check of one person, decision 159); a run over the month reuses.</param>
+    /// <param name="handBack">The facts set by hand that the accountant gives back to the register: its answer is taken
+    /// over the hand's, and the fact is the register's again.</param>
+    public async Task<PersonLookupOutcome> LookUpAsync(Person person, DateOnly controlDate, CancellationToken cancellationToken = default, bool afresh = false, IReadOnlyCollection<LookupKind>? handBack = null)
     {
         ArgumentNullException.ThrowIfNull(person);
         var steps = new List<string>();
         var problems = new List<string>();
+        var disagreements = new List<LookupDisagreement>();
+        var force = _options.Force || afresh;
         var code = person.PersonalCode?.Trim() ?? "";
+        PersonLookupOutcome Outcome() => new(person.Id, code, person.FullName, steps, problems) { Disagreements = disagreements };
         if (!PersonalCode.LooksValid(code))
         {
             problems.Add($"{Skipped}: no valid personal code; nothing to ask.");
-            return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
+            return Outcome();
         }
 
         // residency first: the pension question is only asked about residents
         var current = Fresh(person);
-        var residencyRecord = await RecordedOrAskedAsync(current, LookupKind.Residency, controlDate, steps, cancellationToken).ConfigureAwait(false);
+        var residencyRecord = await RecordedOrAskedAsync(current, LookupKind.Residency, controlDate, force, steps, cancellationToken).ConfigureAwait(false);
         ResidencyFinding? residency = residencyRecord?.FindingJson is { } rj ? JsonSerializer.Deserialize<ResidencyFinding>(rj, Json) : null;
         if (residency is null && current.ResidencySource != LookupSource.Manual)
         {
             problems.Add($"{Failed}: residency — {residencyRecord?.Failure ?? "no answer"}; the facts stand as they were.");
-            return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
+            return Outcome();
         }
 
         current = Fresh(current);
         bool isResident;
         var derivedGone = false;
-        if (current.ResidencySource == LookupSource.Manual)
+        // a fact given back to the register is the register's when it has an answer; without one the hand's word stands
+        var residencyBack = current.ResidencySource == LookupSource.Manual && residency is not null && handBack?.Contains(LookupKind.Residency) == true;
+        // the pension's answer follows from the residency (a non-resident is not asked of Pensionikeskus), so a pass that
+        // takes the residency back only compares the pension with the answer that now applies: it is given back in a pass
+        // of its own, on the accountant's word about that very answer
+        var pensionBack = !residencyBack && handBack?.Contains(LookupKind.Pension) == true;
+        if (current.ResidencySource == LookupSource.Manual && !residencyBack)
         {
             // the accountant's word stands; the register's answer, when there is one, is only compared with it
             isResident = current.Residency == Residency.Resident;
@@ -245,12 +271,18 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             else if (residency.IsResidentOn(controlDate) != isResident)
             {
                 problems.Add($"{Disagrees}: the register says {(residency.IsResidentOn(controlDate) ? "resident" : "non-resident")} on {controlDate:dd.MM.yyyy}, the accountant set {current.Residency}; the accountant's word stands.");
+                disagreements.Add(new LookupDisagreement(LookupKind.Residency, !isResident, null, false, isResident, null));
             }
 
             steps.Add("residency set by hand, kept");
         }
         else
         {
+            if (residencyBack)
+            {
+                steps.Add("residency given back to the register");
+            }
+
             isResident = residency!.IsResidentOn(controlDate);
             // the control date stamps the person once both register facts are of it: here when the pension is not the
             // register's to answer (a non-resident's follows, the accountant's is kept), else when Pensionikeskus has answered —
@@ -277,17 +309,17 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         if (!isResident)
         {
             var derived = new PensionFinding(PensionStatus.NotJoined, null, null, []);
-            var existing = _options.Force ? null : _store.LatestLookup(current.Id, LookupKind.Pension, controlDate);
+            var existing = force ? null : _store.LatestLookup(current.Id, LookupKind.Pension, controlDate);
             var derivedRecord = existing is not null && existing.Source == LookupSource.Derived && existing.PersonalCode == code
                 ? existing
                 : _store.AddLookup(new LookupRecord(Guid.Empty, current.Id, LookupKind.Pension, LookupSource.Derived, default, controlDate, JsonSerializer.Serialize(derived, Json), null, null, "not asked: a non-resident", code));
 
             steps.Add("pension not asked: a non-resident");
-            ApplyPension(current, derived, LookupSource.Derived, controlDate, CheckedOn(derivedRecord), steps, problems);
-            return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
+            ApplyPension(current, derived, LookupSource.Derived, controlDate, CheckedOn(derivedRecord), pensionBack, steps, problems, disagreements);
+            return Outcome();
         }
 
-        var pensionRecord = await RecordedOrAskedAsync(current, LookupKind.Pension, controlDate, steps, cancellationToken).ConfigureAwait(false);
+        var pensionRecord = await RecordedOrAskedAsync(current, LookupKind.Pension, controlDate, force, steps, cancellationToken).ConfigureAwait(false);
         PensionFinding? pensionFinding = pensionRecord?.FindingJson is { } pj ? JsonSerializer.Deserialize<PensionFinding>(pj, Json) : null;
         if (pensionFinding is null)
         {
@@ -305,17 +337,17 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 problems.Add($"{Reset}: the pension facts had followed from non-residency; now a resident, they are unknown until Pensionikeskus answers.");
             }
 
-            return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
+            return Outcome();
         }
 
-        ApplyPension(Fresh(current), pensionFinding, LookupSource.Pensionikeskus, controlDate, CheckedOn(pensionRecord!), steps, problems);
-        return new PersonLookupOutcome(person.Id, code, person.FullName, steps, problems);
+        ApplyPension(Fresh(current), pensionFinding, LookupSource.Pensionikeskus, controlDate, CheckedOn(pensionRecord!), pensionBack, steps, problems, disagreements);
+        return Outcome();
     }
 
     /// <summary>The day a register's answer was given: the record's own stamp, so a reused answer keeps its day rather than today's.</summary>
     private static DateOnly CheckedOn(LookupRecord record) => DateOnly.FromDateTime(record.CheckedAt);
 
-    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, List<string> steps, List<string> problems)
+    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, bool handBack, List<string> steps, List<string> problems, List<LookupDisagreement> disagreements)
     {
         var member = finding.MemberOn(controlDate);
         var rate = member ? finding.RateOn(controlDate) : null;
@@ -324,10 +356,15 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             problems.Add($"{RateUnknown}: a member on {controlDate:dd.MM.yyyy} but no rate row covers the day; the rate stays unknown (never 2 % by default).");
         }
 
-        if (current.PensionSource == LookupSource.Manual)
+        if (current.PensionSource == LookupSource.Manual && handBack)
+        {
+            steps.Add("pension given back to the register");
+        }
+        else if (current.PensionSource == LookupSource.Manual)
         {
             if (current.FundedPensionMember != member || (member && rate is not null && current.PensionRate != rate))
             {
+                disagreements.Add(new LookupDisagreement(LookupKind.Pension, member, member ? rate : null, source == LookupSource.Derived, current.FundedPensionMember, current.FundedPensionMember == true ? current.PensionRate : null));
                 var said = source == LookupSource.Derived
                     ? "as a non-resident, not a member (Pensionikeskus not asked)"
                     : $"Pensionikeskus says {(member ? $"member at {Percent(rate)}" : "not a member")} on {controlDate:dd.MM.yyyy}";
@@ -351,11 +388,11 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
     /// <summary>The recorded answer of the register for this control date and this very code, or a fresh one asked and
     /// recorded now (the failure too). A failed answer and an answer of another source (a Derived one) are never reused.</summary>
-    private async Task<LookupRecord?> RecordedOrAskedAsync(Person person, LookupKind kind, DateOnly controlDate, List<string> steps, CancellationToken cancellationToken)
+    private async Task<LookupRecord?> RecordedOrAskedAsync(Person person, LookupKind kind, DateOnly controlDate, bool force, List<string> steps, CancellationToken cancellationToken)
     {
         var source = kind == LookupKind.Residency ? LookupSource.Emta : LookupSource.Pensionikeskus;
         var code = person.PersonalCode!.Trim();
-        if (!_options.Force && _store.LatestLookup(person.Id, kind, controlDate) is { Succeeded: true } recorded && recorded.Source == source && recorded.PersonalCode == code)
+        if (!force && _store.LatestLookup(person.Id, kind, controlDate) is { Succeeded: true } recorded && recorded.Source == source && recorded.PersonalCode == code)
         {
             steps.Add($"{kind.ToString().ToLowerInvariant()} answer of {recorded.CheckedAt:dd.MM.yyyy HH:mm} reused");
             return recorded;

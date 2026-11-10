@@ -139,6 +139,8 @@ public sealed class PersonPanel : UserControl
 
     internal Button SaveButton => _save;
 
+    internal Button LookUpButton => _lookUp;
+
     internal TextBox ExemptionBox => _exemptionMonthly;
 
     internal TextBox FirstNameBox => _first;

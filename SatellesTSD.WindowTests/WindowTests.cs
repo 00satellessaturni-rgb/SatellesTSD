@@ -1340,6 +1340,114 @@ public class WindowTests
         }));
     }
 
+    [Fact]
+    public void The_cards_check_asks_the_registers_afresh_and_offers_the_registers_word_over_a_fact_set_by_hand()
+    {
+        var residency = new CountingResidency();
+        var pension = new SaidPension { Rate = 0.02m };
+        var questions = new List<string>();
+        var take = false;
+        using var fixture = new WindowFixture()
+        {
+            Services = path => new AppServices(path, residency, pension, new LookupOptions(TimeSpan.Zero)),
+        };
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Person MariNow() => StoredMari(form);
+            // the fixture sets her facts by hand; here they start as the registers' to give
+            form.Services!.Store.UpdatePerson(MariNow() with { ResidencySource = LookupSource.Unknown, FundedPensionMember = null, PensionRate = null, PensionSource = LookupSource.Unknown });
+            form.LookupButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && MariNow().PensionSource == LookupSource.Pensionikeskus, what: "the month's run");
+            var asked = (residency.Asked, pension.Asked);
+
+            // the month's run again reuses; the card's button asks both registers now
+            form.LookupButton.PerformClick();
+            Ui.Until(() => !form.IsBusy, what: "the second run");
+            Ui.Pump();
+            Assert.Equal(asked, (residency.Asked, pension.Asked));
+            pension.Rate = 0.04m; // Pensionikeskus corrects itself
+            Mari(form);
+            form.PersonEditor.LookUpButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && MariNow().PensionRate == 0.04m, what: "the card's check");
+            Assert.Equal((asked.Item1 + 1, asked.Item2 + 1), (residency.Asked, pension.Asked));
+            Assert.Empty(questions); // nothing set by hand: nothing to ask
+
+            // the rate set by hand, the register saying otherwise: the question is put; No keeps the hand's word
+            form.Services!.Store.UpdatePerson(MariNow() with { PensionRate = 0.06m, PensionSource = LookupSource.Manual });
+            Mari(form);
+            form.PersonEditor.LookUpButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && questions.Count == 1, what: "the question");
+            Ui.Pump();
+            Assert.Contains("4 %", questions[0], StringComparison.Ordinal);
+            Assert.Contains("6 %", questions[0], StringComparison.Ordinal);
+            Assert.Equal((0.06m, LookupSource.Manual), (MariNow().PensionRate, MariNow().PensionSource));
+
+            // Yes: the register's answer is the fact, without another query for it
+            take = true;
+            var before = (residency.Asked, pension.Asked);
+            Mari(form);
+            form.PersonEditor.LookUpButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && MariNow().PensionSource == LookupSource.Pensionikeskus, what: "the hand-back");
+            Ui.Pump();
+            Assert.Equal(2, questions.Count);
+            Assert.Equal(0.04m, MariNow().PensionRate);
+            Assert.Equal((before.Item1 + 1, before.Item2 + 1), (residency.Asked, pension.Asked)); // asked afresh once; the hand-back reused
+
+            // both facts by hand and both spoken against: the residency is asked alone and first, then the pension against
+            // the answer that applies once the residency is the register's
+            form.Services!.Store.UpdatePerson(MariNow() with { Residency = Residency.NonResident, ResidencySource = LookupSource.Manual, FundedPensionMember = true, PensionRate = 0.06m, PensionSource = LookupSource.Manual });
+            questions.Clear();
+            Mari(form);
+            form.PersonEditor.LookUpButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && MariNow().PensionSource == LookupSource.Pensionikeskus, what: "the two hand-backs");
+            Ui.Pump();
+            Assert.Equal(2, questions.Count);
+            Assert.Contains("Residentsus", questions[0], StringComparison.Ordinal);
+            Assert.DoesNotContain("II sammas", questions[0], StringComparison.Ordinal);
+            Assert.Contains("Pensionikeskus", questions[1], StringComparison.Ordinal);
+            Assert.Contains("4 %", questions[1], StringComparison.Ordinal);
+            Assert.Equal((Residency.Resident, LookupSource.Emta, 0.04m), (MariNow().Residency, MariNow().ResidencySource, MariNow().PensionRate));
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, title) =>
+        {
+            if (title != UiText.LookUp)
+            {
+                return true;
+            }
+
+            questions.Add(question);
+            return take;
+        }));
+    }
+
+    private sealed class CountingResidency : IResidencyLookup
+    {
+        private int _asked;
+
+        public int Asked => _asked;
+
+        public Task<LookupResult<ResidencyFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _asked);
+            return Task.FromResult(LookupResult<ResidencyFinding>.Found(new ResidencyFinding(new DateOnly(2026, 11, 4), [], []), null));
+        }
+    }
+
+    private sealed class SaidPension : IPensionLookup
+    {
+        private int _asked;
+
+        public int Asked => _asked;
+
+        public decimal Rate { get; set; }
+
+        public Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _asked);
+            return Task.FromResult(LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.Joined, new DateOnly(2019, 1, 1), null, [new RatePeriod(new DateOnly(2019, 1, 1), null, Rate, "x")]), null));
+        }
+    }
+
     /// <summary>EMTA faked: every query waits until the test lets them go, so the window is seen mid-run.</summary>
     private sealed class GatedResidency : IResidencyLookup
     {

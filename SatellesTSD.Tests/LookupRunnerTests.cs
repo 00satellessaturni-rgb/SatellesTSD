@@ -617,6 +617,138 @@ public class LookupRunnerTests
     }
 
     [Fact]
+    public async Task One_person_asked_afresh_gets_todays_answer_while_a_run_reuses_the_recorded_one()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var added = store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            var runner = Runner(store, residency, pension);
+            await runner.RunAsync(period.Id);
+
+            // the registers correct themselves: a run over the month still reuses what it has
+            residency.Answers["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null);
+            pension.Answers["48712219406"] = LookupResult<PensionFinding>.Found(Member(0.04m), null);
+            await runner.RunAsync(period.Id);
+            Assert.Equal((1, 1), (residency.Asked.Count, pension.Asked.Count));
+            Assert.False(store.FindPerson(company.Id, "48712219406")!.FundedPensionMember);
+
+            // the one person asked afresh: both registers are asked now, and the new answer lands
+            var outcome = await runner.LookUpAsync(store.FindPerson(company.Id, "48712219406")!, Control, afresh: true);
+            Assert.Equal(["asked residency", "residency resident", "asked pension", "pension member, rate 4 %"], outcome.Steps);
+            Assert.Empty(outcome.Disagreements);
+            Assert.Equal((2, 2), (residency.Asked.Count, pension.Asked.Count));
+            var person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((true, 0.04m, LookupSource.Pensionikeskus), (person.FundedPensionMember, person.PensionRate, person.PensionSource));
+            Assert.Equal(2, store.Lookups(added.Id).Count(r => r.Kind == LookupKind.Pension)); // both answers are kept
+
+            // a fresh answer that fails leaves the facts as the earlier answer set them
+            pension.Answers.Remove("48712219406");
+            var failed = await runner.LookUpAsync(person, Control, afresh: true);
+            Assert.Contains(failed.Problems, p => p.StartsWith(LookupRunner.Failed, StringComparison.Ordinal));
+            Assert.Equal((true, 0.04m), (store.FindPerson(company.Id, "48712219406")!.FundedPensionMember, store.FindPerson(company.Id, "48712219406")!.PensionRate));
+        }
+    }
+
+    [Fact]
+    public async Task A_fact_set_by_hand_is_given_back_to_the_register_only_on_the_accountants_word()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309", Residency.NonResident) with
+            {
+                ResidencySource = LookupSource.Manual, FundedPensionMember = true, PensionRate = 0.06m, PensionSource = LookupSource.Manual,
+            });
+            var residency = new FakeResidency { Answers = { ["38810140309"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["38810140309"] = LookupResult<PensionFinding>.Found(Member(0.02m), null) } };
+            var runner = Runner(store, residency, pension);
+            Person Jaan() => store.FindPerson(company.Id, "38810140309")!;
+
+            // asked afresh: both facts are kept, and both disagreements are named — the pension's against what follows from the hand's non-residency
+            var asked = await runner.LookUpAsync(Jaan(), Control, afresh: true);
+            Assert.Equal(
+                [new LookupDisagreement(LookupKind.Residency, true, null, false, false, null), new LookupDisagreement(LookupKind.Pension, false, null, true, true, 0.06m)],
+                asked.Disagreements);
+            Assert.Equal((Residency.NonResident, LookupSource.Manual, true, LookupSource.Manual), (Jaan().Residency, Jaan().ResidencySource, Jaan().FundedPensionMember, Jaan().PensionSource));
+
+            // the residency given back: the answer just recorded is taken, not asked again; a resident now, Pensionikeskus is
+            // asked, and its answer is only compared with the pension still set by hand
+            var back = await runner.LookUpAsync(Jaan(), Control, handBack: [LookupKind.Residency]);
+            Assert.Equal(["residency answer", "residency given back to the register", "residency resident", "asked pension", "pension set by hand, kept"], back.Steps.Select(s => s.StartsWith("residency answer", StringComparison.Ordinal) ? "residency answer" : s));
+            Assert.Single(residency.Asked);
+            Assert.Equal([new LookupDisagreement(LookupKind.Pension, true, 0.02m, false, true, 0.06m)], back.Disagreements);
+            Assert.Equal((Residency.Resident, LookupSource.Emta, 0.06m, LookupSource.Manual), (Jaan().Residency, Jaan().ResidencySource, Jaan().PensionRate, Jaan().PensionSource));
+
+            // the pension given back too: the recorded answer is the fact, and the register's from now on
+            var both = await runner.LookUpAsync(Jaan(), Control, handBack: [LookupKind.Pension]);
+            Assert.Empty(both.Disagreements);
+            Assert.Contains("pension given back to the register", both.Steps);
+            Assert.Equal((1, 1), (residency.Asked.Count, pension.Asked.Count));
+            Assert.Equal((true, 0.02m, LookupSource.Pensionikeskus), (Jaan().FundedPensionMember, Jaan().PensionRate, Jaan().PensionSource));
+            Assert.Equal(Control, Jaan().FactsControlDate);
+
+            // a run over the month afterwards finds nothing to say
+            var run = await runner.RunAsync(period.Id);
+            Assert.Empty(run.Persons.Single().Problems);
+        }
+    }
+
+    [Fact]
+    public async Task A_pass_that_takes_the_residency_back_never_takes_the_pension_with_it()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            // by hand a resident and a member at 6 %; EMTA says non-resident, Pensionikeskus member at 4 %
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with
+            {
+                ResidencySource = LookupSource.Manual, FundedPensionMember = true, PensionRate = 0.06m, PensionSource = LookupSource.Manual,
+            });
+            var residency = new FakeResidency { Answers = { ["38810140309"] = LookupResult<ResidencyFinding>.Found(NonResidentSince(new DateOnly(2026, 1, 1)), null) } };
+            var pension = new FakePension { Answers = { ["38810140309"] = LookupResult<PensionFinding>.Found(Member(0.04m), null) } };
+            var runner = Runner(store, residency, pension);
+            Person Jaan() => store.FindPerson(company.Id, "38810140309")!;
+
+            var asked = await runner.LookUpAsync(Jaan(), Control, afresh: true);
+            Assert.Equal(
+                [new LookupDisagreement(LookupKind.Residency, false, null, false, true, null), new LookupDisagreement(LookupKind.Pension, true, 0.04m, false, true, 0.06m)],
+                asked.Disagreements);
+
+            // both named at once: the residency is taken; the pension, whose answer is now another one (a non-resident's),
+            // is kept and named again against that answer
+            var back = await runner.LookUpAsync(Jaan(), Control, handBack: [LookupKind.Residency, LookupKind.Pension]);
+            Assert.Equal([new LookupDisagreement(LookupKind.Pension, false, null, true, true, 0.06m)], back.Disagreements);
+            Assert.Equal((Residency.NonResident, LookupSource.Emta, true, 0.06m, LookupSource.Manual), (Jaan().Residency, Jaan().ResidencySource, Jaan().FundedPensionMember, Jaan().PensionRate, Jaan().PensionSource));
+
+            // given back on its own, against the answer shown: not a member, as a non-resident
+            await runner.LookUpAsync(Jaan(), Control, handBack: [LookupKind.Pension]);
+            Assert.Equal((false, (decimal?)null, LookupSource.Derived), (Jaan().FundedPensionMember, Jaan().PensionRate, Jaan().PensionSource));
+        }
+    }
+
+    [Fact]
+    public async Task A_fact_given_back_stays_the_hands_when_the_register_has_no_answer()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309", Residency.NonResident) with { ResidencySource = LookupSource.Manual, ResidenceCountry = "FI" });
+            var residency = new FakeResidency();
+            var pension = new FakePension();
+
+            var outcome = await Runner(store, residency, pension).LookUpAsync(store.FindPerson(company.Id, "38810140309")!, Control, handBack: [LookupKind.Residency]);
+
+            Assert.Contains(outcome.Problems, p => p.StartsWith(LookupRunner.Failed, StringComparison.Ordinal));
+            Assert.Contains("residency set by hand, kept", outcome.Steps);
+            var person = store.FindPerson(company.Id, "38810140309")!;
+            Assert.Equal((Residency.NonResident, LookupSource.Manual, "FI"), (person.Residency, person.ResidencySource, person.ResidenceCountry));
+        }
+    }
+
+    [Fact]
     public async Task A_reused_answer_keeps_the_day_it_was_given()
     {
         var (store, company, period) = Setup();

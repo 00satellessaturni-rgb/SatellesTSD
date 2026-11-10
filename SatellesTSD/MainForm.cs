@@ -681,6 +681,10 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>A question answered Yes or No, where No is an answer of its own and not a way out.</summary>
+    private bool AskYesNo(string question, string title) =>
+        Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+
     private bool Confirm(string question, string title) =>
         Confirming is { } answer ? answer(question, title) : MessageBox.Show(this, question, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
 
@@ -2518,7 +2522,48 @@ public sealed class MainForm : Form
         }
 
         ShowProgress(UiText.LookupOne($"{fresh.LastName} {fresh.FirstName}"), null, null);
-        await RunCancellableAsync(token => services.Pipeline.LookUpAsync(fresh, period, token), LogOutcome);
+        // the card's own check asks the registers now, whatever is recorded for the day (decision 159)
+        PersonLookupOutcome? last = null;
+        await RunCancellableAsync(token => services.Pipeline.LookUpAsync(fresh, period, token, afresh: true), outcome =>
+        {
+            LogOutcome(outcome);
+            last = outcome;
+        });
+
+        // a fact set by hand that the answer speaks against: asked once per fact whether the register's word is taken. The
+        // residency is asked alone and first: the pension's answer follows from it (a non-resident is not asked of
+        // Pensionikeskus, a resident is), so the pension's question is put only against the answer that then applies —
+        // after the residency was taken, or beside the hand's own when it was kept
+        var put = new HashSet<LookupKind>();
+        while (last is { Disagreements.Count: > 0 } answered)
+        {
+            var open = answered.Disagreements.Where(d => !put.Contains(d.Kind)).ToList();
+            if (open.Any(d => d.Kind == LookupKind.Residency))
+            {
+                open = open.Where(d => d.Kind == LookupKind.Residency).ToList();
+            }
+
+            if (open.Count == 0)
+            {
+                break;
+            }
+
+            put.UnionWith(open.Select(d => d.Kind));
+            if (!AskYesNo(UiText.HandBackQuestion(answered.Name, open), UiText.LookUp))
+            {
+                continue; // kept by hand; the same answers may still hold the other fact's question
+            }
+
+            last = null;
+            var kinds = open.Select(d => d.Kind).ToList();
+            ShowProgress(UiText.LookupOne($"{fresh.LastName} {fresh.FirstName}"), null, null);
+            await RunCancellableAsync(token => services.Pipeline.HandBackAsync(fresh, period, kinds, token), outcome =>
+            {
+                LogOutcome(outcome);
+                last = outcome;
+            });
+        }
+
         ReloadView(person.Id);
     }
 

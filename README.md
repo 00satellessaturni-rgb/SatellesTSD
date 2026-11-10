@@ -80,7 +80,9 @@ person picked, every payment of the month, one per category, and the payments wi
    "— leidmata read —" with no category, so that every transaction is in front of you; it is never
    searched for a person, but you can name one.
 4. **Kontrolli registrid**: residency from EMTA, II-pillar membership and rate from Pensionikeskus, one
-   person at a time; the person panel shows what was found and lets you confirm or set the facts by hand.
+   person at a time; the person panel shows what was found and lets you confirm or set the facts by hand. A second
+   run in the month reuses the answers it has; **Kontrolli registrist** on the person's card asks both registers
+   again for that person, and when a fact set by hand differs from the answer, asks whether to take the register's.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
    checks say what would be refused.

@@ -293,6 +293,17 @@ internal static class UiText
 
     public static string LookupOne(string name) => $"Päring: {name}";
 
+    /// <summary>The question after the card's check when a fact set by hand differs from the register's fresh answer.</summary>
+    public static string HandBackQuestion(string name, IReadOnlyList<LookupDisagreement> open)
+    {
+        var lines = open.Select(d => d.Kind == LookupKind.Residency
+            ? $"Residentsus — register: {(d.Register ? "resident" : "mitteresident")}; käsitsi: {(d.ByHand == true ? "resident" : "mitteresident")}"
+            : $"II sammas — {(d.Derived ? "mitteresidendina" : "Pensionikeskus")}: {Pension(d.Register, d.RegisterRate)}; käsitsi: {(d.ByHand is { } member ? Pension(member, d.ByHandRate) : Core.Report.ReportText.NotChecked)}");
+        return $"{name}: käsitsi määratud andmed erinevad registri vastusest.{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, lines)}{Environment.NewLine}{Environment.NewLine}Kas võtta registri vastus? Jah — andmed on edaspidi registri omad. Ei — käsitsi määratu jääb.";
+
+        static string Pension(bool member, decimal? rate) => member ? $"liitunud, määr {Percent(rate)}" : Core.Report.ReportText.PensionNotMember;
+    }
+
     public const string LookupsLive = "Päringud lähevad EMTA ja Pensionikeskuse avalikele lehtedele, üks isik korraga. Jätkata?";
     public const string UnsavedPerson = "Isiku andmetes on salvestamata muudatused. Salvestada need?";
     public const string BusyClosing = "Töö käib. Oota, kuni see lõpeb, või katkesta see enne sulgemist.";
