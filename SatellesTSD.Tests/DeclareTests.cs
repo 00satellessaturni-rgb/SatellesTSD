@@ -458,6 +458,81 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_withdrawn_exports_file_is_set_aside_under_another_name_and_the_outcome_says_what_became_of_it()
+    {
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+
+        // the store keeps where the file was written; the name alone is what is shown
+        var first = box.Submitter.Export(box.Period.Id, box.Folder);
+        var stored = box.Store.Submissions(box.Period.Id).Single();
+        Assert.Equal((Path.GetFileName(first.Path), first.Path), (stored.FileName, stored.FilePath));
+        Assert.Equal(stored, first.Submission with { General = stored.General });
+
+        // taken back: the file is renamed, so the upload dialog no longer offers it, and still there to look at
+        var aside = box.Submitter.Withdraw(first.Submission.Id);
+        Assert.Equal((WithdrawnFileState.SetAside, first.Path + PeriodSubmitter.WithdrawnSuffix, stored.FileName), (aside.State, aside.Path, aside.FileName));
+        Assert.False(File.Exists(first.Path));
+        Assert.True(File.Exists(aside.Path));
+        Assert.Empty(box.Store.Submissions(box.Period.Id));
+
+        // exported again within the clock's second: the same name, a new file; taken back, it goes beside the first one set aside
+        var second = box.Submitter.Export(box.Period.Id, box.Folder);
+        Assert.Equal(first.Path, second.Path);
+        var asideAgain = box.Submitter.Withdraw(second.Submission.Id);
+        Assert.Equal((WithdrawnFileState.SetAside, first.Path + PeriodSubmitter.WithdrawnSuffix + "-2"), (asideAgain.State, asideAgain.Path));
+        Assert.Equal(2, Directory.GetFiles(box.Folder, "*" + PeriodSubmitter.WithdrawnSuffix + "*").Length);
+        Assert.Empty(Directory.GetFiles(box.Folder, "*.xml"));
+
+        // a file moved or deleted meanwhile: the withdrawal is done all the same, and says the file was not found
+        var third = box.Submitter.Export(box.Period.Id, box.Folder);
+        File.Delete(third.Path);
+        var gone = box.Submitter.Withdraw(third.Submission.Id);
+        Assert.Equal((WithdrawnFileState.NotFound, third.Path), (gone.State, gone.Path));
+        Assert.Equal(PeriodState.Draft, box.Store.Periods(box.Company.Id).Single().State);
+
+        // a file another program holds: not renamed, said with the reason — and the withdrawal done
+        var fourth = box.Submitter.Export(box.Period.Id, box.Folder);
+        WithdrawnFile held;
+        using (File.Open(fourth.Path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            held = box.Submitter.Withdraw(fourth.Submission.Id);
+        }
+
+        Assert.Equal(WithdrawnFileState.Failed, held.State);
+        Assert.False(string.IsNullOrWhiteSpace(held.Error));
+        Assert.True(File.Exists(fourth.Path));
+        Assert.Equal((PeriodState.Draft, PaymentStatus.Draft), (box.Store.Periods(box.Company.Id).Single().State, box.Lines.Single().Status));
+        File.Delete(fourth.Path);
+
+        // an export made before the store kept the path (the name alone): looked for in the folder given, else unknown
+        var old = box.Store.AddSubmission(box.Period.Id, "tsd-vana.xml", "vana", [box.Lines.Single().Id], DateTime.UtcNow);
+        box.Store.SetPeriodState(box.Period.Id, PeriodState.Exported, DateTime.UtcNow);
+        Assert.Null(box.Store.Submissions(box.Period.Id).Single().FilePath);
+        File.WriteAllText(Path.Combine(box.Folder, "tsd-vana.xml"), "<vana/>");
+        var found = box.Submitter.Withdraw(old.Id, box.Folder);
+        Assert.Equal((WithdrawnFileState.SetAside, Path.Combine(box.Folder, "tsd-vana.xml") + PeriodSubmitter.WithdrawnSuffix, "tsd-vana.xml"), (found.State, found.Path, found.FileName));
+        var older = box.Store.AddSubmission(box.Period.Id, "tsd-vanem.xml", "vanem", [box.Lines.Single().Id], DateTime.UtcNow);
+        box.Store.SetPeriodState(box.Period.Id, PeriodState.Exported, DateTime.UtcNow);
+        var unknown = box.Submitter.Withdraw(older.Id);
+        Assert.Equal((WithdrawnFileState.FolderUnknown, (string?)null, "tsd-vanem.xml"), (unknown.State, unknown.Path, unknown.FileName));
+
+        // the path as stored leads nowhere from here (a folder gone, a share under another letter): the file of that name in
+        // the export folder last used is the same export, and is set aside there; an unreachable folder is said as such
+        var moved = Path.Combine(box.Folder, "teisal");
+        Directory.CreateDirectory(moved);
+        var fifth = box.Submitter.Export(box.Period.Id, Path.Combine(box.Folder, "kadunud"));
+        File.Move(fifth.Path, Path.Combine(moved, Path.GetFileName(fifth.Path)));
+        Directory.Delete(Path.Combine(box.Folder, "kadunud"));
+        var elsewhere = box.Submitter.Withdraw(fifth.Submission.Id, moved);
+        Assert.Equal((WithdrawnFileState.SetAside, Path.Combine(moved, Path.GetFileName(fifth.Path)) + PeriodSubmitter.WithdrawnSuffix), (elsewhere.State, elsewhere.Path));
+        var sixth = box.Submitter.Export(box.Period.Id, Path.Combine(box.Folder, "kadunud"));
+        Directory.Delete(Path.Combine(box.Folder, "kadunud"), recursive: true);
+        var unreachable = box.Submitter.Withdraw(sixth.Submission.Id, moved);
+        Assert.Equal((WithdrawnFileState.Unreachable, sixth.Path), (unreachable.State, unreachable.Path));
+    }
+
+    [Fact]
     public void An_M_draft_over_a_sent_R_becomes_an_R_once_the_R_beneath_is_refused()
     {
         using var box = Ready();

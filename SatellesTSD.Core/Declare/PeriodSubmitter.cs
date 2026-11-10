@@ -6,6 +6,28 @@ using SatellesTSD.Core.Xbrl;
 
 namespace SatellesTSD.Core.Declare;
 
+/// <summary>What became of a withdrawn export's file.</summary>
+public enum WithdrawnFileState
+{
+    /// <summary>Renamed with <see cref="PeriodSubmitter.WithdrawnSuffix"/>; <see cref="WithdrawnFile.Path"/> is the new name.</summary>
+    SetAside,
+
+    /// <summary>Not where it was written (moved or deleted already); <see cref="WithdrawnFile.Path"/> is where it was looked for.</summary>
+    NotFound,
+
+    /// <summary>The folder it was written to cannot be reached now (a share offline, rights lost): the file may still be there, under its own name.</summary>
+    Unreachable,
+
+    /// <summary>An export made before the store kept the path, and no folder to look in.</summary>
+    FolderUnknown,
+
+    /// <summary>Found and not renamed (held by another program, no rights); <see cref="WithdrawnFile.Error"/> says why.</summary>
+    Failed,
+}
+
+/// <summary>A withdrawn export's file and what became of it (decision 152).</summary>
+public sealed record WithdrawnFile(string FileName, WithdrawnFileState State, string? Path, string? Error);
+
 /// <summary>The file and what comes back: every draft of the period into one XBRL GL file (validated twice, named,
 /// written without a BOM), the submission recorded and the period Exported in one transaction; the accountant's
 /// uploads and confirmations in e-MTA recorded as the period's state; a feedback report read onto the lines; a
@@ -113,7 +135,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         {
             _store.InTransaction(() =>
             {
-                submission = _store.AddSubmission(periodId, fileName, uniqueId, drafts.Select(d => d.Id).ToList(), now.UtcDateTime);
+                submission = _store.AddSubmission(periodId, path, uniqueId, drafts.Select(d => d.Id).ToList(), now.UtcDateTime);
                 _store.SetPeriodState(periodId, PeriodState.Exported, now.UtcDateTime);
             });
         }
@@ -128,7 +150,8 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
 
     /// <summary>An export nothing came of, taken back: only the period's latest file, only while the period is still
     /// Exported (not marked uploaded, not confirmed); the lines are drafts again and the period a Draft.</summary>
-    public void Withdraw(Guid submissionId)
+    /// <param name="fallbackFolder">Where to look for the file of an export made before the store kept its path (the export folder last used).</param>
+    public WithdrawnFile Withdraw(Guid submissionId, string? fallbackFolder = null)
     {
         var submission = FindSubmission(submissionId);
         var period = FindPeriod(submission.PeriodId);
@@ -148,6 +171,55 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             _store.WithdrawSubmission(submissionId);
             _store.SetPeriodState(period.Id, PeriodState.Draft, _clock.GetUtcNow().UtcDateTime);
         });
+
+        // the file written is set aside under another name, so it is not uploaded by mistake for the export made next: the
+        // report of it would name the same lines (decision 152). Never a reason to refuse the withdrawal: it is done.
+        var fallback = string.IsNullOrWhiteSpace(fallbackFolder) ? null : Path.Combine(fallbackFolder, submission.FileName);
+        var aside = SetAside(submission.FileName, submission.FilePath ?? fallback);
+        if (aside.State is WithdrawnFileState.NotFound or WithdrawnFileState.Unreachable && submission.FilePath is not null && fallback is not null
+            && !string.Equals(Path.GetFullPath(fallback), Path.GetFullPath(submission.FilePath), StringComparison.OrdinalIgnoreCase)
+            && SetAside(submission.FileName, fallback) is { State: WithdrawnFileState.SetAside } elsewhere)
+        {
+            // the path as stored leads nowhere from here (the share under another drive letter, a store moved to another
+            // computer): the file of that very name in the export folder last used is the same export — the name carries
+            // the company, the month and the second
+            return elsewhere;
+        }
+
+        return aside;
+    }
+
+    /// <summary>The suffix a withdrawn export's file gets: no longer an .xml the upload offers, still there to look at.</summary>
+    public const string WithdrawnSuffix = ".tagasi-voetud";
+
+    private static WithdrawnFile SetAside(string fileName, string? path)
+    {
+        if (path is null)
+        {
+            return new WithdrawnFile(fileName, WithdrawnFileState.FolderUnknown, null, null);
+        }
+
+        try
+        {
+            if (!File.Exists(path))
+            {
+                // a folder that cannot be reached (a share offline, rights lost) says nothing of the file: it may well be there
+                return new WithdrawnFile(fileName, Directory.Exists(Path.GetDirectoryName(path)) ? WithdrawnFileState.NotFound : WithdrawnFileState.Unreachable, path, null);
+            }
+
+            var aside = path + WithdrawnSuffix;
+            for (var n = 2; File.Exists(aside); n++)
+            {
+                aside = $"{path}{WithdrawnSuffix}-{n}";
+            }
+
+            File.Move(path, aside);
+            return new WithdrawnFile(fileName, WithdrawnFileState.SetAside, aside, null);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return new WithdrawnFile(fileName, WithdrawnFileState.Failed, path, e.Message);
+        }
     }
 
     /// <summary>Whether a file may be taken back: the period's latest, nothing came of it, the period still Exported.</summary>

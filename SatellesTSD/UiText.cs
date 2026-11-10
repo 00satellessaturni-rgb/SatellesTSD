@@ -336,7 +336,17 @@ internal static class UiText
     public const string Result = "Tulemus";
     public const string ExportFolder = "Vali kaust, kuhu XML-fail salvestada";
     public const string FeedbackFilter = "Tagasisideraport (*.xml;*.zip)|*.xml;*.zip|Kõik failid (*.*)|*.*";
-    public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Ainult faili puhul, mida e-MTA-sse ei laaditud.";
+    public const string WithdrawConfirm = "Võtta eksport tagasi? Read saavad uuesti mustandiks. Kirjutatud fail nimetatakse ümber (lõpp .tagasi-voetud), kui see on leitav, et seda kogemata üles ei laaditaks; logi ütleb, mis failist sai. Ainult faili puhul, mida e-MTA-sse ei laaditud.";
+
+    /// <summary>What became of a withdrawn export's file, for the log.</summary>
+    public static string WithdrawnFileNote(Core.Declare.WithdrawnFile file) => file.State switch
+    {
+        Core.Declare.WithdrawnFileState.SetAside => $"Tagasi võetud fail nimetati ümber: {file.Path}",
+        Core.Declare.WithdrawnFileState.NotFound => $"Tagasi võetud faili ei leitud ({file.Path}); kui see on mujal alles, ära seda e-MTA-sse laadi.",
+        Core.Declare.WithdrawnFileState.Unreachable => $"Tagasi võetud faili kaust ei ole praegu kättesaadav ({file.Path}); fail võib seal oma nime all alles olla — nimeta see ümber või kustuta, ära seda e-MTA-sse laadi.",
+        Core.Declare.WithdrawnFileState.FolderUnknown => $"Tagasi võetud faili {file.FileName} asukoht ei ole teada; kustuta see või ära seda e-MTA-sse laadi.",
+        _ => $"Tagasi võetud faili ei saanud ümber nimetada ({file.Path}: {file.Error}); kustuta see käsitsi või ära seda e-MTA-sse laadi.",
+    };
     public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris). Märkida periood siiski kinnitatuks?";
     public const string CutChangedSinceBuild = "Deklaratsiooni lõige on pärast „Koosta read“ muudetud (Seaded): mustandid on teises lõikes. Eksportida need siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string RunStaleReport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: aruanne ei sisalda kõiki makseid. Koostada aruanne siiski?";

@@ -544,7 +544,8 @@ public sealed partial class SqliteStore : IStore
         }
 
         using var tx = Tx();
-        var submission = new Submission(Guid.NewGuid(), periodId, Truncate(at), fileName, uniqueId, null, null, null, []);
+        // the name as given is stored whole: an export gives the path it wrote, shown by its name and kept for a withdrawal (decision 152)
+        var submission = new Submission(Guid.NewGuid(), periodId, Truncate(at), Path.GetFileName(fileName), uniqueId, null, null, null, [], Path.IsPathFullyQualified(fileName) ? fileName : null);
         Exec("INSERT INTO submission (id, period_id, created_at, file_name, unique_id, general_json) VALUES ($id, $period, $at, $file, $unique, '[]')",
             ("$id", G(submission.Id)), ("$period", G(periodId)), ("$at", T(submission.CreatedAt)), ("$file", fileName), ("$unique", uniqueId));
         foreach (var paymentId in paymentIds)
@@ -740,9 +741,9 @@ public sealed partial class SqliteStore : IStore
     private const string SubmissionSelect = "SELECT id, period_id, created_at, file_name, unique_id, uuid, result, feedback_source, general_json FROM submission";
 
     private static Submission ReadSubmission(SqliteDataReader r) => new(
-        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, r.GetString(3), r.GetString(4), Str(r, 5),
+        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, Path.GetFileName(r.GetString(3)), r.GetString(4), Str(r, 5),
         r.IsDBNull(6) ? null : Enum.Parse<ProcessingResult>(r.GetString(6)), Str(r, 7),
-        JsonSerializer.Deserialize<List<GeneralValidation>>(r.GetString(8), Json)!);
+        JsonSerializer.Deserialize<List<GeneralValidation>>(r.GetString(8), Json)!, Path.IsPathFullyQualified(r.GetString(3)) ? r.GetString(3) : null);
 
     public IReadOnlyList<LineFeedback> Feedback(Guid paymentId) =>
         Query("SELECT payment_id, submission_id, recorded_at, level, counter, severity, next_action, messages_json, server_taxes_json, unclassified_json FROM line_feedback WHERE payment_id = $payment ORDER BY recorded_at", r => new LineFeedback(

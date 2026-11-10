@@ -162,7 +162,8 @@ public sealed record StoredPayment(
 
 /// <summary>One file sent (or exported for upload) for a period, and what came back.</summary>
 /// <param name="General">The report's validations that pointed at no line (a file refusal, a section-level finding), from the last report recorded.</param>
-public sealed record Submission(Guid Id, Guid PeriodId, DateTime CreatedAt, string FileName, string UniqueId, string? Uuid, ProcessingResult? Result, string? FeedbackSource, IReadOnlyList<GeneralValidation> General);
+/// <param name="FilePath">Where the file was written, when the store knows (an export since decision 152; the stored name is the whole path then): what a withdrawal sets aside.</param>
+public sealed record Submission(Guid Id, Guid PeriodId, DateTime CreatedAt, string FileName, string UniqueId, string? Uuid, ProcessingResult? Result, string? FeedbackSource, IReadOnlyList<GeneralValidation> General, string? FilePath = null);
 
 /// <summary>What one feedback report said about one stored payment version — everything the report carried for the
 /// line, so the reason is never lost. Append-only: a repeated upload or a second report adds a row, it never replaces

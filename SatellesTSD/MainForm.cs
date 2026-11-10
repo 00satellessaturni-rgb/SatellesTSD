@@ -895,7 +895,12 @@ public sealed class MainForm : Form
     {
         if (Confirm(UiText.WithdrawConfirm, UiText.Withdraw))
         {
-            Declare(s => s.Submitter.Withdraw(submission.Id), $"{UiText.Withdraw}: {submission.FileName}");
+            Core.Declare.WithdrawnFile? file = null;
+            Declare(s => file = s.Submitter.Withdraw(submission.Id, _settings.ExportFolder), $"{UiText.Withdraw}: {submission.FileName}");
+            if (file is not null)
+            {
+                Log(UiText.WithdrawnFileNote(file)); // what became of the file written: set aside, or left where a mistaken upload could find it
+            }
         }
     }
 
