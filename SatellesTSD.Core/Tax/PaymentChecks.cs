@@ -7,7 +7,8 @@ public sealed record Refusal(string Code, string Message);
 
 /// <summary>The checks the engine, the allocator, the zero-line helper and the line factory enforce by throwing, as a
 /// list a review grid can show per payment. Each refusal mirrors one of those throws; with no refusal, every one of
-/// them computes for the facts given.</summary>
+/// them computes for the facts given. One refusal mirrors no throw: <see cref="ExemptionNotEea"/>, which MTA would
+/// refuse and the engine cannot see.</summary>
 public static class PaymentChecks
 {
     public const string RatesExceedOne = "RATES_EXCEED_ONE";
@@ -22,6 +23,19 @@ public static class PaymentChecks
     public const string ExemptionAboveLegal = "EXEMPTION_ABOVE_LEGAL";
     public const string ExemptionSubCent = "EXEMPTION_SUB_CENT";
     public const string MinimumShareInvalid = "MINIMUM_SHARE_INVALID";
+
+    /// <summary>A non-resident's exemption beside a residence country entered on the card that is outside the EEA: the
+    /// card contradicts itself, and MTA refuses the exemption (KR_MVT_06). An empty country refuses nothing — it is
+    /// optional, and MTA judges by its own register (decision 144).</summary>
+    public const string ExemptionNotEea = "EXEMPTION_NOT_EEA";
+
+    /// <summary>The EEA states by ISO 3166 alpha-2 code: the EU's twenty-seven, Iceland, Liechtenstein, Norway. Greece
+    /// also as EL, the code MTA's A1 list uses.</summary>
+    public static readonly IReadOnlySet<string> EeaCountries = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "EL", "HU", "IE", "IT", "LV", "LT", "LU", "MT",
+        "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE", "IS", "LI", "NO",
+    };
 
     public static IReadOnlyList<Refusal> Check(PaymentType type, PayeeTaxFacts facts, decimal amount, TaxRates rates)
     {
@@ -90,6 +104,16 @@ public static class PaymentChecks
             {
                 refusals.Add(new Refusal(ExemptionSubCent, $"The exemption on the application ({applied}) must be a whole number of cents."));
             }
+        }
+
+        // outside the amount's block above: the tick alone applies the full legal exemption. Asked of the engine's own
+        // flags, so a payment it exempts nothing on (a 0 % treaty rate, an Estonian A1) is not refused; for a
+        // non-resident the flags never throw (the funded pension is not theirs)
+        if (facts.Residency == Residency.NonResident && facts.BasicExemptionApplied
+            && !string.IsNullOrWhiteSpace(facts.ResidenceCountry) && !EeaCountries.Contains(facts.ResidenceCountry.Trim())
+            && EffectiveFlags.Of(type, facts).ExemptionKind != ExemptionKind.None)
+        {
+            refusals.Add(new Refusal(ExemptionNotEea, $"The basic exemption is applied, but the country of tax residence on the card ({facts.ResidenceCountry.Trim().ToUpperInvariant()}) is outside the EEA; a non-resident gets the exemption only as an EEA resident with a residency certificate (MTA refuses it, KR_MVT_06). Untick the exemption or correct the country."));
         }
 
         if (facts.SocialTaxMinimumShare <= 0m || facts.SocialTaxMinimumShare > 1m)

@@ -3,7 +3,8 @@ using SatellesTSD.Core.Tax;
 
 namespace SatellesTSD.Tests;
 
-/// <summary>Every refusal the checks list is one the engine would throw for, and a payment with no refusals computes.</summary>
+/// <summary>Every refusal the checks list is one the engine would throw for, and a payment with no refusals computes —
+/// but EXEMPTION_NOT_EEA, which is MTA's refusal, not the engine's, and stays out of the refused cases.</summary>
 public class PaymentChecksTests
 {
     private static readonly TaxRates Rates = TaxRates.Year2026;
@@ -57,6 +58,42 @@ public class PaymentChecksTests
         var refusals = PaymentChecks.Check(PaymentTypes.Get("120"), new PayeeTaxFacts(Residency.NonResident), 100m, Rates);
 
         Assert.Empty(refusals); // the country is optional in the schema; the build notes it (NO_RESIDENCE_COUNTRY)
+    }
+
+    [Fact]
+    public void A_non_residents_exemption_beside_a_country_outside_the_EEA_is_refused_and_an_empty_country_is_not()
+    {
+        var type = PaymentTypes.Get("120");
+        Assert.True(type.BasicExemptionAllowed);
+        var applied = new PayeeTaxFacts(Residency.NonResident, BasicExemptionApplied: true);
+
+        // the card contradicts itself: refused, with or without an amount on the application
+        var outside = PaymentChecks.Check(type, applied with { ResidenceCountry = "UA" }, 100m, Rates);
+        Assert.Equal([PaymentChecks.ExemptionNotEea], outside.Select(r => r.Code));
+        Assert.Contains("(UA)", outside[0].Message);
+        Assert.Contains(PaymentChecks.Check(type, applied with { ResidenceCountry = " ua ", BasicExemptionMonthly = 300m }, 100m, Rates), r => r.Code == PaymentChecks.ExemptionNotEea);
+        Assert.Contains(PaymentChecks.Check(type, applied with { ResidenceCountry = "CH" }, 100m, Rates), r => r.Code == PaymentChecks.ExemptionNotEea); // Switzerland is no EEA state
+
+        // no country on the card: optional, MTA judges by its own register — nothing refused (decision 144)
+        Assert.Empty(PaymentChecks.Check(type, applied, 100m, Rates));
+        Assert.Empty(PaymentChecks.Check(type, applied with { ResidenceCountry = " " }, 100m, Rates));
+
+        // an EEA country, in either case, and Greece under both its codes
+        Assert.All(new[] { "LV", "fi", "NO", "IS", "LI", "GR", "EL", " DE " }, c => Assert.Empty(PaymentChecks.Check(type, applied with { ResidenceCountry = c }, 100m, Rates)));
+        Assert.Equal(31, PaymentChecks.EeaCountries.Count); // 27 + IS, LI, NO + EL beside GR
+
+        // the tick off, a resident, or a type that applies no exemption: nothing to refuse
+        Assert.Empty(PaymentChecks.Check(type, applied with { ResidenceCountry = "UA", BasicExemptionApplied = false }, 100m, Rates));
+        Assert.DoesNotContain(PaymentChecks.Check(Salary, PayeeTaxFacts.ResidentEmployee() with { ResidenceCountry = "UA" }, 100m, Rates), r => r.Code == PaymentChecks.ExemptionNotEea);
+        var noExemption = PaymentTypes.All.First(t => t.Payee == Residency.NonResident && !t.BasicExemptionAllowed);
+        Assert.DoesNotContain(PaymentChecks.Check(noExemption, applied with { ResidenceCountry = "UA" }, 100m, Rates), r => r.Code == PaymentChecks.ExemptionNotEea);
+
+        // a payment the engine exempts nothing on has nothing for MTA to refuse: a 0 % treaty rate, an Estonian A1
+        var treaty = PaymentTypes.Get("123");
+        Assert.True(treaty.BasicExemptionAllowed && treaty.TreatyRateAllowed);
+        Assert.Empty(PaymentChecks.Check(treaty, applied with { ResidenceCountry = "UA", TreatyIncomeTaxRate = 0m }, 100m, Rates));
+        Assert.Contains(PaymentChecks.Check(treaty, applied with { ResidenceCountry = "UA", TreatyIncomeTaxRate = 0.1m }, 100m, Rates), r => r.Code == PaymentChecks.ExemptionNotEea);
+        Assert.Empty(PaymentChecks.Check(type, applied with { ResidenceCountry = "UA", A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI" }, 100m, Rates));
     }
 
     [Fact]
