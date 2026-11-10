@@ -359,7 +359,8 @@ public sealed class FilesDialog : Form
 {
     private readonly AppServices _services;
     private readonly Action<string> _log;
-    private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
+    private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = true, HideSelection = false };
+    private readonly Button _selectAll = new() { Text = UiText.SelectAll, AutoSize = true };
     private readonly Button _unlink = new() { Text = UiText.Unlink, AutoSize = true, Enabled = false };
     private readonly Button _reread = new() { Text = UiText.Reread, AutoSize = true, Enabled = false };
     private readonly Button _remove = new() { Text = UiText.RemoveFile, AutoSize = true, Enabled = false };
@@ -376,7 +377,7 @@ public sealed class FilesDialog : Form
         _companyId = view.Company.Id;
         _editable = view.Editable;
         Text = UiText.FilesTitle;
-        Size = new Size(700, 360);
+        Size = new Size(760, 360);
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
         _list.Columns.Add(UiText.Name, 320);
@@ -384,11 +385,20 @@ public sealed class FilesDialog : Form
         _list.Columns.Add(UiText.ImportedAt, 140);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
         var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };
-        buttons.Controls.AddRange([close, _remove, _reread, _unlink]);
+        buttons.Controls.AddRange([close, _remove, _reread, _unlink, _selectAll]);
         Controls.Add(_list);
         Controls.Add(buttons);
         AcceptButton = close;
         _list.SelectedIndexChanged += (_, _) => EnableButtons();
+        _list.KeyDown += (_, e) =>
+        {
+            if (e.Control && e.KeyCode == Keys.A)
+            {
+                SelectAll(); // Ctrl+A: every file, as in Explorer
+                e.SuppressKeyPress = true;
+            }
+        };
+        _selectAll.Click += (_, _) => SelectAll();
         _unlink.Click += (_, _) => Unlink();
         _reread.Click += (_, _) => Reread();
         _remove.Click += (_, _) => Remove();
@@ -396,17 +406,42 @@ public sealed class FilesDialog : Form
     }
 
     // the window tests' seams
+    internal Button SelectAllButton => _selectAll;
     internal Button UnlinkButton => _unlink;
     internal Button RereadButton => _reread;
     internal Button RemoveButton => _remove;
     internal ListView List => _list;
 
-    private ImportFile? Selected => _list.SelectedItems.Count == 0 ? null : _list.SelectedItems[0].Tag as ImportFile;
+    /// <summary>The question asked before a change (the text, the title): true = go on. A message box by default.</summary>
+    internal Func<string, string, bool>? Confirming;
 
-    /// <summary>The file read again with the layouts in force (decision 131): what it left is logged, a refusal shown.</summary>
+    /// <summary>A refusal shown (the text, the title). A message box by default.</summary>
+    internal Action<string, string>? Warning;
+
+    private Func<string, string, bool> Ask => Confirming ?? ((text, title) => MessageBox.Show(this, text, title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK);
+
+    private Action<string, string> Tell => Warning ?? ((text, title) => MessageBox.Show(this, text, title, MessageBoxButtons.OK, MessageBoxIcon.Warning));
+
+    /// <summary>The files chosen, in the list's order.</summary>
+    private List<ImportFile> Chosen => _list.SelectedItems.Cast<ListViewItem>().OrderBy(i => i.Index).Select(i => i.Tag).OfType<ImportFile>().ToList();
+
+    private void SelectAll()
+    {
+        _list.BeginUpdate();
+        foreach (ListViewItem item in _list.Items)
+        {
+            item.Selected = true;
+        }
+
+        _list.EndUpdate();
+        EnableButtons();
+    }
+
+    /// <summary>The file read again with the layouts in force (decision 131): what it left is logged, a refusal shown. One
+    /// file at a time: each one's carry-over is its own to read.</summary>
     private void Reread()
     {
-        if (Selected is not { } file || MessageBox.Show(this, UiText.RereadConfirm, UiText.Reread, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        if (Chosen is not [var file] || !Ask(UiText.RereadConfirm, UiText.Reread))
         {
             return;
         }
@@ -426,54 +461,106 @@ public sealed class FilesDialog : Form
             else
             {
                 _log($"{UiText.Reread}: {file.FileName}: {outcome.Error}");
-                MessageBox.Show(this, outcome.Error, UiText.Reread, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Tell(outcome.Error ?? "", UiText.Reread);
             }
         }
         catch (Exception e)
         {
-            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Tell(e.Message, UiText.Problem);
         }
 
         Fill();
     }
 
-    /// <summary>The file taken out of the store (decision 132): out of the period's files first, with the run's second word as
-    /// for an unlink, then out of the store with its own refusals.</summary>
+    /// <summary>The files taken out of the store (decision 132), one after another under one question: each
+    /// out of the period's files first — the run that took one goes only with the second word, asked once for all — then
+    /// out of the store with its own refusals; a file refused is told at the end and the others still go.</summary>
     private void Remove()
     {
-        if (Selected is not { } file || MessageBox.Show(this, UiText.RemoveFileConfirm, UiText.RemoveFile, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+        var files = Chosen;
+        if (files.Count == 0 || !Ask(files.Count == 1 ? UiText.RemoveFileConfirm : UiText.RemoveFilesConfirm(files.Count), UiText.RemoveFile))
         {
             return;
         }
 
+        Each(files, UiText.RemoveFile, (file, clearRun) => _services.Pipeline.RemoveFile(_periodId, file.Id, clearRun)); // the run goes in the file's own transaction: a refusal costs no search
+    }
+
+    /// <summary>The files taken out of the period's files, under one question; the run that took one goes
+    /// only with the second word, asked once for all.</summary>
+    private void Unlink()
+    {
+        var listed = ListedHere();
+        var files = Chosen.Where(f => listed.Contains(f.Id)).ToList();
+        if (files.Count == 0 || !Ask(files.Count == 1 ? UiText.UnlinkConfirm : UiText.UnlinkFilesConfirm(files.Count), UiText.Unlink))
+        {
+            return;
+        }
+
+        Each(files, UiText.Unlink, (file, clearRun) =>
+        {
+            if (clearRun && _services.Store.LoadMatchResult(_periodId) is not null)
+            {
+                _services.Pipeline.ClearRun(_periodId);
+            }
+
+            _services.Pipeline.UnlinkFile(_periodId, file.Id);
+        });
+    }
+
+    /// <summary>Does one change file by file. A file the period's run took asks the second word once (the run goes, as it
+    /// would for one file); without it the files not yet done stay. A refusal of one file is noted and the next goes on;
+    /// the refusals are shown together at the end.</summary>
+    private void Each(IReadOnlyList<ImportFile> files, string title, Action<ImportFile, bool> change)
+    {
+        bool? clearRun = null;
+        var refused = new List<string>();
         try
         {
-            try
+            foreach (var file in files)
             {
-                _services.Pipeline.RemoveFile(_periodId, file.Id);
-            }
-            catch (InvalidOperationException e) when (e.Message.Contains("match run", StringComparison.Ordinal))
-            {
-                if (MessageBox.Show(this, UiText.UnlinkClearsRun, UiText.RemoveFile, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+                try
                 {
-                    return;
+                    try
+                    {
+                        change(file, false); // the run goes only with a file it took: never in another file's transaction
+                    }
+                    catch (InvalidOperationException e) when (e.Message.Contains("match run", StringComparison.Ordinal))
+                    {
+                        clearRun ??= Ask(UiText.UnlinkClearsRun, title); // asked once for all
+                        if (clearRun != true)
+                        {
+                            break; // the run stays, and with it the files not yet done
+                        }
+
+                        change(file, true);
+                    }
+
+                    _log($"{title}: {file.FileName}");
                 }
-
-                _services.Pipeline.RemoveFile(_periodId, file.Id, clearRun: true); // the run goes in the same transaction: a refusal costs no search
+                catch (Exception e)
+                {
+                    refused.Add($"{file.FileName}: {e.Message}");
+                    _log($"{title}: {file.FileName}: {e.Message}");
+                }
             }
-
-            _log($"{UiText.RemoveFile}: {file.FileName}");
         }
-        catch (Exception e)
+        finally
         {
-            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            Fill();
         }
 
-        Fill();
+        if (refused.Count > 0)
+        {
+            Tell(UiText.FilesRefused(refused), UiText.Problem);
+        }
     }
+
+    private HashSet<Guid> ListedHere() => _services.Store.PeriodImports(_periodId).Select(f => f.Id).ToHashSet();
 
     private void Fill()
     {
+        _list.BeginUpdate();
         _list.Items.Clear();
         var linked = _services.Store.PeriodImports(_periodId);
         foreach (var file in linked)
@@ -487,53 +574,17 @@ public sealed class FilesDialog : Form
             _list.Items.Add(new ListViewItem([file.FileName, $"{file.Kind} ({UiText.Unlisted})", file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file, ForeColor = SystemColors.GrayText });
         }
 
+        _list.EndUpdate();
         EnableButtons();
     }
 
     private void EnableButtons()
     {
-        var listed = Selected is { } file && _services.Store.PeriodImports(_periodId).Any(f => f.Id == file.Id);
-        _unlink.Enabled = _reread.Enabled = _editable && listed;
-        _remove.Enabled = _editable && Selected is not null;
-    }
-
-    private void Unlink()
-    {
-        if (Selected is not { } file)
-        {
-            return;
-        }
-
-        if (MessageBox.Show(this, UiText.UnlinkConfirm, UiText.Unlink, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-        {
-            return;
-        }
-
-        try
-        {
-            try
-            {
-                _services.Pipeline.UnlinkFile(_periodId, file.Id);
-            }
-            catch (InvalidOperationException e) when (e.Message.Contains("match run", StringComparison.Ordinal))
-            {
-                // the run took the file: it goes only with the accountant's second word
-                if (MessageBox.Show(this, UiText.UnlinkClearsRun, UiText.Unlink, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-                {
-                    return;
-                }
-
-                _services.Pipeline.ClearRun(_periodId);
-                _services.Pipeline.UnlinkFile(_periodId, file.Id);
-            }
-
-            _log($"{UiText.Unlink}: {file.FileName}");
-        }
-        catch (Exception e)
-        {
-            MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-
-        Fill();
+        var chosen = Chosen;
+        var listed = ListedHere();
+        _unlink.Enabled = _editable && chosen.Any(f => listed.Contains(f.Id)); // the unlisted among the chosen are passed over
+        _reread.Enabled = _editable && chosen is [var one] && listed.Contains(one.Id);
+        _remove.Enabled = _editable && chosen.Count > 0;
+        _selectAll.Enabled = _list.Items.Count > 0;
     }
 }

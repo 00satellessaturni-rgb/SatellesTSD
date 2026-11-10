@@ -205,6 +205,10 @@ internal static class UiText
     public const string RereadConfirm = "Lugeda fail uuesti praeguste paigutuste ja lugejaga? Ridade otsused kantakse üle sama sisuga ridadele. Igas mustandkuus, mis faili kasutab, kustutatakse otsingu tulemus ja faili ridadest koostatud read — pärast „Otsi maksed“ ja „Koosta read“ uuesti.";
     public const string RemoveFile = "Eemalda fail";
     public const string RemoveFileConfirm = "Eemaldada fail andmebaasist? Fail kaob perioodi failide hulgast; selle ridade otsused ja neist koostatud read kustuvad.";
+    public const string SelectAll = "Vali kõik";
+    public static string RemoveFilesConfirm(int n) => $"Eemaldada {n} faili andmebaasist? Failid kaovad perioodi failide hulgast; nende ridade otsused ja neist koostatud read kustuvad.";
+    public static string UnlinkFilesConfirm(int n) => $"Eemaldada {n} faili perioodi failide hulgast? Nende failide ridade otsused kustuvad.";
+    public static string FilesRefused(IReadOnlyList<string> refused) => $"Need failid jäid alles:\n{string.Join("\n", refused)}";
     public const string Unlisted = "sidumata";
     public static string RereadDone(string fileName, int carried, int dropped, int draftsDeleted, IReadOnlyList<string> runsCleared)
     {
