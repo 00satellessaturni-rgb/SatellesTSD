@@ -1142,15 +1142,24 @@ public sealed class MainForm : Form
             return;
         }
 
-        _lookups?.Cancel();
-        _services?.Dispose();
-        _services = null;
-        _view = null;
-        _period = null;
+        // another store is opened before the one in hand is let go of: a file that cannot be opened leaves the window
+        // as it was — the store, the company, the month, the grids (decision 149). The same file again (and no store in
+        // hand) goes the old way round: one file is not opened twice.
+        var inHand = _services;
+        var another = inHand is not null && !FileIdentity.Same(path, inHand.StorePath);
+        if (!another)
+        {
+            _lookups?.Cancel();
+            inHand?.Dispose();
+            _services = null;
+            _view = null;
+            _period = null;
+        }
+
+        AppServices opened;
         try
         {
-            _services = ServicesFactory?.Invoke(path) ?? new AppServices(path);
-            _services.Workspace.TotalsPerType = _settings.DeclareTotalsPerType;
+            opened = ServicesFactory?.Invoke(path) ?? new AppServices(path);
         }
         catch (Exception e) when (OfferStoreRestore(path, e))
         {
@@ -1160,10 +1169,29 @@ public sealed class MainForm : Form
         catch (Exception e)
         {
             Fail(e);
-            _storeLabel.Text = UiText.NoStore;
-            FillCompanies();
+            if (!another)
+            {
+                _storeLabel.Text = UiText.NoStore;
+                FillCompanies();
+            }
+            else
+            {
+                ReloadView(); // the store in hand shown afresh: a card settled on the way (saved or dropped) and the grids agree with it
+            }
+
             return;
         }
+
+        if (another)
+        {
+            _lookups?.Cancel();
+            inHand!.Dispose();
+            _view = null;
+            _period = null;
+        }
+
+        _services = opened;
+        _services.Workspace.TotalsPerType = _settings.DeclareTotalsPerType;
 
         _storeLabel.Text = path;
         if (chosen)

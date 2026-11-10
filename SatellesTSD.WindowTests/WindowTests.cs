@@ -724,6 +724,80 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_store_that_cannot_be_opened_leaves_the_store_in_hand_open_and_shown()
+    {
+        using var fixture = new WindowFixture();
+        var broken = Path.Combine(fixture.Folder, "katki.db");
+        File.WriteAllText(broken, "this is no store file, only text long enough to be read as a page header ........");
+        var other = Path.Combine(fixture.Folder, "teine.db");
+        using (var store = SatellesTSD.Infrastructure.SqliteStore.Open(other))
+        {
+            store.AddCompany("87654321", "Teine OÜ");
+        }
+
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            Mari(form);
+            var (periodId, rows, services) = (form.View!.Period.Id, form.PersonsGrid.Rows.Count, form.Services!);
+
+            // a file that is no store: the failure is said, and nothing else changes — the store, the view, the settings
+            form.OpenChosenStore(broken);
+            Ui.Pump();
+            Assert.Single(fixture.Failures);
+            fixture.Failures.Clear();
+            Assert.Same(services, form.Services);
+            Assert.Equal((fixture.StorePath, periodId, rows), (form.Services!.StorePath, form.View!.Period.Id, form.PersonsGrid.Rows.Count));
+            Assert.Equal(fixture.StorePath, AppSettings.Load(fixture.SettingsPath).StorePath);
+            Assert.Contains(WindowFixture.RegistryCode, form.CompanyBox.SelectedItem?.ToString(), StringComparison.Ordinal);
+            Assert.NotEmpty(form.Services.Store.Persons(form.View.Period.CompanyId)); // the store in hand still answers
+
+            // unsaved edits dropped on the way to a store that cannot be opened: the card shows what the store holds again
+            var card = form.PersonEditor;
+            card.FirstNameBox.Text = "Muudetud";
+            Assert.True(card.IsDirty);
+            form.AnsweringUnsaved = () => DialogResult.No;
+            form.OpenChosenStore(broken);
+            Ui.Pump();
+            Assert.Single(fixture.Failures);
+            fixture.Failures.Clear();
+            Assert.Equal((false, "MARI"), (card.IsDirty, card.FirstNameBox.Text));
+
+            // and saved on the way: the grid follows the save
+            card.DeclarationBox.SelectedIndex = 2;
+            form.AnsweringUnsaved = () => DialogResult.Yes;
+            form.OpenChosenStore(broken);
+            Ui.Pump();
+            Assert.Single(fixture.Failures);
+            fixture.Failures.Clear();
+            Assert.Equal(DeclarationChoice.Exclude, StoredMari(form).Declaration);
+            Assert.Equal("välja", form.PersonsGrid.Rows[0].Cells["declaration"].Value?.ToString());
+            Assert.False(card.IsDirty);
+            form.AnsweringUnsaved = null;
+
+            // the same store again: closed and opened, as before
+            form.OpenChosenStore(fixture.StorePath);
+            Ui.Until(() => !form.IsBusy, what: "the store to open again");
+            Assert.NotSame(services, form.Services);
+            Assert.Equal((fixture.StorePath, periodId), (form.Services!.StorePath, form.View!.Period.Id));
+
+            // another store that opens: the window goes over to it
+            form.OpenChosenStore(other);
+            Ui.Until(() => !form.IsBusy, what: "the other store to open");
+            Assert.Equal(other, form.Services!.StorePath);
+            Assert.Contains("87654321", form.CompanyBox.SelectedItem?.ToString(), StringComparison.Ordinal);
+            Assert.Equal(other, AppSettings.Load(fixture.SettingsPath).StorePath);
+
+            // and from there a broken one: the other store stays in hand
+            form.OpenChosenStore(broken);
+            Ui.Pump();
+            Assert.Single(fixture.Failures);
+            fixture.Failures.Clear();
+            Assert.Equal(other, form.Services!.StorePath);
+            Assert.Contains("87654321", form.CompanyBox.SelectedItem?.ToString(), StringComparison.Ordinal);
+        }));
+    }
+
+    [Fact]
     public void A_store_named_on_the_command_line_is_a_one_off_the_settings_do_not_remember()
     {
         using var fixture = new WindowFixture();
