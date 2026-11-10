@@ -83,6 +83,7 @@ public sealed class MainForm : Form
     private const string ScopeAll = "all";
     private const string ScopeUnknown = "unknown";
     private const string ScopeCategory = "category";
+    private const string ScopeConflict = "conflict";
     private UpdateCheck? _updateCheck;
     private bool _checkingUpdates;
     private bool _handedOver;
@@ -1661,8 +1662,9 @@ public sealed class MainForm : Form
         }
     }
 
-    /// <summary>The payments tabs: the person picked, every payment, one tab per category of the run's catalog, and
-    /// the payments without a category. Rebuilt only when the categories changed, the tab picked kept.</summary>
+    /// <summary>The payments tabs: the person picked, every payment, one tab per category of the run's catalog, the
+    /// payments without a category, and the rows the run found more than one category in. Rebuilt only when the
+    /// categories changed, the tab picked kept.</summary>
     private void RebuildScopes(ReviewView? view)
     {
         var wanted = new List<(string Text, Scope Tag)> { (UiText.ScopeSelectedPerson, new Scope(ScopeSelected, null)), (UiText.ScopeAll, new Scope(ScopeAll, null)) };
@@ -1670,6 +1672,7 @@ public sealed class MainForm : Form
         {
             wanted.AddRange(view.Catalog.Categories.Select(c => (c.Name, new Scope(ScopeCategory, c.Name))));
             wanted.Add((Core.Report.ReportText.UnknownCategorySheet, new Scope(ScopeUnknown, null)));
+            wanted.Add((UiText.ScopeConflict, new Scope(ScopeConflict, null)));
         }
 
         var current = _scopeTabs.TabPages.Cast<TabPage>().Select(p => (p.Text, (Scope)p.Tag!)).ToList();
@@ -1704,6 +1707,7 @@ public sealed class MainForm : Form
         {
             ScopeAll => all.ToList(),
             ScopeUnknown => all.Where(p => p.Category is null).ToList(),
+            ScopeConflict => all.Where(p => p.ConflictingCategories.Count > 0).ToList(), // settled by hand or not: the tab is where they are checked
             ScopeCategory => all.Where(p => string.Equals(p.Category, scope.Category, StringComparison.OrdinalIgnoreCase)).ToList(),
             _ => person?.Payments ?? [],
         };

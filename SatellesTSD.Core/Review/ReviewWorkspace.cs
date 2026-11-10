@@ -579,6 +579,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             PersonId = person?.Id,
             VerdictText = hit.Text,
             Masks = hit.FullMask,
+            ConflictingCategories = hit.Verdict.Kind == VerdictKind.Ambiguous ? hit.Verdict.Matched : [],
             DefaultCategory = defaultCategory,
             Category = category,
             DefaultTypeCode = defaultType,

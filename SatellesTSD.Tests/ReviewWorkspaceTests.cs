@@ -56,6 +56,38 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void A_row_found_in_several_categories_carries_them_and_keeps_them_once_one_is_picked()
+    {
+        // a credit rent row beside it: its verdict is the wrong side of D/C ("viga: [Üür] D/C kontroll"), no conflict
+        var (store, _, period, _) = ReviewFixtures.Setup(conflicting: true, renter: "KATI KASK", renterDirection: "C");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            var view = workspace.Load(period.Id);
+            var wrongSide = view.Persons.SelectMany(p => p.Payments).Single(p => p.Payee == "KATI KASK");
+            Assert.StartsWith("viga: [Üür] D/C kontroll", wrongSide.VerdictText, StringComparison.Ordinal);
+            Assert.Empty(wrongSide.ConflictingCategories);
+            var conflict = Assert.Single(view.Persons.SelectMany(p => p.Payments), p => p.ConflictingCategories.Count > 0);
+            Assert.Equal(["Üür", "Kommunaalkulud", "TÖR-väline palgad"], conflict.ConflictingCategories);
+            Assert.StartsWith("viga: kategooria tuvastamine", conflict.VerdictText, StringComparison.Ordinal);
+            Assert.Null(conflict.Category); // the run gives no category of its own
+
+            // the accountant's pick settles the category; the run's finding stays for the tab that lists them
+            workspace.SetCategory(conflict, "Üür");
+            var line = workspace.AddHandLine(period.Id, null, new DateOnly(2026, 10, 21), 10m, "Käsitsi", category: "Üür");
+            var reloaded = workspace.Load(period.Id).Persons.SelectMany(p => p.Payments).ToList();
+            var picked = reloaded.Single(p => p.RowId == conflict.RowId);
+            Assert.Equal("Üür", picked.Category);
+            Assert.Equal(["Üür", "Kommunaalkulud", "TÖR-väline palgad"], picked.ConflictingCategories);
+
+            // the other rows, and the line added by hand, carry none
+            Assert.Contains(reloaded, p => p.IsByHand && p.LineId == line.Id);
+            Assert.All(reloaded.Where(p => p.RowId != conflict.RowId), p => Assert.Empty(p.ConflictingCategories));
+        }
+    }
+
+    [Fact]
     public void With_two_contracts_at_once_each_payment_goes_by_the_contract_of_its_day_unless_the_card_says_otherwise()
     {
         var (store, _, period, _) = ReviewFixtures.Setup(mariSecond: true);

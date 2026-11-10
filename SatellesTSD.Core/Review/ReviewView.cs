@@ -64,6 +64,11 @@ public sealed class ReviewPayment
     /// <summary>The run's "Otsing*" masks.</summary>
     public string Masks { get; init; } = "";
 
+    /// <summary>The categories the run found in the row at once (its verdict "viga: kategooria tuvastamine"), in the
+    /// catalog's order; empty for any other verdict and for a line added by hand. The run's finding: it stays when the
+    /// accountant has since picked one.</summary>
+    public IReadOnlyList<string> ConflictingCategories { get; init; } = [];
+
     public string? DefaultCategory { get; init; }
 
     public string? Category { get; init; }

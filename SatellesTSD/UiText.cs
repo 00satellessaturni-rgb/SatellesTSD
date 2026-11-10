@@ -265,6 +265,7 @@ internal static class UiText
     public const string Search = "Otsi:";
     public const string ScopeSelectedPerson = "Valitud isik";
     public const string ScopeAll = "Kõik";
+    public const string ScopeConflict = "Kategooriate konflikt";
     public const string BadAmountMark = "?";
     public const string MenuView = "&Vaade";
     public const string LogHeightDefault = "Logiaken: tavakõrgus";

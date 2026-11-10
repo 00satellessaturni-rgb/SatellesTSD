@@ -113,7 +113,7 @@ public class WindowTests
 
             // the payments tabs: the person picked, every payment, each category, the payments without one
             var tabs = form.ScopeTabs;
-            Assert.Equal(["Valitud isik", "Kõik", "Palgad", "Dividendid", "Üür", "Kommunaalkulud", "Kompensatsioon", "Haigusleht", "Laenud", "TÖR-väline palgad", "Trahvid", "Tundmatu kategooria"], tabs.TabPages.Cast<TabPage>().Select(p => p.Text));
+            Assert.Equal(["Valitud isik", "Kõik", "Palgad", "Dividendid", "Üür", "Kommunaalkulud", "Kompensatsioon", "Haigusleht", "Laenud", "TÖR-väline palgad", "Trahvid", "Tundmatu kategooria", "Kategooriate konflikt"], tabs.TabPages.Cast<TabPage>().Select(p => p.Text));
             tabs.SelectedIndex = 1;
             Ui.Pump();
             Assert.Equal(5, form.PaymentsGrid.Rows.Count); // the salary, the hand line, the second person's row, the fee without a payee, the stranger's
@@ -138,7 +138,7 @@ public class WindowTests
             tabs.SelectedIndex = tabs.TabPages.Cast<TabPage>().ToList().FindIndex(p => p.Text == "Üür");
             Ui.Pump();
             Assert.Equal("Kinnisvara OÜ", Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>()).Cells["payee"].Value?.ToString());
-            tabs.SelectedIndex = tabs.TabPages.Count - 1;
+            tabs.SelectedIndex = tabs.TabPages.Cast<TabPage>().ToList().FindIndex(p => p.Text == "Tundmatu kategooria");
             Ui.Pump();
             Assert.Equal(["", "Jaan Tamm"], form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["payee"].Value?.ToString())); // the fee without a payee (sorted by amount still), the row outside the month
             form.PaymentsSearch.Text = "nobody-here";
