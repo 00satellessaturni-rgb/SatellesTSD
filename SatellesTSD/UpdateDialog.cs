@@ -59,6 +59,11 @@ public sealed class UpdateDialog : Form
     /// <summary>True once the new version runs: the caller closes its window.</summary>
     public bool Started { get; private set; }
 
+    /// <summary>True when the dialog ended with the new version still running though it never answered: closed while
+    /// waiting with no previous version to go back to, or a new copy that could not be ended. The caller closes its
+    /// window as after a hand-over — two programs on one store help nobody (decision 157).</summary>
+    public bool LeftRunning { get; private set; }
+
     // the window tests drive the stage machine through these, without a release to install
     internal void SimulateWorking() => SetStage(Stage.Working);
     internal void SimulateHandOver() => HandOver();
@@ -67,6 +72,16 @@ public sealed class UpdateDialog : Form
         _previous = withPrevious ? "previous" : null;
         _status.Text = _previous is null ? UiText.UpdateNoAnswerNoWayBack : UiText.UpdateNoAnswer;
         SetStage(Stage.Waiting);
+    }
+
+    /// <summary>What became of the silent new copy (answered, exited, its exit code), in place of the look at the
+    /// process — for a test, which starts none.</summary>
+    internal Func<(bool Ready, bool Exited, int Code)>? CopyStateProbe;
+
+    internal void SimulateNotClosed()
+    {
+        LeftRunning = true;
+        Failed(UiText.UpdateNotClosed);
     }
 
     internal Button StopButton => _stop;
@@ -294,6 +309,7 @@ public sealed class UpdateDialog : Form
             var ended = await Task.Run(copy.Terminate);
             if (!ended)
             {
+                LeftRunning = true; // the new copy runs on: this program makes way for it
                 Failed(UiText.UpdateNotClosed);
                 return;
             }
@@ -360,6 +376,28 @@ public sealed class UpdateDialog : Form
         {
             e.Cancel = true;
             return;
+        }
+
+        if (_stage == Stage.Waiting)
+        {
+            // closed on a silent new version with nothing to go back to. Nothing watched it meanwhile, so it is looked
+            // at now: answered after all — a hand-over; gone — said, and the old window keeps the store; still there —
+            // it stays running, as the text said, and the old window makes way (decision 157)
+            var (ready, exited, code) = CopyStateProbe?.Invoke() ?? (_copy?.IsReady == true, _copy is { IsReady: false, Child.HasExited: true }, _copy is { Child.HasExited: true } gone ? gone.Child.ExitCode : 0);
+            if (ready)
+            {
+                Started = true;
+            }
+            else if (exited)
+            {
+                e.Cancel = true;
+                PutBack($"{UiText.UpdateNewExited} (kood {code}).");
+                return;
+            }
+            else
+            {
+                LeftRunning = true;
+            }
         }
 
         base.OnFormClosing(e);

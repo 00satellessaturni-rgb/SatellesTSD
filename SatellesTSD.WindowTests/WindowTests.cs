@@ -513,9 +513,68 @@ public class WindowTests
             dialog.SimulateNoAnswer(withPrevious: false);
             Assert.Equal(("Oota veel", "Sulge"), (dialog.InstallButton.Text, dialog.StopButton.Text));
             Assert.Contains("jääb tööle", dialog.StatusText, StringComparison.Ordinal);
+            Assert.False(dialog.LeftRunning);
             dialog.Close();
             Ui.Pump();
             Assert.False(dialog.Visible);
+            Assert.Equal((false, true), (dialog.Started, dialog.LeftRunning)); // the new version stays running: the old window makes way (decision 157)
+
+            // a new copy that could not be ended: said, and the old window makes way the same
+            using var stuck = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            stuck.Show();
+            Ui.Pump();
+            stuck.SimulateNotClosed();
+            Assert.Equal(UiText.UpdateNotClosed, stuck.StatusText);
+            stuck.Close();
+            Ui.Pump();
+            Assert.Equal((false, true, false), (stuck.Started, stuck.LeftRunning, stuck.Visible));
+
+            // the silent copy gone by the time the dialog is closed (it crashed, or was closed): nothing is left running,
+            // so the dialog says so and stays, and the old window keeps the store; answered after all — a plain hand-over
+            using var gone = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            gone.Show();
+            Ui.Pump();
+            gone.SimulateNoAnswer(withPrevious: false);
+            gone.CopyStateProbe = () => (false, true, 3);
+            gone.Close();
+            Ui.Pump();
+            Assert.True(gone.Visible); // the close was called off: the ending is said first
+            Assert.Contains("(kood 3)", gone.StatusText, StringComparison.Ordinal);
+            gone.Close();
+            Ui.Pump();
+            Assert.Equal((false, false, false), (gone.Started, gone.LeftRunning, gone.Visible));
+            using var late = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            late.Show();
+            Ui.Pump();
+            late.SimulateNoAnswer(withPrevious: false);
+            late.CopyStateProbe = () => (true, false, 0);
+            late.Close();
+            Ui.Pump();
+            Assert.Equal((true, false, false), (late.Started, late.LeftRunning, late.Visible));
+
+            // an update that simply failed or was cancelled leaves nothing running: the old window stays
+            using var cancelled = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StartPosition = FormStartPosition.Manual,
+                Location = new Point(-4000, -4000),
+            };
+            cancelled.Show();
+            Ui.Pump();
+            cancelled.Close();
+            Ui.Pump();
+            Assert.Equal((false, false), (cancelled.Started, cancelled.LeftRunning));
         });
     }
 

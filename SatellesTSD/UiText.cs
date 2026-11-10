@@ -552,7 +552,7 @@ internal static class UiText
     public const string UpdateNoLongerOffered = "Seda versiooni enam ei pakuta.";
     public const string UpdateNewerInstalled = "Programmi teine aken on juba paigaldanud uuema versiooni. Sulge kõik aknad ja käivita programm uuesti.";
     public const string UpdateNoAnswer = "Uus versioon käivitus, kuid ei vastanud ühe minuti jooksul — võib-olla ootab see oma aknas vastust. Oota veel või taasta eelmine versioon (uus suletakse).";
-    public const string UpdateNoAnswerNoWayBack = "Uus versioon käivitus, kuid ei vastanud ühe minuti jooksul — võib-olla ootab see oma aknas vastust. Oota veel või sulge see aken; uus versioon jääb tööle.";
+    public const string UpdateNoAnswerNoWayBack = "Uus versioon käivitus, kuid ei vastanud ühe minuti jooksul — võib-olla ootab see oma aknas vastust. Oota veel või sulge see aken; uus versioon jääb tööle ja vana aken sulgub.";
     public const string UpdateStoreNote = "Kui uus versioon jõudis andmebaasi uuendada, pakub programm järgmisel avamisel andmebaasi varukoopia taastamist.";
     public const string StoreNewerRestore = "Andmebaasi on uuendanud programmi uuem versioon ja see versioon ei saa seda avada. Selle kõrval on varukoopia uuendamise eelsest seisust:";
     public const string StoreNewerRestoreQuestion = "Taastada varukoopia? Uuendatud andmebaas jääb kõrvale nimega";
@@ -564,7 +564,7 @@ internal static class UiText
     public const string StoreNewerDeclined = "Andmebaas jäi avamata: selle on uuendanud versioon, mis siin ei käivitunud. Ava andmebaas uuesti (Andmebaas → Ava andmebaas…), kui soovid varukoopia taastada, või oota parandatud versiooni.";
     public const string StoreRestored = "Andmebaasi varukoopia taastati";
     public const string UpdateNewExited = "Uus versioon ei käivitunud";
-    public const string UpdateNotClosed = "Uut versiooni ei õnnestunud sulgeda. Sulge selle aken ja käivita programm uuesti.";
+    public const string UpdateNotClosed = "Uut versiooni ei õnnestunud sulgeda: see jääb tööle ja see aken sulgub. Kui uus versioon ei tööta, sulge selle aken ja teata sellest programmi omanikule.";
     public const string UpdateKept = "Alles jäi versioon";
     public const string UpdateFailed = "Uuendamine ebaõnnestus:";
     public const string UpdateTellOwner = "Teata sellest programmi omanikule.";

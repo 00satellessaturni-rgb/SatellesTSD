@@ -566,9 +566,11 @@ public sealed class MainForm : Form
             _period = null;
         });
         dialog.ShowDialog(this);
-        if (dialog.Started)
+        if (dialog.Started || dialog.LeftRunning)
         {
-            _handedOver = true; // the new version runs: this window closes without saving over what it may have changed
+            // the new version runs — answered, or left running without an answer (decision 157): this window closes
+            // without taking the store up again and without saving over what the new one may have changed
+            _handedOver = true;
             Close();
             return;
         }
