@@ -33,14 +33,19 @@ public sealed record PersonLookupOutcome(Guid PersonId, string PersonalCode, str
     /// register's word is taken instead.</summary>
     public IReadOnlyList<LookupDisagreement> Disagreements { get; init; } = [];
 
+    /// <summary>The day the person's facts were checked for: their own (their latest payout of the month, else its last
+    /// day), which a line about them names (decision 160). None when nothing was asked (no valid code).</summary>
+    public DateOnly? ControlDate { get; init; }
+
     public bool Equals(PersonLookupOutcome? other) =>
         other is not null && PersonId == other.PersonId && PersonalCode == other.PersonalCode && Name == other.Name && Steps.SequenceEqual(other.Steps, StringComparer.Ordinal) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal)
-        && Disagreements.SequenceEqual(other.Disagreements);
+        && Disagreements.SequenceEqual(other.Disagreements) && ControlDate == other.ControlDate;
 
     public override int GetHashCode() => HashCode.Combine(PersonId, PersonalCode, Name, Steps.Count, Problems.Count);
 }
 
-/// <summary>What a run did: the control date it asked about and one outcome per person.</summary>
+/// <summary>What a run did: one outcome per person, each with the day that person was checked for.</summary>
+/// <param name="ControlDate">The period's last day, which bounds every person's own day — nobody's day in particular.</param>
 public sealed record LookupRunReport(DateOnly ControlDate, IReadOnlyList<PersonLookupOutcome> Persons, IReadOnlyList<string> Problems)
 {
     public int Queries => Persons.Sum(p => p.Steps.Count(s => s.StartsWith("asked", StringComparison.Ordinal)));
@@ -234,11 +239,11 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var disagreements = new List<LookupDisagreement>();
         var force = _options.Force || afresh;
         var code = person.PersonalCode?.Trim() ?? "";
-        PersonLookupOutcome Outcome() => new(person.Id, code, person.FullName, steps, problems) { Disagreements = disagreements };
+        PersonLookupOutcome Outcome() => new(person.Id, code, person.FullName, steps, problems) { Disagreements = disagreements, ControlDate = controlDate };
         if (!PersonalCode.LooksValid(code))
         {
             problems.Add($"{Skipped}: no valid personal code; nothing to ask.");
-            return Outcome();
+            return Outcome() with { ControlDate = null };
         }
 
         // residency first: the pension question is only asked about residents

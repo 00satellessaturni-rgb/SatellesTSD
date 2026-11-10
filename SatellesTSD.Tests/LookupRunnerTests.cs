@@ -103,6 +103,12 @@ public class LookupRunnerTests
             Assert.Equal(Control, report.ControlDate); // the period's last day bounds every check
             var mari = store.FindPerson(company.Id, ReviewFixtures.MariCode)!;
             var jaan = store.FindPerson(company.Id, ReviewFixtures.JaanCode)!;
+            // each person's outcome names the day they were checked for, which a line about them shows
+            Assert.Equal(new DateOnly(2026, 10, 5), report.Persons.Single(p => p.PersonId == mari.Id).ControlDate);
+            Assert.Equal(new DateOnly(2026, 10, 31), report.Persons.Single(p => p.PersonId == jaan.Id).ControlDate);
+            Assert.NotEqual(report.Persons[0], report.Persons[0] with { ControlDate = new DateOnly(2026, 10, 6) });
+            // nobody asked, no day named
+            Assert.Null((await runner.LookUpAsync(Person.New(company.Id, "Kati", "Kask", null), Control)).ControlDate);
             Assert.All(store.Lookups(mari.Id), r => Assert.Equal(new DateOnly(2026, 10, 5), r.ControlDate)); // paid on the 5th
             Assert.All(store.Lookups(jaan.Id), r => Assert.Equal(new DateOnly(2026, 10, 31), r.ControlDate)); // paid in November only: the month's last day
             Assert.Equal(new DateOnly(2026, 10, 5), runner.ControlDateFor(mari, period));

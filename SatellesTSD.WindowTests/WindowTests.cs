@@ -1360,11 +1360,24 @@ public class WindowTests
             Ui.Until(() => !form.IsBusy && MariNow().PensionSource == LookupSource.Pensionikeskus, what: "the month's run");
             var asked = (residency.Asked, pension.Asked);
 
+            // every person's line names the day that person was checked for; the closing line names no day of its own
+            Ui.Pump();
+            var logged = form.LogList.Items.Cast<object>().Select(i => i.ToString()!).ToList();
+            var runner = new LookupRunner(form.Services!.Store, residency, pension);
+            Assert.Contains(logged, l => l.Contains($"(seisuga {UiText.Day(runner.ControlDateFor(MariNow(), form.View!.Period))})", StringComparison.Ordinal));
+            Assert.Equal(2, logged.Count(l => l.Contains("(seisuga ", StringComparison.Ordinal)));
+            Assert.DoesNotContain(logged, l => l.Contains("kontrollkuupäev", StringComparison.Ordinal));
+            Assert.Contains(logged, l => l.Contains($"{UiText.RunLookups}: {UiText.Done}", StringComparison.Ordinal) && l.EndsWith("päringut", StringComparison.Ordinal));
+
             // the month's run again reuses; the card's button asks both registers now
             form.LookupButton.PerformClick();
             Ui.Until(() => !form.IsBusy, what: "the second run");
             Ui.Pump();
             Assert.Equal(asked, (residency.Asked, pension.Asked));
+            // a run that asks nobody still writes every person's line with their day, once each, before its closing line
+            var again = form.LogList.Items.Cast<object>().Select(i => i.ToString()!).Skip(logged.Count).ToList();
+            Assert.Equal(2, again.Count(l => l.Contains("(seisuga ", StringComparison.Ordinal) && l.Contains("reused", StringComparison.Ordinal)));
+            Assert.EndsWith("0 päringut", again[^1], StringComparison.Ordinal);
             pension.Rate = 0.04m; // Pensionikeskus corrects itself
             Mari(form);
             form.PersonEditor.LookUpButton.PerformClick();
@@ -1426,10 +1439,11 @@ public class WindowTests
 
         public int Asked => _asked;
 
-        public Task<LookupResult<ResidencyFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
+        public async Task<LookupResult<ResidencyFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _asked);
-            return Task.FromResult(LookupResult<ResidencyFinding>.Found(new ResidencyFinding(new DateOnly(2026, 11, 4), [], []), null));
+            await Task.Delay(1, cancellationToken); // an answer takes its time, as a site's does: the run is under way when it comes
+            return LookupResult<ResidencyFinding>.Found(new ResidencyFinding(new DateOnly(2026, 11, 4), [], []), null);
         }
     }
 
@@ -1441,10 +1455,11 @@ public class WindowTests
 
         public decimal Rate { get; set; }
 
-        public Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
+        public async Task<LookupResult<PensionFinding>> QueryAsync(string personalCode, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _asked);
-            return Task.FromResult(LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.Joined, new DateOnly(2019, 1, 1), null, [new RatePeriod(new DateOnly(2019, 1, 1), null, Rate, "x")]), null));
+            await Task.Delay(1, cancellationToken);
+            return LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.Joined, new DateOnly(2019, 1, 1), null, [new RatePeriod(new DateOnly(2019, 1, 1), null, Rate, "x")]), null);
         }
     }
 

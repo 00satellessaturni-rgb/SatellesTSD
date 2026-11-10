@@ -2471,6 +2471,7 @@ public sealed class MainForm : Form
 
         var services = _services;
         var periodId = _view.Period.Id;
+        var logged = 0; // the persons' lines written so far, in the run's own order
         var progress = new Progress<LookupProgress>(p =>
         {
             if (_lookups is null)
@@ -2482,16 +2483,24 @@ public sealed class MainForm : Form
             if (p.Outcome is { } outcome)
             {
                 LogOutcome(outcome);
+                logged++;
             }
         });
         await RunCancellableAsync(token => services.Pipeline.RunLookupsAsync(periodId, progress, token), report =>
         {
+            // a run that asked nobody (every answer reused) ends before its reports are handed over: the lines they would
+            // have written are written here, so every person's line, with their day, is in the log (decision 160)
+            foreach (var outcome in report.Persons.Skip(logged))
+            {
+                LogOutcome(outcome);
+            }
+
             foreach (var problem in report.Problems)
             {
                 Log("   " + problem);
             }
 
-            Log($"{UiText.RunLookups}: {UiText.Done}, {report.Queries} päringut, kontrollkuupäev {UiText.Day(report.ControlDate)}");
+            Log($"{UiText.RunLookups}: {UiText.Done}, {report.Queries} päringut"); // each person's line names their own day (decision 160)
         });
         ReloadView();
     }
@@ -2617,7 +2626,7 @@ public sealed class MainForm : Form
 
     private void LogOutcome(PersonLookupOutcome outcome)
     {
-        Log($"{outcome.Name}: {string.Join("; ", outcome.Steps)}");
+        Log(UiText.LookupLine(outcome));
         foreach (var problem in outcome.Problems)
         {
             Log("   " + problem);

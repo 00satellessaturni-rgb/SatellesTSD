@@ -293,6 +293,10 @@ internal static class UiText
 
     public static string LookupOne(string name) => $"Päring: {name}";
 
+    /// <summary>A person's line in the log after a register check: who, the day their facts were checked for, what was done.</summary>
+    public static string LookupLine(PersonLookupOutcome outcome) =>
+        $"{outcome.Name}{(outcome.ControlDate is { } day ? $" (seisuga {Day(day)})" : "")}: {string.Join("; ", outcome.Steps)}";
+
     /// <summary>The question after the card's check when a fact set by hand differs from the register's fresh answer.</summary>
     public static string HandBackQuestion(string name, IReadOnlyList<LookupDisagreement> open)
     {
