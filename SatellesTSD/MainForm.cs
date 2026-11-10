@@ -24,11 +24,16 @@ public sealed class MainForm : Form
     private const string ColDeclare = "declare";
     private const string ColPerson = "person";
     private const string ColNote = "note";
+    private const string ColAmount = "amount";
 
     /// <summary>The combos' "nobody" / "no category" value; "" is "back to the default".</summary>
     private const string None = "-";
 
-    private readonly record struct PaymentKey(Guid? RowId, Guid? LineId);
+    /// <summary>A payment found again after a reload: a row's own share by the row, a part of a split row and a hand line by their line.</summary>
+    private readonly record struct PaymentKey(Guid? RowId, Guid? LineId, bool IsPart = false)
+    {
+        public static PaymentKey Of(ReviewPayment payment) => new(payment.RowId, payment.LineId, payment.IsPart);
+    }
 
     private readonly string _settingsPath;
     private readonly AppSettings _settings;
@@ -266,6 +271,16 @@ public sealed class MainForm : Form
             }
         };
         _paymentsGrid.CellValueChanged += (_, e) => OnPaymentEdited(e.RowIndex, e.ColumnIndex);
+        _paymentsGrid.CellParsing += (_, e) => OnAmountTyped(e);
+        _paymentsGrid.CellBeginEdit += (_, e) =>
+        {
+            // a row is split by typing a smaller amount on it; nothing to split where no amount was read, nor on a copy (a part
+            // left on a copy is still taken out with 0)
+            if (e.ColumnIndex >= 0 && _paymentsGrid.Columns[e.ColumnIndex].Name == ColAmount && _paymentsGrid.Rows[e.RowIndex].Tag is ReviewPayment payment && !AmountEditable(payment))
+            {
+                e.Cancel = true;
+            }
+        };
         _paymentsGrid.DataError += (_, e) => { e.ThrowException = false; };
         _personsGrid.DataError += (_, e) => { e.ThrowException = false; };
         _personPanel.SaveRequested += SavePerson;
@@ -992,7 +1007,7 @@ public sealed class MainForm : Form
 
     private ReviewPayment? SelectedPayment => _paymentsGrid.CurrentRow?.Tag as ReviewPayment;
 
-    private static PaymentKey? KeyOf(ReviewPayment? payment) => payment is null ? null : new PaymentKey(payment.RowId, payment.LineId);
+    private static PaymentKey? KeyOf(ReviewPayment? payment) => payment is null ? null : PaymentKey.Of(payment);
 
     protected override void OnLoad(EventArgs e)
     {
@@ -1888,7 +1903,7 @@ public sealed class MainForm : Form
         _paymentsGrid.Columns.Add(Column("date", UiText.Date, date: true));
         _paymentsGrid.Columns.Add(Column("payee", UiText.PayeeOnStatement));
         _paymentsGrid.Columns.Add(Column("description", UiText.Description));
-        _paymentsGrid.Columns.Add(Column("amount", UiText.Amount, money: true));
+        _paymentsGrid.Columns.Add(Column(ColAmount, UiText.Amount, money: true));
         _paymentsGrid.Columns.Add(Column("dc", UiText.DebitCredit));
         _paymentsGrid.Columns.Add(Column("currency", UiText.Currency));
         _paymentsGrid.Columns.Add(Column("verdict", UiText.Verdict));
@@ -1900,9 +1915,10 @@ public sealed class MainForm : Form
         _paymentsGrid.Columns.Add(Column("check", UiText.Check));
         foreach (DataGridViewColumn column in _paymentsGrid.Columns)
         {
-            // the columns the accountant edits are not sorted (a pick would move the row under the mouse); the rest sort by a header click
+            // the columns the accountant edits are not sorted (a pick would move the row under the mouse); the rest sort by a
+            // header click — the amount too, whose edit is a question answered first and a reload after (decision 150)
             var editable = column.Name is ColCategory or ColType or ColDeclare or ColPerson or ColNote;
-            column.ReadOnly = !editable;
+            column.ReadOnly = !editable && column.Name != ColAmount;
             if (editable)
             {
                 column.SortMode = DataGridViewColumnSortMode.NotSortable;
@@ -1972,6 +1988,12 @@ public sealed class MainForm : Form
                 // an amount that could not be read: its text, else "?", shown in its place and sorted as none
                 row.Cells["amount"].Style.NullValue = payment.AmountText ?? UiText.BadAmountMark;
             }
+
+            if (payment.Part > 0)
+            {
+                row.Cells[ColAmount].ToolTipText = payment.IsPart ? UiText.PartTip(payment.RowAmount ?? 0m) : AmountEditable(payment) ? UiText.OwnShareTip(payment.RowAmount ?? 0m) : UiText.CopyShareTip(payment.RowAmount ?? 0m);
+            }
+
             if (!payment.Declare)
             {
                 row.DefaultCellStyle.ForeColor = Color.Gray;
@@ -2008,7 +2030,7 @@ public sealed class MainForm : Form
 
         foreach (DataGridViewRow row in _paymentsGrid.Rows)
         {
-            if (row.Visible && row.Tag is ReviewPayment p && (wanted.RowId is { } r ? p.RowId == r : p.LineId is not null && p.LineId == wanted.LineId))
+            if (row.Visible && row.Tag is ReviewPayment p && (wanted.RowId is { } r && !wanted.IsPart ? p.RowId == r && !p.IsPart : p.LineId is not null && p.LineId == wanted.LineId))
             {
                 _paymentsGrid.CurrentCell = row.Cells[0];
                 return;
@@ -2062,8 +2084,74 @@ public sealed class MainForm : Form
 
         // the grid is rebuilt once its own event is over, never from inside it
         var keepPerson = SelectedPerson?.PersonId;
-        var key = new PaymentKey(payment.RowId, payment.LineId);
+        var key = PaymentKey.Of(payment);
         BeginInvoke(() => ReloadView(keepPerson, key));
+    }
+
+    /// <summary>Whether the payment's amount is typed on: a hand line's; a row's when its amount was read and it is no copy
+    /// of another (a part left on a copy still is, to be taken out with 0).</summary>
+    private static bool AmountEditable(ReviewPayment payment) =>
+        payment.IsByHand
+        || (payment.AmountText is null && !payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal)
+            && (payment.IsPart || !payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal)));
+
+    /// <summary>The amount typed on a payment (decision 150), as the grid parses the edit it commits: the grid never takes
+    /// the text itself — the cell keeps its value, the store decides and the reload shows what it holds. Once the edit is
+    /// over, what the amount would do is asked, and done on yes — a row split, a part resized or removed, a hand line's
+    /// amount changed — the view reloaded on the payment edited.</summary>
+    private void OnAmountTyped(DataGridViewCellParsingEventArgs e)
+    {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || _paymentsGrid.Columns[e.ColumnIndex].Name != ColAmount)
+        {
+            return;
+        }
+
+        var typed = e.Value?.ToString() ?? "";
+        e.Value = _paymentsGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
+        e.ParsingApplied = true;
+        if (_filling || _services is null || _view is null || _paymentsGrid.Rows[e.RowIndex].Tag is not ReviewPayment payment)
+        {
+            return;
+        }
+
+        var text = new string(typed.Where(c => !char.IsWhiteSpace(c)).ToArray()); // the group separator of the shown amount is a space
+        if (text.Length == 0)
+        {
+            return; // nothing typed: nothing changes
+        }
+
+        const NumberStyles plain = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
+        if (!decimal.TryParse(text, plain, CultureInfo.CurrentCulture, out var amount) && !decimal.TryParse(text, plain, CultureInfo.InvariantCulture, out amount))
+        {
+            BeginInvoke(() => Fail(new ReviewException(ReviewWorkspace.AmountInvalid, UiText.AmountNotNumber)));
+            return;
+        }
+
+        var services = _services;
+        var keepPerson = SelectedPerson?.PersonId;
+        var key = PaymentKey.Of(payment);
+        BeginInvoke(() =>
+        {
+            try
+            {
+                if (services.Workspace.PlanAmount(payment, amount) is not { } change)
+                {
+                    return;
+                }
+
+                if (Confirm(UiText.AmountChangeQuestion(payment.IsByHand ? UiText.ByHand : payment.Reference, change), UiText.AmountChangeTitle))
+                {
+                    services.Workspace.SetAmount(payment, amount);
+                    Log(UiText.AmountChanged(payment.IsByHand ? UiText.ByHand : payment.Reference, change));
+                }
+            }
+            catch (Exception ex)
+            {
+                Fail(ex);
+            }
+
+            ReloadView(keepPerson, key); // on no or a refusal as well: the cell shows what the store holds, not the text typed
+        });
     }
 
     private void UpdateState()
@@ -2447,6 +2535,13 @@ public sealed class MainForm : Form
     {
         if (!_filling && _paymentsGrid.IsCurrentCellInEditMode)
         {
+            if (_paymentsGrid.CurrentCell?.OwningColumn.Name == ColAmount)
+            {
+                _paymentsGrid.CancelEdit(); // an amount half typed is no split: it is asked only when the accountant ends the edit
+                _paymentsGrid.EndEdit();
+                return;
+            }
+
             _paymentsGrid.EndEdit();
         }
     }

@@ -5,8 +5,8 @@ using SatellesTSD.Core.Store;
 
 namespace SatellesTSD.Infrastructure;
 
-/// <summary>The review half of the store: the accountant's decisions, one overlay per statement row and the lines
-/// added by hand, kept apart from the run so a re-run never touches them.</summary>
+/// <summary>The review half of the store: the accountant's decisions, one overlay per statement row (and the parts
+/// split off its payment) and the lines added by hand, kept apart from the run so a re-run never touches them.</summary>
 public sealed partial class SqliteStore
 {
     public ReviewLine SaveReviewLine(ReviewLine line)
@@ -32,6 +32,11 @@ public sealed partial class SqliteStore
             if (linked == 0)
             {
                 throw new InvalidOperationException("The statement row is not a payment or payee-less row of a file linked to the period.");
+            }
+
+            if (line.Amount is { } part && (part <= 0m || part != Math.Round(part, 2)))
+            {
+                throw new ArgumentException("A part of a row needs an amount of whole cents, above 0.", nameof(line));
             }
         }
         else
@@ -65,8 +70,9 @@ public sealed partial class SqliteStore
         var id = line.Id;
         if (id == Guid.Empty)
         {
-            var earlier = line.RowId is { } r
-                ? Scalar<string?>("SELECT id FROM review_line WHERE period_id = $period AND row_id = $row", ("$period", G(line.PeriodId)), ("$row", G(r)))
+            // the row's own overlay is one per row; a part (an amount on the row) is always a line of its own
+            var earlier = line.RowId is { } r && line.Amount is null
+                ? Scalar<string?>("SELECT id FROM review_line WHERE period_id = $period AND row_id = $row AND amount IS NULL", ("$period", G(line.PeriodId)), ("$row", G(r)))
                 : null;
             id = earlier is null ? Guid.NewGuid() : Guid.Parse(earlier);
         }

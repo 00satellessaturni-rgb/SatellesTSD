@@ -455,10 +455,11 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
         _ => null,
     };
 
-    /// <summary>The amount as the statement had it, signed; its text when it could not be read; a hand line's own.</summary>
+    /// <summary>The amount as the statement had it, signed; its text when it could not be read; a hand line's own; a share
+    /// of a split row (decision 150) its own, signed as the statement's.</summary>
     private static ReportCell AmountCell(ReviewPayment payment, StatementRow? row) =>
         row is null ? ReportCell.Amount(payment.Amount)
-        : row.Amount is { } amount ? ReportCell.Amount(amount)
+        : row.Amount is { } amount ? ReportCell.Amount(payment.Part > 0 ? (amount < 0m ? -payment.Amount : payment.Amount) : amount)
         : ReportCell.Of(row.AmountText);
 
     private sealed class Context(ReviewView view, IStore store, Tax.TaxRates rates)

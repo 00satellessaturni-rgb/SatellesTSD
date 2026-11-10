@@ -326,20 +326,21 @@ public sealed partial class SqliteStore : IStore
     [GeneratedRegex(@"^(?<reg>[^-]+)-(?<ym>\d{6})-(?<sec>01|02)-(?<n>\d+)$")]
     private static partial Regex CounterKey();
 
-    /// <summary>A bank row feeds one line: a second key pointing at the same row is refused (the versions of one key
+    /// <summary>A bank row feeds one line, and each part split off its payment one line more (decision 150): a second key
+    /// pointing at the same row and the same part — none, or the same review line — is refused (the versions of one key
     /// share it). A dead key — one whose T was accepted — holds nothing any more, nor does a key every version of which
     /// was refused black (it never reached the server): the payment's new key takes the row.</summary>
-    private void RequireRowFree(Guid rowId, Guid periodId, Section section, string lineNumber)
+    private void RequireRowFree(Guid rowId, Guid? reviewLineId, Guid periodId, Section section, string lineNumber)
     {
         var other = Scalar<string?>(
             """
             SELECT p.section || ' ' || p.line_number FROM payment p
-            WHERE p.source_row_id = $row AND NOT (p.period_id = $period AND p.section = $section AND p.line_number = $line)
+            WHERE p.source_row_id = $row AND p.review_line_id IS $reviewLine AND NOT (p.period_id = $period AND p.section = $section AND p.line_number = $line)
               AND NOT EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.action = $t AND d.status = $cancelled)
               AND EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.status <> $rejected)
             LIMIT 1
             """,
-            ("$row", G(rowId)), ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$t", LineAction.T.ToString()), ("$cancelled", PaymentStatus.Cancelled.ToString()),
+            ("$row", G(rowId)), ("$reviewLine", reviewLineId is { } l ? G(l) : null), ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$t", LineAction.T.ToString()), ("$cancelled", PaymentStatus.Cancelled.ToString()),
             ("$rejected", PaymentStatus.Rejected.ToString()));
         if (other is not null)
         {
@@ -363,15 +364,15 @@ public sealed partial class SqliteStore : IStore
             throw new InvalidOperationException("The key already points at another bank row; every version of a key keeps its row.");
         }
 
+        // and its hand line (or its part of a row), the same way
+        var linkedLine = history.Select(v => v.ReviewLineId).LastOrDefault(id => id is not null);
         var sourceRowId = payment.SourceRowId ?? linkedRow;
         if (sourceRowId is { } row && linkedRow is null)
         {
             RequireRowOf(row, period.CompanyId);
-            RequireRowFree(row, payment.PeriodId, payment.Section, payment.LineNumber);
+            RequireRowFree(row, payment.ReviewLineId ?? linkedLine, payment.PeriodId, payment.Section, payment.LineNumber);
         }
 
-        // and its hand line, the same way
-        var linkedLine = history.Select(v => v.ReviewLineId).LastOrDefault(id => id is not null);
         if (payment.ReviewLineId is { } givenLine && linkedLine is { } hadLine && givenLine != hadLine)
         {
             throw new InvalidOperationException("The key already points at another hand line; every version of a key keeps its line.");
@@ -446,7 +447,7 @@ public sealed partial class SqliteStore : IStore
             }
 
             RequireRowOf(fresh, RequirePeriod(current.PeriodId).CompanyId);
-            RequireRowFree(fresh, current.PeriodId, current.Section, current.LineNumber);
+            RequireRowFree(fresh, replacement.ReviewLineId ?? current.ReviewLineId, current.PeriodId, current.Section, current.LineNumber);
         }
 
         var stored = replacement with { Id = current.Id, Version = current.Version, Status = PaymentStatus.Draft, SubmissionId = null, CreatedAt = Now(), SourceRowId = sourceRowId, ReviewLineId = replacement.ReviewLineId ?? current.ReviewLineId };
@@ -1213,6 +1214,14 @@ public sealed partial class SqliteStore : IStore
         // v10 — how the file labels the company's code (ARIREGISTRIKOOD or MRR_KOOD) when the card says; null leaves it to the code's shape.
         """
         ALTER TABLE company ADD COLUMN payer_code_type TEXT;
+        """,
+
+        // v11 — a statement row's payment split into parts (decision 150): a part is a review line on the row with an amount,
+        // so the row keeps one overlay of its own (the line without one) and any number of parts.
+        """
+        UPDATE review_line SET amount = NULL WHERE row_id IS NOT NULL;
+        DROP INDEX review_line_by_row;
+        CREATE UNIQUE INDEX review_line_by_row ON review_line (period_id, row_id) WHERE row_id IS NOT NULL AND amount IS NULL;
         """,
     ];
 

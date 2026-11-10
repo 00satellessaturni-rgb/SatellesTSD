@@ -384,8 +384,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             {
                 var type = PaymentTypes.Get(payment.TypeCode!);
                 monthPayments.Add(new MonthPayment(source, type, payment.Amount, AmountIsNet: true, payment.Date!.Value));
-                // a bank row's line is known by its row alone; only a hand line's line carries the review line's id
-                references[source] = (payment.Reference, payment.RowId, payment.RowId is null ? payment.LineId : null);
+                // a bank row's line is known by its row alone; a hand line's line, and a part's of a split row, carry the
+                // review line's id as well (decision 150)
+                references[source] = (payment.Reference, payment.RowId, payment.RowId is null || payment.IsPart ? payment.LineId : null);
             }
         }
 
@@ -759,11 +760,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     private static bool CarriesMinimum(StoredPayment line) =>
         line.Action != LineAction.T && line.Line.TypeCode is { } code && PaymentTypes.TryGet(code, out var type) && type!.SocialTaxMinimum;
 
-    /// <summary>The source a standing line stands for: its bank row, its hand line, the month's minimum of its person,
-    /// or the person's payments of one type added up.</summary>
+    /// <summary>The source a standing line stands for: its bank row, its hand line (or its part of a split row, known by
+    /// its own line with the row beside it, decision 150), the month's minimum of its person, or the person's payments of
+    /// one type added up.</summary>
     public static string? SourceKey(StoredPayment payment) =>
-        payment.SourceRowId is { } row ? "row:" + row.ToString("N")
-        : payment.ReviewLineId is { } line ? "line:" + line.ToString("N")
+        payment.ReviewLineId is { } line ? "line:" + line.ToString("N")
+        : payment.SourceRowId is { } row ? "row:" + row.ToString("N")
         : payment.SourceRef == MinimumSource && payment.PersonId is { } person ? MinimumKey(person)
         : TotalsOf(payment.SourceRef) is { } totals && payment.PersonId is { } owner ? TotalsKey(owner, totals.TypeCode)
         : null;
@@ -791,7 +793,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     private static string TotalsKey(Guid personId, string typeCode) => $"{TotalsSource}:{personId:N}:{typeCode}";
 
     private static string SourceOf(ReviewPayment payment) =>
-        payment.RowId is { } row ? "row:" + row.ToString("N") : "line:" + payment.LineId!.Value.ToString("N");
+        payment.RowId is { } row && !payment.IsPart ? "row:" + row.ToString("N") : "line:" + payment.LineId!.Value.ToString("N");
 
     private static string MinimumKey(Guid personId) => "minimum:" + personId.ToString("N");
 

@@ -18,6 +18,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     public const string NameMissing = "NAME_MISSING";
     public const string CodeInvalid = ReviewChecks.CodeInvalid; // the card's save and the review's refusal name the fault alike
     public const string LineMissing = "LINE_MISSING";
+    public const string AmountInvalid = "AMOUNT_INVALID";
+    public const string SplitRefused = "SPLIT_REFUSED";
 
     /// <summary>The source name of the lines added by hand.</summary>
     public const string ByHandSource = "by hand";
@@ -83,7 +85,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var storedHits = storedRun is null ? [] : _store.MatchHits(storedRun.Id);
         var catalog = storedRun is { CatalogJson.Length: > 0 } ? MatchCatalog.Parse(storedRun.CatalogJson) : CatalogInForce();
         var lines = _store.ReviewLines(periodId);
-        var overlays = lines.Where(l => !l.IsByHand).ToDictionary(l => l.RowId!.Value);
+        // a row's own overlay, and the parts split off its payment in the order they were made (decision 150)
+        var overlays = lines.Where(l => !l.IsByHand && !l.IsPart).ToDictionary(l => l.RowId!.Value);
+        var partsByRow = lines.Where(l => l.IsPart).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.ToList());
 
         var personsByKey = new Dictionary<string, Person>(StringComparer.Ordinal);
         if (run is not null)
@@ -186,6 +190,15 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             {
                 var copy = run.Hits[i];
                 var copyRow = storedHits[i].RowId;
+                if (copy.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && partsByRow.ContainsKey(copyRow) && !overlays.ContainsKey(copyRow)
+                    && copy.Text.StartsWith(copyOf, StringComparison.Ordinal))
+                {
+                    // parts split off a row that has since turned into a copy stay where they are: the copy is declared nowhere (a
+                    // copy with a decision of its own as well is said once, below)
+                    var what = period.State == PeriodState.Draft ? "split the original, and take them out with 0" : "check the original";
+                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {copy.Text[copyOf.Length..]} and carries parts split off its payment; they stay where they are — {what}.", Source: copy.Source, RowNo: copy.Row.RowNo));
+                }
+
                 if (!copy.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) || !overlays.TryGetValue(copyRow, out var decided)
                     || !copy.Text.StartsWith(copyOf, StringComparison.Ordinal) || !rowByReference.TryGetValue(copy.Text[copyOf.Length..], out var originalRow))
                 {
@@ -193,7 +206,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 }
 
                 var original = copy.Text[copyOf.Length..];
-                if (period.State == PeriodState.Draft && !overlays.ContainsKey(originalRow))
+                // a split copy stays together: its own share's decision was made for that share, not for the original's whole amount
+                var split = partsByRow.ContainsKey(copyRow);
+                if (period.State == PeriodState.Draft && !overlays.ContainsKey(originalRow) && !split)
                 {
                     // the move is marked in the line's note, so it is seen in the grid and said on every load until the
                     // accountant clears the mark
@@ -204,7 +219,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 }
                 else
                 {
-                    var why = period.State == PeriodState.Draft ? "the original carries its own" : "the month is past Draft";
+                    var why = period.State != PeriodState.Draft ? "the month is past Draft" : split ? "it carries parts split off its payment" : "the original carries its own";
                     unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {original} and carries a decision; {why}, so it stays where it is — check the original.", Source: copy.Source, RowNo: copy.Row.RowNo));
                 }
             }
@@ -223,24 +238,40 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 var hit = run.Hits[indices[0]];
                 var defaultPerson = !shared && hit.PersonKey is { } key && personsByKey.TryGetValue(key, out var dp) ? dp
                     : !shared && hit.PersonKey is null ? PayeeOf(hit, overlay, rowId) : null;
-                var personId = overlay is { NoPerson: true } ? null : overlay?.PersonId ?? defaultPerson?.Id;
-                var person = personId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
                 var candidates = shared ? indices.Select(i => run.Hits[i].PersonKey).OfType<string>().Distinct().Select(k => personsByKey[k].FullName).ToList() : [];
-                if (shared && person is not null)
+                var parts = partsByRow.GetValueOrDefault(rowId) ?? [];
+                // the row's own share is what its parts leave; each part is a payment of its own, with its own person and decisions
+                var whole = hit.Amount;
+                var rest = whole - parts.Sum(p => p.Amount!.Value);
+                Emit(overlay, parts.Count == 0 ? null : rest, parts.Count == 0 ? 0 : 1, twinRows.Contains(rowId));
+                for (var n = 0; n < parts.Count; n++)
                 {
-                    // the copy the run made for the chosen person carries that person's masks and verdict
-                    var own = indices.FirstOrDefault(i => run.Hits[i].PersonKey is { } k && personsByKey.TryGetValue(k, out var p) && p.Id == person.Id, -1);
-                    if (own >= 0)
-                    {
-                        hit = run.Hits[own];
-                    }
+                    Emit(parts[n], parts[n].Amount, n + 2, twinRows.Contains(rowId)); // a row a hand line already declares: none of its shares by default
                 }
 
-                // the employment that decides the salary type: the chosen person's register entry, else (nobody's row) the run's
-                var register = person is not null
-                    ? registerByPersonId.GetValueOrDefault(person.Id)
-                    : hit.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
-                Place(FromHit(period, hit, rowId, overlay, person, defaultPerson?.Id, register, catalog, shared, candidates, assumed.Contains(hit.Source), twinRows.Contains(rowId)));
+                void Emit(ReviewLine? decided, decimal? amount, int part, bool twin)
+                {
+                    // a part of a row nobody of the register was found for has the payee its own category calls for (decision 108)
+                    var shareDefault = part >= 2 && !shared && hit.PersonKey is null ? PayeeOf(hit, decided, rowId, pairTwin: false) : defaultPerson;
+                    var personId = decided is { NoPerson: true } ? null : decided?.PersonId ?? shareDefault?.Id;
+                    var person = personId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
+                    var own = hit;
+                    if (shared && person is not null)
+                    {
+                        // the copy the run made for the chosen person carries that person's masks and verdict
+                        var mine = indices.FirstOrDefault(i => run.Hits[i].PersonKey is { } k && personsByKey.TryGetValue(k, out var p) && p.Id == person.Id, -1);
+                        if (mine >= 0)
+                        {
+                            own = run.Hits[mine];
+                        }
+                    }
+
+                    // the employment that decides the salary type: the chosen person's register entry, else (nobody's row) the run's
+                    var register = person is not null
+                        ? registerByPersonId.GetValueOrDefault(person.Id)
+                        : own.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
+                    Place(FromHit(period, own, rowId, decided, person, shareDefault?.Id, register, catalog, shared, candidates, assumed.Contains(own.Source), twin, amount, part));
+                }
             }
         }
 
@@ -332,9 +363,17 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
         List<ReviewPayment> Take(Guid id) => byPerson.Remove(id, out var list) ? list : [];
 
+        static void Once(List<MatchProblem> list, MatchProblem problem)
+        {
+            if (!list.Contains(problem))
+            {
+                list.Add(problem);
+            }
+        }
+
         // the payee of a row nobody of the register was found for, when its category is declared on the payee's own code
         // (Üür): a person of the company, created while the month is prepared; a month past Draft keeps its run as it was
-        Person? PayeeOf(MatchHit hit, ReviewLine? overlay, Guid rowId)
+        Person? PayeeOf(MatchHit hit, ReviewLine? overlay, Guid rowId, bool pairTwin = true)
         {
             if (!PayeePersons.IsPayeeRow(hit, overlay, catalog))
             {
@@ -353,7 +392,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 // a month past Draft is read, never written: its payee only where a line of the month was built from the row — a
                 // person made since (in another month's Draft, or by hand) is not read back into a month declared without them
                 var built = standing.Any(l => l.SourceRowId == rowId
-                    || (Declare.PeriodDeclarer.TotalsOf(l.SourceRef) is { } totals && totals.References.Split("; ").Contains(hit.Reference, StringComparer.Ordinal)));
+                    || (Declare.PeriodDeclarer.TotalsOf(l.SourceRef) is { } totals && totals.References.Split("; ").Any(r => r == hit.Reference || r.StartsWith(hit.Reference + " " + ReviewPayment.PartWord + " ", StringComparison.Ordinal))));
                 return built ? PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode) : null;
             }
 
@@ -363,7 +402,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode, out var ambiguous);
                 if (ambiguous)
                 {
-                    unmatchedProblems.Add(new MatchProblem(MatchProblem.PayeeAmbiguous, $"{hit.Reference}: two persons of the company have the payee's names; name the one on the row.", Source: hit.Source, RowNo: hit.Row.RowNo));
+                    Once(unmatchedProblems, new MatchProblem(MatchProblem.PayeeAmbiguous, $"{hit.Reference}: two persons of the company have the payee's names; name the one on the row.", Source: hit.Source, RowNo: hit.Row.RowNo)); // once for the row, however many of its shares ask
                 }
 
                 return null;
@@ -381,13 +420,13 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             if (PayeePersons.CodeOf(hit.Row.CounterpartyCode) is { } statementCode && payee.PersonalCode != statementCode
                 && payeeKnown.Any(p => p.Id != payee.Id && string.Equals(p.PersonalCode, statementCode, StringComparison.Ordinal)))
             {
-                ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeCodeElsewhere, $"{hit.Reference}: the row's personal code belongs to another person of the company; the row is the payee's by the bound names — check the two cards.", Source: hit.Source, RowNo: hit.Row.RowNo));
+                Once(ProblemsOf(payee.Id), new MatchProblem(MatchProblem.PayeeCodeElsewhere, $"{hit.Reference}: the row's personal code belongs to another person of the company; the row is the payee's by the bound names — check the two cards.", Source: hit.Source, RowNo: hit.Row.RowNo));
             }
 
             // a line added by hand of the same amount for the payee this month, declaring something: the rent may be declared
             // there already — the row is not declared by default, and the person says so, until the accountant's tick or
             // untick on the row ends the word; one hand line pairs with one row
-            if (overlay?.Declare is null
+            if (pairTwin && overlay?.Declare is null
                 && lines.FirstOrDefault(l => l.IsByHand && !twinHandLines.Contains(l.Id) && l.PersonId == payee.Id && l.Amount == hit.Amount && l.Declare != false
                     && (l.Category is not null || l.TypeCode is not null) && l.Date is { } day && day.Year == period.Year && day.Month == period.Month) is { } twin)
             {
@@ -434,6 +473,105 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     public ReviewLine? SetNote(ReviewPayment payment, string? note) =>
         Change(payment, l => l with { Note = Clean(note) }, l => l with { Note = Clean(note) });
+
+    /// <summary>What a new amount typed on a payment would do (decision 150), asked before it is done; null when it is the
+    /// amount the payment has. A row's own share given less splits the difference off as a new part; a part given another
+    /// amount takes it from the row's own share or gives it back, and a part given 0 goes, its amount back to the row's
+    /// own share; a hand line's amount is just changed. Refused (<see cref="ReviewException"/>): a month past Draft, an
+    /// amount that is no whole cents or below 0, a row whose amount was not read or that is a copy of another, a row's own
+    /// share given 0 or more than it has, and a part that would leave the row's own share nothing.</summary>
+    public AmountChange? PlanAmount(ReviewPayment payment, decimal amount)
+    {
+        ArgumentNullException.ThrowIfNull(payment);
+        RequireDraft(FindPeriod(payment.PeriodId));
+        if (amount < 0m || amount != Math.Round(amount, 2))
+        {
+            throw new ReviewException(AmountInvalid, "An amount is whole cents, not below 0.");
+        }
+
+        if (amount == payment.Amount)
+        {
+            return null;
+        }
+
+        if (payment.IsByHand)
+        {
+            return new AmountChange(AmountChangeKind.HandLine, payment.Amount, amount, 0m, amount - payment.Amount);
+        }
+
+        var rowId = payment.RowId ?? throw new ArgumentException("A row payment names its row.", nameof(payment));
+        if (payment.AmountText is not null || payment.RowAmount is not { } whole || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
+        {
+            throw new ReviewException(SplitRefused, "The statement gave no amount for the row; there is nothing to split.");
+        }
+
+        if (payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && !(payment.IsPart && amount == 0m))
+        {
+            throw new ReviewException(SplitRefused, "The row is a copy of another; split the original (a part left on it is taken out with 0).");
+        }
+
+        // the row's own share by the store as it stands now, not by the payment the window still shows
+        var parts = _store.ReviewLines(payment.PeriodId).Where(l => l.IsPart && l.RowId == rowId).ToList();
+        var rest = whole - parts.Sum(p => p.Amount!.Value);
+        if (!payment.IsPart)
+        {
+            if (amount <= 0m || amount >= rest)
+            {
+                throw new ReviewException(SplitRefused, $"The row's own share is {rest:0.00}: give it less to split the rest off as a part; a part's amount is lowered to give the row more.");
+            }
+
+            return new AmountChange(AmountChangeKind.SplitOff, rest, amount, amount, rest - amount);
+        }
+
+        var line = parts.FirstOrDefault(l => l.Id == payment.LineId)
+            ?? throw new ReviewException(LineMissing, "The part is no longer in the store.");
+        var was = line.Amount!.Value;
+        if (amount == 0m)
+        {
+            return new AmountChange(AmountChangeKind.PartRemoved, was, 0m, rest + was, was);
+        }
+
+        var left = rest + was - amount;
+        if (left <= 0m)
+        {
+            throw new ReviewException(SplitRefused, $"The row's own share is {rest:0.00}; the part can take at most {rest + was - 0.01m:0.00}.");
+        }
+
+        return new AmountChange(AmountChangeKind.PartResized, was, amount, left, amount - was);
+    }
+
+    /// <summary>Does what <see cref="PlanAmount"/> says the amount would do; the part split off has the person the row's
+    /// own share has by the accountant's word, the rest of its decisions the run's. Returns the change made, null for none.</summary>
+    public AmountChange? SetAmount(ReviewPayment payment, decimal amount)
+    {
+        var change = PlanAmount(payment, amount);
+        if (change is null)
+        {
+            return null;
+        }
+
+        var lines = _store.ReviewLines(payment.PeriodId);
+        switch (change.Kind)
+        {
+            case AmountChangeKind.HandLine:
+                var hand = lines.FirstOrDefault(l => l.Id == payment.LineId && l.IsByHand)
+                    ?? throw new ReviewException(LineMissing, "The line added by hand is no longer in the store.");
+                _store.SaveReviewLine(hand with { Amount = amount });
+                break;
+            case AmountChangeKind.SplitOff:
+                var own = lines.FirstOrDefault(l => l.RowId == payment.RowId && !l.IsPart);
+                _store.SaveReviewLine(ReviewLine.PartOf(payment.PeriodId, payment.RowId!.Value, change.Difference, own?.PersonId, own?.NoPerson == true));
+                break;
+            case AmountChangeKind.PartResized:
+                _store.SaveReviewLine(lines.First(l => l.Id == payment.LineId) with { Amount = amount });
+                break;
+            case AmountChangeKind.PartRemoved:
+                _store.DeleteReviewLine(payment.LineId!.Value);
+                break;
+        }
+
+        return change;
+    }
 
     public ReviewLine AddHandLine(Guid periodId, Guid? personId, DateOnly date, decimal amount, string payee, string? description = null, string? category = null, string? typeCode = null, bool? declare = null, string? note = null)
     {
@@ -540,8 +678,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             ResidencyCheckedOn = residency == Residency.NonResident ? Today() : null });
     }
 
-    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false)
+    /// <param name="partAmount">The share of a split row this payment is (its own share or a part's); null for a row not split.</param>
+    /// <param name="part">The payment's place among the row's parts (<see cref="ReviewPayment.Part"/>).</param>
+    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false, decimal? partAmount = null, int part = 0)
     {
+        var amount = partAmount ?? hit.Amount;
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? defaultCategory;
         var torType = ReviewDefaults.EmploymentTypeFor(register, person, hit.Row.Date);
@@ -555,7 +696,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var moneyIn = hit.Row.Direction == Direction.Credit;
         var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
         var declare = overlay?.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, hit.Amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -568,7 +709,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             DateText = hit.Row.DateText,
             Payee = hit.Row.Counterparty ?? "",
             Description = hit.Row.Description,
-            Amount = hit.Amount,
+            Amount = amount,
+            RowAmount = hit.Amount,
+            Part = part,
             AmountText = hit.Row.Amount is null ? hit.Row.AmountText ?? "" : null, // no amount read: its text, else nothing — never a 0 that looks read
             AmountOk = amountOk && euro,
             Direction = hit.Row.Direction,
@@ -736,7 +879,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     }
 
     /// <summary>Applies a change to the payment's stored decision: a row's overlay is found by the row (never by a
-    /// possibly stale line id), a hand line by its id.</summary>
+    /// possibly stale line id), a part of a row and a hand line by their own id.</summary>
     private ReviewLine? Change(ReviewPayment payment, Func<ReviewLine, ReviewLine> overlay, Func<ReviewLine, ReviewLine> hand)
     {
         ArgumentNullException.ThrowIfNull(payment);
@@ -754,7 +897,14 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
 
         var rowId = payment.RowId ?? throw new ArgumentException("A row payment names its row.", nameof(payment));
-        var existing = lines.FirstOrDefault(l => l.RowId == rowId);
+        if (payment.IsPart)
+        {
+            var part = lines.FirstOrDefault(l => l.Id == payment.LineId && l.IsPart && l.RowId == rowId)
+                ?? throw new ReviewException(LineMissing, "The part is no longer in the store.");
+            return _store.SaveReviewLine(overlay(part)); // a part keeps its line whatever it decides: its amount is a decision
+        }
+
+        var existing = lines.FirstOrDefault(l => l.RowId == rowId && !l.IsPart);
         var next = overlay(existing ?? ReviewLine.ForRow(payment.PeriodId, rowId));
         if (next.IsEmpty)
         {

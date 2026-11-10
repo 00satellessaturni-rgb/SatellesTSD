@@ -125,7 +125,9 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var storedHits = storedRun is null ? [] : _store.MatchHits(storedRun.Id);
         var aligned = storedRun is not null && storedHits.Count == run.Hits.Count;
         var catalog = storedRun is { CatalogJson.Length: > 0 } ? MatchCatalog.Parse(storedRun.CatalogJson) : new MatchRunner(_store).Catalog();
-        var overlays = aligned ? lines.Where(l => !l.IsByHand && l.RowId is not null).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.First()) : [];
+        var overlays = aligned ? lines.Where(l => !l.IsByHand && !l.IsPart && l.RowId is not null).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.First()) : [];
+        // the parts split off a row's payment (decision 150): each is paid to its own person
+        var parts = aligned ? lines.Where(l => l.IsPart).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.ToList()) : [];
         // a row the search found for two persons is nobody's until the accountant names one (SHARED_ROW): the hits of one row
         // are told apart by the stored row, else by the reference
         var rowOf = (int i) => aligned ? storedHits[i].RowId.ToString("N") : run.Hits[i].Reference;
@@ -145,14 +147,23 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             }
 
             var shared = hitsPerRow[rowOf(i)] > 1;
-            var personId = overlay is { NoPerson: true } ? null
-                : overlay?.PersonId
-                ?? (shared ? null
-                    : hit.PersonKey is { } key && registerIds.TryGetValue(key, out var registered) ? registered
-                    : aligned && Review.PayeePersons.IsPayeeRow(hit, overlay, catalog) ? Review.PayeePersons.Find(persons, hit.Row.Counterparty!, hit.Row.CounterpartyCode)?.Id : null);
-            if (personId is { } id)
+            var byRun = shared ? null : hit.PersonKey is { } key && registerIds.TryGetValue(key, out var registered) ? registered : (Guid?)null;
+            var decided = new List<Review.ReviewLine?> { overlay };
+            if (aligned && parts.TryGetValue(storedHits[i].RowId, out var rowParts))
             {
-                Add(id, date);
+                decided.AddRange(rowParts);
+            }
+
+            foreach (var line in decided)
+            {
+                // a row nobody of the register was found for: each share has the payee its own category calls for
+                var byShare = byRun ?? (!shared && hit.PersonKey is null && aligned && Review.PayeePersons.IsPayeeRow(hit, line, catalog)
+                    ? Review.PayeePersons.Find(persons, hit.Row.Counterparty!, hit.Row.CounterpartyCode)?.Id : null);
+                var personId = line is { NoPerson: true } ? null : line?.PersonId ?? byShare;
+                if (personId is { } id)
+                {
+                    Add(id, date);
+                }
             }
         }
 

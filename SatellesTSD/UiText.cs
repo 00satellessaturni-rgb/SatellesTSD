@@ -1,5 +1,6 @@
 using SatellesTSD.Core.Lookups;
 using SatellesTSD.Core.Model;
+using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
 
 namespace SatellesTSD;
@@ -228,6 +229,39 @@ internal static class UiText
 
     private static string Count(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
     public const string RemoveLineConfirm = "Eemaldada käsitsi lisatud rida?";
+    public const string AmountChangeTitle = "Summa muutmine";
+    public const string AmountNotNumber = "Summa ei ole arv.";
+
+    /// <summary>The question asked before a typed amount is taken (decision 150).</summary>
+    public static string AmountChangeQuestion(string reference, AmountChange change) => change.Kind switch
+    {
+        AmountChangeKind.SplitOff => $"Jagada makse {reference} osadeks?\n\n{change.To:N2} jääb sellele reale, {change.Difference:N2} läheb uueks osaks. "
+            + "Uus osa saab rea isiku; kategooria, liigi ja deklareerimise määrake sellele eraldi.",
+        AmountChangeKind.PartResized when change.Difference > 0m => $"Muuta osa {reference} summat {change.From:N2} → {change.To:N2}?\n\n"
+            + $"{change.Difference:N2} võetakse makse põhiosast (osa 1), sinna jääb {change.RowShare:N2}.",
+        AmountChangeKind.PartResized => $"Muuta osa {reference} summat {change.From:N2} → {change.To:N2}?\n\n"
+            + $"{-change.Difference:N2} läheb tagasi makse põhiosale (osa 1), see saab {change.RowShare:N2}.",
+        AmountChangeKind.PartRemoved => $"Eemaldada osa {reference}?\n\nSelle summa {change.From:N2} läheb tagasi makse põhiosale (osa 1), see saab {change.RowShare:N2}.",
+        _ => $"Muuta käsitsi lisatud rea summat {change.From:N2} → {change.To:N2}?",
+    };
+
+    /// <summary>The log's line after a typed amount was taken.</summary>
+    public static string AmountChanged(string reference, AmountChange change) => change.Kind switch
+    {
+        AmountChangeKind.SplitOff => $"Makse {reference} jagatud: {change.To:N2} + {change.Difference:N2}.",
+        AmountChangeKind.PartResized => $"Osa {reference}: {change.From:N2} → {change.To:N2}; põhiosa {change.RowShare:N2}.",
+        AmountChangeKind.PartRemoved => $"Osa {reference} eemaldatud; põhiosa {change.RowShare:N2}.",
+        _ => $"Käsitsi lisatud rida: {change.From:N2} → {change.To:N2}.",
+    };
+
+    /// <summary>The amount cell's tip on a share of a split row.</summary>
+    public static string PartTip(decimal whole) => $"Jagatud makse: kogu summa väljavõttel {whole:N2}. Osa eemaldamiseks sisestage 0.";
+
+    /// <summary>The amount cell's tip on the row's own share of a split row.</summary>
+    public static string OwnShareTip(decimal whole) => $"Jagatud makse põhiosa: kogu summa väljavõttel {whole:N2}. Väiksem summa jagab siit uue osa.";
+
+    /// <summary>The amount cell's tip on the own share of a split row that has since turned into a copy.</summary>
+    public static string CopyShareTip(decimal whole) => $"Jagatud makse põhiosa koopial: kogu summa väljavõttel {whole:N2}. Jagage originaali; osa eemaldamiseks sisestage osal 0.";
     public static string LookupProgress(int done, int total) => $"Päringud: {done} / {total}";
 
     public static string LookupOne(string name) => $"Päring: {name}";

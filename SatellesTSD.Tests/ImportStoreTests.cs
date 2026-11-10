@@ -464,7 +464,7 @@ public class ImportStoreTests
         // a shipped migration script is never edited: an existing firm file already ran it; a change goes in the next script
         var hashes = SqliteStore.MigrationScripts.Select(s => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s.Replace("\r\n", "\n"))))).ToList();
 
-        Assert.Equal(10, hashes.Count);
+        Assert.Equal(11, hashes.Count);
         Assert.Equal("c765c3c39d8e978730321685f8b5d5d0f69b47668a23679b819baec2b24ed59c", hashes[0]); // v1 as committed in 3c86599
         Assert.Equal("001c1f2471e82c2701c5dc910d6d6d158ac6b73fcef7e7eab78d9bde8097fcf7", hashes[1]); // v2 as committed in 5a89cc8
         Assert.Equal("9b309118542e3ea9e46d0ed0e928a41f255b66a5837c9b3be0a69559c2b5dda3", hashes[2]); // v3 as committed in d33c564
@@ -475,6 +475,7 @@ public class ImportStoreTests
         Assert.Equal("d5ae5c9f31e14f442b460d0169c856a852afc9a7d71318396e0826a6d9fdccf5", hashes[7]); // v8: the card's employment type for every payment
         Assert.Equal("93414447e73b492fd305241ed3b653dfb6dc2761d72eeabbffac5270257dd67e", hashes[8]); // v9: the control date of the looked-up facts
         Assert.Equal("ef5545ac00858c075716eaf0f8981128b6b779d874a3bf558f9bba1413df7b14", hashes[9]); // v10: how the file labels the company's code
+        Assert.Equal("b8ab416084fd8e6475426c77e490cd1038dd686897c91b5bbb5f77b34a230c40", hashes[10]); // v11: a row's payment split into parts
     }
 
     [Fact]

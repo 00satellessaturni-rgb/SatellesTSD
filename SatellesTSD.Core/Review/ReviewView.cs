@@ -106,8 +106,22 @@ public sealed class ReviewPayment
 
     public bool HasOverride { get; init; }
 
-    /// <summary>The workbook's "Dokument" cell: "LHV pank *1757 [12]".</summary>
-    public string Reference => IsByHand ? ReviewWorkspace.ByHandSource : $"{Source} [{RowNo}]";
+    /// <summary>The payment's place among the parts of its row (decision 150): 0 for a row not split, 1 for the row's own
+    /// share of a split row (what the parts leave), 2 and on for the parts split off, in the order they were made; 0 for
+    /// a line added by hand. A part's <see cref="LineId"/> is its own line, the identity it is edited and declared by.</summary>
+    public int Part { get; init; }
+
+    /// <summary>The statement's amount of the whole row, as the sums take it, whatever its parts; null for a line added by hand.</summary>
+    public decimal? RowAmount { get; init; }
+
+    /// <summary>A part split off a row, not the row's own share.</summary>
+    public bool IsPart => Part >= 2;
+
+    /// <summary>The word that numbers the parts of a split row in its reference: "LHV pank *1757 [12] osa 2".</summary>
+    public const string PartWord = "osa";
+
+    /// <summary>The workbook's "Dokument" cell: "LHV pank *1757 [12]", and " osa N" after it for each part of a split row.</summary>
+    public string Reference => IsByHand ? ReviewWorkspace.ByHandSource : Part > 0 ? $"{Source} [{RowNo}] {PartWord} {Part}" : $"{Source} [{RowNo}]";
 }
 
 /// <summary>One row of the persons grid: a register person with their store person, the Vahearuanne's numbers and
