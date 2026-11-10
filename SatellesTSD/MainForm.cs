@@ -2145,6 +2145,10 @@ public sealed class MainForm : Form
                     Log(UiText.AmountChanged(payment.IsByHand ? UiText.ByHand : payment.Reference, change));
                 }
             }
+            catch (ReviewException ex) when (UiText.AmountRefused(ex, payment.IsByHand) is { } words)
+            {
+                Fail(new ReviewException(ex.Code, words, ex.Figure)); // the refusal in the window's own words
+            }
             catch (Exception ex)
             {
                 Fail(ex);

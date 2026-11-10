@@ -52,13 +52,16 @@ public class RowSplitTests
 
             var parts = Rows(workspace, period);
             Assert.Equal([(1, 800m), (2, 105.92m)], parts.Select(p => (p.Part, p.Amount)));
-            Assert.All(parts, p => Assert.Equal((salary.RowId, 905.92m, "Palgad"), (p.RowId, p.RowAmount, p.Category)));
+            Assert.All(parts, p => Assert.Equal((salary.RowId, 905.92m), (p.RowId, p.RowAmount)));
+            Assert.Equal(["Palgad", null], parts.Select(p => p.Category)); // the row's own share keeps its category, the part has none
+            Assert.Equal((true, false), (parts[0].Declare, parts[1].Declare)); // nor a type: not declared by default
+            Assert.Equal(parts[0].PersonId, parts[1].PersonId); // the row's person, all the same
             Assert.Equal([reference + " osa 1", reference + " osa 2"], parts.Select(p => p.Reference));
             Assert.NotNull(parts[1].LineId);
             Assert.True(parts[1].IsPart);
-            Assert.Equal(905.92m, workspace.Load(period.Id).Persons[0].SalaryTotal); // both shares salary still
+            Assert.Equal(800m, workspace.Load(period.Id).Persons[0].SalaryTotal); // the salary is the row's own share alone
 
-            // the part given its own category: the salary is the row's own share alone
+            // the part given its own category
             workspace.SetCategory(parts[1], "Kompensatsioon");
             parts = Rows(workspace, period);
             Assert.Equal(["Palgad", "Kompensatsioon"], parts.Select(p => p.Category));
@@ -101,7 +104,9 @@ public class RowSplitTests
                 () => workspace.PlanAmount(Rows(workspace, period)[1], 10.005m),
                 () => workspace.PlanAmount(Rows(workspace, period)[1], -1m),
             };
-            Assert.All(refused, plan => Assert.Throws<ReviewException>(plan));
+            Assert.Equal(
+                [(ReviewWorkspace.SplitOwnShare, 700m), (ReviewWorkspace.SplitOwnShare, 700m), (ReviewWorkspace.SplitPartTooBig, 799.99m), (ReviewWorkspace.AmountInvalid, null), (ReviewWorkspace.AmountInvalid, null)],
+                refused.Select(plan => Assert.Throws<ReviewException>(plan)).Select(e => (e.Code, e.Figure)));
             Assert.Null(workspace.PlanAmount(Rows(workspace, period)[1], 100m)); // the amount it has: nothing to do
 
             // a part given 0 goes, its amount back to the row's share; the last one gone, the row is whole again
@@ -173,7 +178,11 @@ public class RowSplitTests
         using (store)
         {
             workspace.SetAmount(Rent(workspace, period)[0], 300m);
-            var shares = Rent(workspace, period);
+            var shares = workspace.Load(period.Id).Persons.SelectMany(p => p.Payments).Where(p => p.Payee == "KATI KASK").OrderBy(p => p.Part).ToList();
+            // the part has no category: nobody's by default, the row's own share still hers
+            Assert.Equal([((Guid?)kati, (Guid?)kati, "Üür", true), (null, null, null, false)], shares.Select(p => (p.PersonId, p.DefaultPersonId, p.Category, p.Declare)));
+            workspace.SetCategory(shares[1], "Üür");
+            shares = Rent(workspace, period);
             Assert.All(shares, p => Assert.Equal((kati, kati, "Üür", true), (p.PersonId, p.DefaultPersonId, p.Category, p.Declare)));
 
             // the part given a category not declared on the payee's code: nobody's by default, the row's own share still hers
@@ -203,7 +212,7 @@ public class RowSplitTests
                 PeriodId = part.PeriodId, RowId = part.RowId, LineId = part.LineId, Part = part.Part, Source = part.Source, RowNo = part.RowNo, Payee = part.Payee,
                 VerdictText = part.VerdictText, Amount = part.Amount, RowAmount = part.RowAmount, Flags = [MatchProblem.DuplicateRow],
             };
-            Assert.Throws<ReviewException>(() => workspace.PlanAmount(onCopy, 50m));
+            Assert.Equal(ReviewWorkspace.SplitCopy, Assert.Throws<ReviewException>(() => workspace.PlanAmount(onCopy, 50m)).Code);
             Assert.Equal(AmountChangeKind.PartRemoved, workspace.SetAmount(onCopy, 0m)!.Kind);
             Assert.Single(Rows(workspace, period));
 
@@ -259,8 +268,8 @@ public class RowSplitTests
                 PeriodId = row.PeriodId, RowId = row.RowId, Source = row.Source, RowNo = row.RowNo, Payee = row.Payee, VerdictText = row.VerdictText,
                 Amount = row.Amount, RowAmount = row.RowAmount, Flags = flags, AmountText = amountText,
             };
-            Assert.Equal(ReviewWorkspace.SplitRefused, Assert.Throws<ReviewException>(() => workspace.PlanAmount(Like([MatchProblem.DuplicateRow], null), 10m)).Code);
-            Assert.Equal(ReviewWorkspace.SplitRefused, Assert.Throws<ReviewException>(() => workspace.PlanAmount(Like([], "x"), 10m)).Code);
+            Assert.Equal(ReviewWorkspace.SplitCopy, Assert.Throws<ReviewException>(() => workspace.PlanAmount(Like([MatchProblem.DuplicateRow], null), 10m)).Code);
+            Assert.Equal(ReviewWorkspace.SplitUnread, Assert.Throws<ReviewException>(() => workspace.PlanAmount(Like([], "x"), 10m)).Code);
         }
     }
 }

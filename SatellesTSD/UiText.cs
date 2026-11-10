@@ -232,11 +232,28 @@ internal static class UiText
     public const string AmountChangeTitle = "Summa muutmine";
     public const string AmountNotNumber = "Summa ei ole arv.";
 
+    /// <summary>A typed amount's refusal in the window's own words (decision 150), by its code and figure; null for one this
+    /// flow does not know, which is shown as the store said it. <paramref name="byHand"/>: the amount was typed on a line
+    /// added by hand, not on a share of a row.</summary>
+    public static string? AmountRefused(ReviewException refusal, bool byHand = false) => refusal.Code switch
+    {
+        ReviewWorkspace.AmountInvalid => "Summa peab olema täissentides ja mitte alla nulli.",
+        ReviewWorkspace.SplitUnread => "Väljavõte ei andnud sellele reale summat – pole midagi jagada.",
+        ReviewWorkspace.SplitCopy => "See rida on teise rea koopia – jagage originaali. (Koopiale jäänud osa eemaldatakse summaga 0.)",
+        ReviewWorkspace.SplitOwnShare when refusal.Figure is { } rest => $"Makse põhiosa on {rest:N2}. Uue osa jagamiseks sisestage väiksem summa (üle 0); "
+            + "põhiosa suurendamiseks vähendage mõne osa summat või eemaldage osa summaga 0.",
+        ReviewWorkspace.SplitPartTooBig when refusal.Figure is { } max => $"Makse põhiosale peab jääma vähemalt 0,01; selle osa summa võib olla kuni {max:N2}.",
+        ReviewWorkspace.PeriodNotDraft => "Kuu ei ole enam mustand – summat muuta ei saa.",
+        ReviewWorkspace.LineMissing => byHand ? "Seda käsitsi lisatud rida ei ole enam andmebaasis – vaade laaditakse uuesti."
+            : "Seda osa ei ole enam andmebaasis – vaade laaditakse uuesti.",
+        _ => null,
+    };
+
     /// <summary>The question asked before a typed amount is taken (decision 150).</summary>
     public static string AmountChangeQuestion(string reference, AmountChange change) => change.Kind switch
     {
         AmountChangeKind.SplitOff => $"Jagada makse {reference} osadeks?\n\n{change.To:N2} jääb sellele reale, {change.Difference:N2} läheb uueks osaks. "
-            + "Uus osa saab rea isiku; kategooria, liigi ja deklareerimise määrake sellele eraldi.",
+            + "Uus osa jääb kategooriata (puudub); kategooria, liigi, deklareerimise ja vajadusel isiku määrake sellele eraldi.",
         AmountChangeKind.PartResized when change.Difference > 0m => $"Muuta osa {reference} summat {change.From:N2} → {change.To:N2}?\n\n"
             + $"{change.Difference:N2} võetakse makse põhiosast (osa 1), sinna jääb {change.RowShare:N2}.",
         AmountChangeKind.PartResized => $"Muuta osa {reference} summat {change.From:N2} → {change.To:N2}?\n\n"

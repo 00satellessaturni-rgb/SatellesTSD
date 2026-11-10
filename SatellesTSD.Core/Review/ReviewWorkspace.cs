@@ -19,7 +19,10 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     public const string CodeInvalid = ReviewChecks.CodeInvalid; // the card's save and the review's refusal name the fault alike
     public const string LineMissing = "LINE_MISSING";
     public const string AmountInvalid = "AMOUNT_INVALID";
-    public const string SplitRefused = "SPLIT_REFUSED";
+    public const string SplitUnread = "SPLIT_UNREAD";
+    public const string SplitCopy = "SPLIT_COPY";
+    public const string SplitOwnShare = "SPLIT_OWN_SHARE";
+    public const string SplitPartTooBig = "SPLIT_PART_TOO_BIG";
 
     /// <summary>The source name of the lines added by hand.</summary>
     public const string ByHandSource = "by hand";
@@ -502,12 +505,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var rowId = payment.RowId ?? throw new ArgumentException("A row payment names its row.", nameof(payment));
         if (payment.AmountText is not null || payment.RowAmount is not { } whole || payment.Flags.Contains(MatchProblem.BadAmount, StringComparer.Ordinal))
         {
-            throw new ReviewException(SplitRefused, "The statement gave no amount for the row; there is nothing to split.");
+            throw new ReviewException(SplitUnread, "The statement gave no amount for the row; there is nothing to split.");
         }
 
         if (payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && !(payment.IsPart && amount == 0m))
         {
-            throw new ReviewException(SplitRefused, "The row is a copy of another; split the original (a part left on it is taken out with 0).");
+            throw new ReviewException(SplitCopy, "The row is a copy of another; split the original (a part left on it is taken out with 0).");
         }
 
         // the row's own share by the store as it stands now, not by the payment the window still shows
@@ -517,7 +520,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             if (amount <= 0m || amount >= rest)
             {
-                throw new ReviewException(SplitRefused, $"The row's own share is {rest:0.00}: give it less to split the rest off as a part; a part's amount is lowered to give the row more.");
+                throw new ReviewException(SplitOwnShare, $"The row's own share is {rest:0.00}: give it less to split the rest off as a part; a part's amount is lowered to give the row more.", rest);
             }
 
             return new AmountChange(AmountChangeKind.SplitOff, rest, amount, amount, rest - amount);
@@ -534,14 +537,15 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var left = rest + was - amount;
         if (left <= 0m)
         {
-            throw new ReviewException(SplitRefused, $"The row's own share is {rest:0.00}; the part can take at most {rest + was - 0.01m:0.00}.");
+            throw new ReviewException(SplitPartTooBig, $"The row's own share is {rest:0.00}; the part can take at most {rest + was - 0.01m:0.00}.", rest + was - 0.01m);
         }
 
         return new AmountChange(AmountChangeKind.PartResized, was, amount, left, amount - was);
     }
 
     /// <summary>Does what <see cref="PlanAmount"/> says the amount would do; the part split off has the person the row's
-    /// own share has by the accountant's word, the rest of its decisions the run's. Returns the change made, null for none.</summary>
+    /// own share has by the accountant's word and no category (the row's own share keeps its own), the rest of its decisions
+    /// the run's. Returns the change made, null for none.</summary>
     public AmountChange? SetAmount(ReviewPayment payment, decimal amount)
     {
         var change = PlanAmount(payment, amount);
@@ -560,7 +564,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 break;
             case AmountChangeKind.SplitOff:
                 var own = lines.FirstOrDefault(l => l.RowId == payment.RowId && !l.IsPart);
-                _store.SaveReviewLine(ReviewLine.PartOf(payment.PeriodId, payment.RowId!.Value, change.Difference, own?.PersonId, own?.NoPerson == true));
+                // the part split off has no category until the accountant gives it one: "(puudub)" where the run gave the row one
+                _store.SaveReviewLine(ReviewLine.PartOf(payment.PeriodId, payment.RowId!.Value, change.Difference, own?.PersonId, own?.NoPerson == true, noCategory: payment.DefaultCategory is not null));
                 break;
             case AmountChangeKind.PartResized:
                 _store.SaveReviewLine(lines.First(l => l.Id == payment.LineId) with { Amount = amount });

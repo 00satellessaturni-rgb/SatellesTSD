@@ -47,16 +47,20 @@ public sealed record ReviewLine(
     public static ReviewLine ForRow(Guid periodId, Guid rowId) =>
         new(Guid.Empty, periodId, rowId, null, null, null, null, null, null, null, null, null, default);
 
-    /// <summary>A part split off the row's payment: its amount, and the person the row's own share has by the accountant's word.</summary>
-    public static ReviewLine PartOf(Guid periodId, Guid rowId, decimal amount, Guid? personId = null, bool noPerson = false) =>
-        new(Guid.Empty, periodId, rowId, personId, null, null, null, null, null, amount, null, null, default, noPerson);
+    /// <summary>A part split off the row's payment: its amount, the person the row's own share has by the accountant's word,
+    /// and no category (<paramref name="noCategory"/> where the run gave the row one) until the accountant gives it one.</summary>
+    public static ReviewLine PartOf(Guid periodId, Guid rowId, decimal amount, Guid? personId = null, bool noPerson = false, bool noCategory = false) =>
+        new(Guid.Empty, periodId, rowId, personId, null, null, null, null, null, amount, null, null, default, noPerson, noCategory);
 
     public static ReviewLine AddedByHand(Guid periodId, Guid? personId, DateOnly date, decimal amount, string payee, string? description = null, string? category = null, string? typeCode = null, bool? declare = null, string? note = null) =>
         new(Guid.Empty, periodId, null, personId, category, typeCode, declare, note, date, amount, payee, description, default);
 }
 
-/// <summary>A review refusal with a stable code the window can key on.</summary>
-public sealed class ReviewException(string code, string message) : InvalidOperationException(message)
+/// <summary>A review refusal with a stable code the window can key on, and the figure its own words need (an amount
+/// refusal's limit), if any.</summary>
+public sealed class ReviewException(string code, string message, decimal? figure = null) : InvalidOperationException(message)
 {
     public string Code { get; } = code;
+
+    public decimal? Figure { get; } = figure;
 }

@@ -55,6 +55,17 @@ public class RowSplitWindowTests
             Assert.Equal(1, ((ReviewPayment)form.PaymentsGrid.CurrentRow!.Tag!).Part);
             Assert.EndsWith("osa 2", form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Single(r => ((ReviewPayment)r.Tag!).Part == 2).Cells["document"].Value?.ToString(), StringComparison.Ordinal);
 
+            // the row's own share typed 0: refused in the window's own words, nothing asked, nothing changed
+            var ownRow = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Single(r => ((ReviewPayment)r.Tag!).Part == 1).Index;
+            Type(form, ownRow, "0");
+            Ui.Until(() => fixture.Failures.Count == 1, what: "the refusal of 0 on the row's own share");
+            Ui.Until(() => !form.IsBusy, what: "the reload after the refusal");
+            Assert.StartsWith("Makse põhiosa on 800", fixture.Failures[0].Message, StringComparison.Ordinal);
+            Assert.Equal(ReviewWorkspace.SplitOwnShare, Assert.IsType<ReviewException>(fixture.Failures[0]).Code);
+            Assert.Equal(2, questions.Count);
+            Assert.Equal([(1, 800m), (2, 105.92m)], Shown(form));
+            fixture.Failures.Clear();
+
             // the part typed 0: asked, and gone, the row whole again
             var partRow = form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Single(r => ((ReviewPayment)r.Tag!).Part == 2).Index;
             Type(form, partRow, "0");
