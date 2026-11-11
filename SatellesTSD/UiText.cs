@@ -245,11 +245,14 @@ internal static class UiText
     /// <summary>A typed amount's refusal in the window's own words (decision 150), by its code and figure; null for one this
     /// flow does not know, which is shown as the store said it. <paramref name="byHand"/>: the amount was typed on a line
     /// added by hand, not on a share of a row.</summary>
-    public static string? AmountRefused(ReviewException refusal, bool byHand = false) => refusal.Code switch
+    /// <param name="unsplit">The payment is a row no part was split off yet: there are no parts to lower or take out.</param>
+    public static string? AmountRefused(ReviewException refusal, bool byHand = false, bool unsplit = false) => refusal.Code switch
     {
         ReviewWorkspace.AmountInvalid => "Summa peab olema täissentides ja mitte alla nulli.",
         ReviewWorkspace.SplitUnread => "Väljavõte ei andnud sellele reale summat – pole midagi jagada.",
         ReviewWorkspace.SplitCopy => "See rida on teise rea koopia – jagage originaali. (Koopiale jäänud osa eemaldatakse summaga 0.)",
+        ReviewWorkspace.SplitOwnShare when unsplit && refusal.Figure is { } whole => $"Väljavõtte summat ({whole:N2}) ei saa suurendada ega nulliks muuta; "
+            + "väiksem summa (üle 0) jagab makse osadeks.",
         ReviewWorkspace.SplitOwnShare when refusal.Figure is { } rest => $"Makse põhiosa on {rest:N2}. Uue osa jagamiseks sisestage väiksem summa (üle 0); "
             + "põhiosa suurendamiseks vähendage mõne osa summat või eemaldage osa summaga 0.",
         ReviewWorkspace.SplitPartTooBig when refusal.Figure is { } max => $"Makse põhiosale peab jääma vähemalt 0,01; selle osa summa võib olla kuni {max:N2}.",
@@ -563,6 +566,7 @@ internal static class UiText
     public const string UpdateInstalling = "Paigaldan…";
     public const string UpdateStarting = "Käivitan uut versiooni…";
     public const string UpdateClosingNew = "Sulgen uut versiooni…";
+    public const string UpdateAfterDialog = "Uuendus on saadaval: sulge avatud aken ja vali siis Andmebaas › Uuenda.";
     public const string UpdateCancelled = "Uuendamine katkestati.";
     public const string UpdateNoLongerOffered = "Seda versiooni enam ei pakuta.";
     public const string UpdateNewerInstalled = "Programmi teine aken on juba paigaldanud uuema versiooni. Sulge kõik aknad ja käivita programm uuesti.";

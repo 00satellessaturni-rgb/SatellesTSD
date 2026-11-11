@@ -292,6 +292,87 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void A_card_export_kept_in_its_reading_of_before_0_16_is_named_until_it_is_read_again()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            // the card export as 0.11–0.15 read it: the always-positive "Orig amount", so every row money in
+            var card = LayoutCatalog.Default.Find("source1")!;
+            var headers = card.Headers.ToList();
+            object?[] Row(params (string? Header, object? Value)[] cells)
+            {
+                var row = new object?[headers.Count];
+                foreach (var (header, value) in cells.Where(c => c.Header is not null))
+                {
+                    row[headers.IndexOf(header!)] = value;
+                }
+
+                return row;
+            }
+
+            var bytes = Tables.Xlsx("Kaart", headers.ToArray<object?>(),
+                Row((card.Roles.Date, new DateTime(2026, 10, 5, 10, 0, 0)), (card.Roles.Counterparty, "Mari Maasikas"), ("Orig amount", 905.92d), (card.Roles.Amount, -905.92d), (card.Roles.Currency, "EUR")));
+            var old = card with { Roles = card.Roles with { Amount = "Orig amount" } };
+            var before = new PeriodPipeline(store, new Importer(LayoutCatalog.Default.WithOverrides([old]), new ExcelTableReader()));
+            before.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook());
+            var file = before.ImportFile(period.Id, "kaart.xlsx", bytes).File!;
+            before.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+
+            var said = Assert.Single(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.OldReading);
+            Assert.Contains("Loe uuesti", said.Message, StringComparison.Ordinal);
+
+            // read again by the layout in force: the amounts are payouts again, and nothing is said
+            var now = new PeriodPipeline(store, ReviewFixtures.Importer);
+            Assert.True(now.RereadFile(period.Id, file.Id).Succeeded);
+            now.RunMatch(period.Id);
+            Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.OldReading);
+        }
+    }
+
+    [Fact]
+    public void The_totals_cuts_drafts_go_with_the_file_whose_rows_they_add_up()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var bytes = ReviewFixtures.Workbook();
+            var file = pipeline.ImportFile(period.Id, "palgad.xlsx", bytes).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026);
+
+            // a line of the totals cut names no row: read again, the file's old rows take the month's totals drafts with them, counted
+            declarer.Build(period.Id, DeclarationMode.TotalsPerType);
+            Assert.All(store.Payments(period.Id), p => Assert.True(PeriodDeclarer.IsTotals(p) && p.SourceRowId is null));
+            var drafts = store.Payments(period.Id).Count;
+            Assert.True(drafts > 0);
+            var reread = pipeline.RereadFile(period.Id, file.Id);
+            Assert.True(reread.Succeeded, reread.Error);
+            Assert.Equal(drafts, reread.DraftsDeleted);
+            Assert.Empty(store.Payments(period.Id));
+
+            // taken out of the store: the same
+            pipeline.RunMatch(period.Id);
+            declarer.Build(period.Id, DeclarationMode.TotalsPerType);
+            Assert.NotEmpty(store.Payments(period.Id));
+
+            // a file no month lists was read by no run: taking it out of the store leaves the month's totals alone
+            var other = ReviewFixtures.Workbook(salary: 1000m);
+            var stray = store.AddImport(company.Id, ReviewFixtures.Importer.Read("muu.xlsx", other), other);
+            var built = store.Payments(period.Id).Count;
+            pipeline.RemoveFile(period.Id, stray.Id);
+            Assert.Equal(built, store.Payments(period.Id).Count);
+
+            pipeline.RemoveFile(period.Id, reread.File!.Id, clearRun: true);
+            Assert.Empty(store.Payments(period.Id));
+        }
+    }
+
+    [Fact]
     public void A_file_is_taken_out_of_the_store_from_the_one_period_that_lists_it_or_from_no_period_at_all()
     {
         var (store, company, period) = Setup();

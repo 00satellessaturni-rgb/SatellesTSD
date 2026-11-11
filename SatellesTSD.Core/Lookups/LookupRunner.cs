@@ -98,31 +98,22 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         ArgumentNullException.ThrowIfNull(person);
         ArgumentNullException.ThrowIfNull(period);
         var run = _store.LoadMatchResult(period.Id);
-        if (run is null)
-        {
-            return ControlDateOf(period);
-        }
-
         var persons = _store.Persons(person.CompanyId);
-        var paid = PaidDates(_store, period, run, persons, RegisterIds(run, persons));
+        // without a search the lines added by hand still date their persons (decision 168)
+        var paid = PaidDates(_store, period, run, persons, run is null ? new Dictionary<string, Guid>() : RegisterIds(run, persons));
         return ControlDateOf(period, paid.GetValueOrDefault(person.Id) ?? []);
     }
 
     /// <summary>The day every paid person's facts are checked for in the period as the review stands now (decision 138),
-    /// by the person's id; a person not among them is checked for the month's last day. None without a search: nobody
-    /// is dated yet. The build compares it with the day the facts were last checked for (decision 166).</summary>
-    public static IReadOnlyDictionary<Guid, DateOnly>? ControlDatesOf(IStore store, Period period)
+    /// by the person's id; a person not among them is checked for the month's last day. Without a search only the lines
+    /// added by hand date anybody. The build compares it with the day the facts were last checked for (decision 166).</summary>
+    public static IReadOnlyDictionary<Guid, DateOnly> ControlDatesOf(IStore store, Period period)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(period);
         var run = store.LoadMatchResult(period.Id);
-        if (run is null)
-        {
-            return null;
-        }
-
         var persons = store.Persons(period.CompanyId);
-        return PaidDates(store, period, run, persons, RegisterIds(run, persons)).ToDictionary(p => p.Key, p => ControlDateOf(period, p.Value));
+        return PaidDates(store, period, run, persons, run is null ? new Dictionary<string, Guid>() : RegisterIds(run, persons)).ToDictionary(p => p.Key, p => ControlDateOf(period, p.Value));
     }
 
     /// <summary>The store person each register person of the run stands for, when there is one — without making any.</summary>
@@ -147,13 +138,18 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     /// them; a row the accountant gave them; else the row as the search gave it — the register person it found, or a
     /// payee the row makes a person by decision 108 — unless the accountant gave the row to nobody. The search's own word
     /// alone (the hits) when the stored rows do not line up with it.</summary>
-    private static Dictionary<Guid, List<DateOnly>> PaidDates(IStore store, Period period, MatchResult run, IReadOnlyList<Person> persons, IReadOnlyDictionary<string, Guid> registerIds)
+    private static Dictionary<Guid, List<DateOnly>> PaidDates(IStore store, Period period, MatchResult? run, IReadOnlyList<Person> persons, IReadOnlyDictionary<string, Guid> registerIds)
     {
         var paid = new Dictionary<Guid, List<DateOnly>>();
         var lines = store.ReviewLines(period.Id);
         foreach (var line in lines.Where(l => l.IsByHand && l.PersonId is not null && l.Date is { } d && d.Year == period.Year && d.Month == period.Month))
         {
             Add(line.PersonId!.Value, line.Date!.Value);
+        }
+
+        if (run is null)
+        {
+            return paid; // no search yet: the lines added by hand are all there is
         }
 
         var storedRun = store.MatchRun(period.Id);
@@ -170,7 +166,8 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         for (var i = 0; i < run.Hits.Count; i++)
         {
             var hit = run.Hits[i];
-            if (!hit.InPeriod || hit.Row.Date is not { } date)
+            // money in is no payout (decision 141): a refund or an advance paid back dates nobody
+            if (!hit.InPeriod || hit.Row.Date is not { } date || hit.Row.Direction == Direction.Credit)
             {
                 continue;
             }
@@ -472,7 +469,10 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         if (run is null)
         {
             problems.Add("The period has no match run; every person of the company is looked up.");
-            persons.AddRange(_store.Persons(period.CompanyId).Select(p => (p, ControlDateOf(period))));
+            // a month paid by lines added by hand alone: they date their persons (decision 168)
+            var everyone = _store.Persons(period.CompanyId);
+            var byHand = PaidDates(_store, period, null, everyone, new Dictionary<string, Guid>());
+            persons.AddRange(everyone.Select(p => (p, ControlDateOf(period, byHand.GetValueOrDefault(p.Id) ?? []))));
             return persons;
         }
 
@@ -513,11 +513,20 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         // every person's payouts as the review stands (decision 138): the register's persons, and the persons the review gives
         // rows of the month though the register does not list them (a rent payee, a row given by hand), with a code to ask by
         var stored = _store.Persons(period.CompanyId);
-        var paid = PaidDates(_store, period, run, stored, RegisterIds(run, stored));
+        var registerIds = RegisterIds(run, stored);
+        var paid = PaidDates(_store, period, run, stored, registerIds);
         persons.AddRange(asked.Select(p => (p, ControlDateOf(period, paid.GetValueOrDefault(p.Id) ?? []))));
         foreach (var other in stored.Where(p => p.PersonalCode is not null && paid.ContainsKey(p.Id) && persons.All(listed => listed.Item1.Id != p.Id)))
         {
             persons.Add((other, ControlDateOf(period, paid[other.Id])));
+        }
+
+        // paid in the month, outside the register, and no code to ask by: said, as for a register person without one â
+        // their payments are refused until the residency is set on the card (decision 168)
+        foreach (var codeless in stored.Where(p => p.PersonalCode is null && paid.ContainsKey(p.Id) && !registerIds.ContainsValue(p.Id) // a register person without a code was said above
+                     && persons.All(listed => listed.Item1.Id != p.Id)))
+        {
+            problems.Add($"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask â set the residency on the card.");
         }
 
         return persons;

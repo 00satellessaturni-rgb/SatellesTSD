@@ -425,6 +425,8 @@ public sealed class MainForm : Form
 
     internal ToolStripMenuItem RemoveLineButton => _removeLineButton;
 
+    internal ToolStripMenuItem NewCompanyButton => _newCompanyButton;
+
     internal ToolStripMenuItem ReportButton => _reportButton;
 
     internal void Reload() => ReloadView();
@@ -559,6 +561,14 @@ public sealed class MainForm : Form
     {
         if (_busy || _updateCheck is not { State: ReleaseState.Available, Release: { } release })
         {
+            return;
+        }
+
+        if (OwnedForms.Length > 0)
+        {
+            // a dialog of this window is open (Failid, Kirjeldused: they hold the store the update would close): the offer
+            // stays in the title and the menu, and is taken up once the dialog is closed (decision 169)
+            Log(UiText.UpdateAfterDialog);
             return;
         }
 
@@ -1540,6 +1550,18 @@ public sealed class MainForm : Form
             return;
         }
 
+        // the card's edits are settled before another company is made and shown, as before any other switch (decision
+        // 145): a Cancel leaves the window on the company and the person it was on
+        if (_personPanel.IsDirty)
+        {
+            if (ResolveDirtyPanel() == Unsaved.Kept)
+            {
+                return;
+            }
+
+            ReloadView(); // saved or dropped, the card and the grids show what the store holds before the dialog opens
+        }
+
         using var dialog = new CompanyDialog();
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
@@ -2254,7 +2276,7 @@ public sealed class MainForm : Form
                     Log(UiText.AmountChanged(payment.IsByHand ? UiText.ByHand : payment.Reference, change));
                 }
             }
-            catch (ReviewException ex) when (UiText.AmountRefused(ex, payment.IsByHand) is { } words)
+            catch (ReviewException ex) when (UiText.AmountRefused(ex, payment.IsByHand, unsplit: payment.Part == 0) is { } words)
             {
                 Fail(new ReviewException(ex.Code, words, ex.Figure)); // the refusal in the window's own words
             }

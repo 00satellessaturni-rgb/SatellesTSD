@@ -42,8 +42,10 @@ VBA) is in [docs/reference](docs/reference).
    Going back by hand: close every SatellesTSD window; beside the exe, the hidden folder `.SatellesTSD-update`
    keeps the newest `previous-<stamp>` folder with the earlier `SatellesTSD.exe` and its `schemas` folder — copy
    both over the program's own and start it. If the store's format was upgraded meanwhile, the older program
-   offers to put the `firma.db.before-v<N>` copy back and sets the upgraded file aside as `firma.db.newer-v<N>` (the same N: the format the newer program brought);
-   whatever was entered after the upgrade is then in the aside file only.
+   does not open the store and says to update the program: the copy from before the upgrade is offered back only
+   right after an update that failed. To go back by hand all the same, with every window closed: rename `firma.db`
+   to `firma.db.newer-v<N>` (N: the format the newer program brought), copy `firma.db.before-v<N>` to `firma.db`,
+   and start the older program; whatever was entered after the upgrade is then in the `.newer` file only.
 4. If the window ever fails, it writes `%AppData%\SatellesTSD\viga.log`; send that file along.
 
 Command-line switches: `--store <file>` opens that store instead of the remembered one, once: the remembered
@@ -63,17 +65,22 @@ the header, keep its id so the search's filters still apply to it — and delete
 coming back);
 the toolbar keeps the company and the month. Every table sorts on a header
 click and has an **Otsi:** box that hides the rows without the text. The payments table has tabs: the
-person picked, every payment of the month, one per category, and the payments without a category.
+person picked, every payment of the month, one per category, the payments without a category, and
+**Kategooriate konflikt** — the rows the search found under more than one category, settled or not.
 
 1. **Periood**: pick the payment month (the previous month is offered). The company need not be picked
    when the files hold the TÖR export: it names the employer, and the program takes the company up or
-   creates it. **Ettevõte** and **Uus ettevõte…** are for a month without a TÖR export. **Sulge
+   creates it. **Ettevõte** and **Uus ettevõte…** are for a month without a TÖR export; **Muuda
+   ettevõtet…** changes the name and the code, and **Koodi liik failis** says what the file calls the
+   payer's code when it is not an Äriregister code (a personal code, an MRR code). **Sulge
    ettevõte** puts the company shown away, so that the next files go to their own employer without a
    question; the choice holds until a company is picked again.
 2. **Impordi failid…**: the TÖR export (`search-export…`) and every bank statement of the month
    (CSV or the bank's Excel; a file imported before is found again, never stored twice). When the export
    names another employer than the company shown, the program asks before switching to it. **Failid…**
-   lists what the period uses.
+   lists what the period uses; there a file is read again with the layouts in force (**Loe uuesti**: the
+   decisions on its rows follow them), taken out of the period, or deleted from the store — one file,
+   several picked, or all of them (**Vali kõik**), with one question.
 3. **Otsi maksed**: the search over the statements — the persons grid (the Vahearuanne) and, per person,
    the payments found (the Otsingu kontroll) with the category, the payment type and whether it is declared.
    A statement row without a payee name (a fee, a card payment, a balance line) is listed too, under
@@ -85,14 +92,19 @@ person picked, every payment of the month, one per category, and the payments wi
    again for that person, and when a fact set by hand differs from the answer, asks whether to take the register's.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
-   checks say what would be refused.
+   checks say what would be refused. A row that holds two things (a salary and a compensation in one
+   transfer) is split by typing a smaller amount in **Summa**: the difference becomes a part of its own
+   ("osa 2"; the row's own share is "osa 1") with its own person, category and type — it starts with no category, so it is not declared
+   until given one — and a part's amount set to 0 takes the part out again.
 6. **Deklaratsioon › Koosta read**: the declared lines with their taxes, one per payment, plus the zero
    line for a valid employment without pay. Build again after every change; it reconciles in place.
    The **Seaded** menu chooses the cut, and remembers it: one line per payment (the default), or one
    line per person and payment type with the month's payments added up and dated by the latest of
    them. Once a month's lines are on the server in one cut, the other is refused for that month.
 7. **Ekspordi XML…**: one file for the month into the folder you pick; the checklist that follows says
-   how to upload it in e-MTA (the same payment month; a confirmed declaration opened for changes first).
+   how to upload it in e-MTA (the same payment month; a confirmed declaration opened for changes first). A file
+   not uploaded after all is taken back with **Tühista eksport**: its lines are drafts again, and the file
+   written is renamed with `.tagasi-voetud` after its name, so it is not uploaded by mistake.
 8. In e-MTA: upload the file, wait for the processing, read the outcome per line. Here: **Märgi üles
    laaditud**, then **Loe tagasiside…** with the feedback report if e-MTA gives it, or **Kinnita rida
    käsitsi** / **Lükka rida tagasi** per line. **Ajalugu…** shows every version of a key, when a sent

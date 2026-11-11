@@ -1199,6 +1199,15 @@ public class WindowTests
 
             Assert.Equal(["Mari Maasikas"], form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells["payee"].Value?.ToString())); // her payments again, not the other person's
 
+            // Cancel: "Uus ettevõte" — the card is asked about before the dialog opens, and nothing is made or switched
+            var companies = form.Services!.Store.Companies().Count;
+            var shown = form.CompanyBox.SelectedItem?.ToString();
+            form.NewCompanyButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal((companies, shown), (form.Services!.Store.Companies().Count, form.CompanyBox.SelectedItem?.ToString()));
+            Assert.Equal((true, ""), (card.IsDirty, card.FirstNameBox.Text));
+            Assert.Equal(0, form.PersonsGrid.CurrentRow!.Index);
+
             // a search that hides her row is called off the same way: the search goes, the grid is on her again
             form.PersonsSearch.Text = "tamm";
             Ui.Pump();
@@ -1485,6 +1494,16 @@ public class WindowTests
             await Task.Delay(1, cancellationToken);
             return LookupResult<PensionFinding>.Found(new PensionFinding(PensionStatus.Joined, new DateOnly(2019, 1, 1), null, [new RatePeriod(new DateOnly(2019, 1, 1), null, Rate, "x")]), null);
         }
+    }
+
+    [Fact]
+    public void An_amount_refused_on_a_row_never_split_speaks_of_no_parts()
+    {
+        var refusal = new ReviewException(ReviewWorkspace.SplitOwnShare, "x", 100m);
+        var unsplit = UiText.AmountRefused(refusal, unsplit: true)!;
+        Assert.Contains("ei saa suurendada ega nulliks muuta", unsplit, StringComparison.Ordinal);
+        Assert.DoesNotContain("vähendage mõne osa", unsplit, StringComparison.Ordinal); // there are none to lower
+        Assert.Contains("vähendage mõne osa", UiText.AmountRefused(refusal)!, StringComparison.Ordinal); // a row with parts: as before
     }
 
     [Fact]

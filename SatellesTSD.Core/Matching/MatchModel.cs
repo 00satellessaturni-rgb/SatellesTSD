@@ -141,6 +141,10 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     /// payment: shown, nothing built (decision 137).</summary>
     public const string IncludedWithoutRow = "INCLUDED_NO_ROW";
 
+    /// <summary>A card export stored before 0.16.0 keeps its old reading — every amount as money in, in the payment's own
+    /// currency — so its payouts are left out as money in (decision 141): said, with the way to read it again (decision 171).</summary>
+    public const string OldReading = "OLD_READING";
+
     /// <summary>Rows of a statement below its last payee row were not listed (the workbook's cut, decision 29): counted and said (140).</summary>
     public const string RowsBelowLastPayee = "ROWS_BELOW_LAST_PAYEE";
 

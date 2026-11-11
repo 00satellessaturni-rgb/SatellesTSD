@@ -273,7 +273,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
                     cleared.Add(MonthOf(month));
                 }
 
-                draftsDeleted = DeleteDraftsFrom(fileId, periods); // built from the old rows, in any Draft month; the next build makes them again
+                draftsDeleted = DeleteDraftsFrom(fileId, periods, listing.Select(m => m.Id).ToHashSet()); // built from the old rows, in any Draft month; the next build makes them again
                 replaced = _store.ReplaceImport(fileId, parsed, content);
             });
         }
@@ -319,20 +319,24 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
                 _store.UnlinkImport(periodId, fileId); // refuses while the run holds the file and the word was not given
             }
 
-            DeleteDraftsFrom(fileId, periods);
+            DeleteDraftsFrom(fileId, periods, listedHere ? [periodId] : []); // a file no month lists was read by no run: no totals are its
             _store.RemoveImport(fileId);
         });
     }
 
     /// <summary>The Draft payments built from the file's rows, in every Draft month of the company (a month that no longer
     /// lists the file may still hold them): deleted, the number told. The next build makes them again.</summary>
-    private int DeleteDraftsFrom(Guid fileId, IReadOnlyList<Period> periods)
+    /// <param name="listing">The months whose run read the file. A line of the totals cut adds up a person's rows of the
+    /// month and names none of them, so in these months every Draft totals line goes with the file's rows (decision 170).</param>
+    private int DeleteDraftsFrom(Guid fileId, IReadOnlyList<Period> periods, IReadOnlyCollection<Guid> listing)
     {
         var rows = _store.Sheets(fileId).SelectMany(s => _store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
         var deleted = 0;
         foreach (var month in periods.Where(p => p.State == PeriodState.Draft))
         {
-            foreach (var draft in _store.Payments(month.Id).Where(l => l.Status == PaymentStatus.Draft && l.SourceRowId is { } row && rows.Contains(row)))
+            var totals = rows.Count > 0 && listing.Contains(month.Id);
+            foreach (var draft in _store.Payments(month.Id).Where(l => l.Status == PaymentStatus.Draft
+                         && (l.SourceRowId is { } row ? rows.Contains(row) : totals && Declare.PeriodDeclarer.IsTotals(l))))
             {
                 _store.DeleteDraft(draft.Id);
                 deleted++;

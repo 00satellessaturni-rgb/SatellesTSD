@@ -149,6 +149,14 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         // was read with (its snapshot, decision 14), since the owner's layouts may change under a run (136)
         var layouts = LayoutCatalog.Default.WithOverrides(_store.Layouts());
         var sheetsById = files.SelectMany(f => _store.Sheets(f.Id)).ToDictionary(s => s.Id);
+        // a card export read by the layout of before 0.16.0 (the always-positive "Orig amount"): its rows all read as money
+        // in, and since decision 141 money in is no payout — only reading the file again puts the amounts, the currency and
+        // the direction right (decision 171)
+        foreach (var stale in run?.Sources.Where(s => s.SheetId is { } id && sheetsById.TryGetValue(id, out var sheet) && sheet.Layout is { Id: "source1" } read && read.Roles.Amount == "Orig amount") ?? [])
+        {
+            unmatchedProblems.Add(new MatchProblem(MatchProblem.OldReading, $"{stale.Name} was read by an earlier version, which took every amount of a card export as money in: its payouts are left out. Read the file again (Failid › Loe uuesti).", Source: stale.Name));
+        }
+
         var assumed = run?.Sources
             .Where(s => (s.SheetId is { } sheetId && sheetsById.TryGetValue(sheetId, out var sheet) && sheet.Layout is { } snapshot ? snapshot : layouts.Find(s.LayoutId))?.DirectionIsAssumed() == true)
             .Select(s => s.Name).ToHashSet(StringComparer.Ordinal) ?? [];

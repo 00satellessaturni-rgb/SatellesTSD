@@ -603,6 +603,78 @@ public class LookupRunnerTests
     }
 
     [Fact]
+    public void Money_in_from_a_register_person_dates_nobody()
+    {
+        // a row of money in that names the register person, ten days after her salary: no payout, so not her day
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: "Mari Maasikas", renterDirection: "C");
+        using (store)
+        {
+            var run = new MatchRunner(store).Run(period.Id);
+            var mari = store.FindPerson(company.Id, ReviewFixtures.MariCode) ?? new SatellesTSD.Core.Review.ReviewWorkspace(store).Load(period.Id).Persons[0].Person!;
+            Assert.Contains(run.Hits, h => h.InPeriod && h.Row.Direction == Direction.Credit && h.Row.Date == new DateOnly(2026, 10, 15) && h.PersonKey is not null);
+            Assert.Equal(new DateOnly(2026, 10, 5), Runner(store, new FakeResidency(), new FakePension()).ControlDateFor(mari, period));
+            Assert.Equal(new DateOnly(2026, 10, 5), LookupRunner.ControlDatesOf(store, period)[mari.Id]);
+        }
+    }
+
+    [Fact]
+    public async Task Without_a_search_the_lines_added_by_hand_date_their_persons()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var mari = store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var jaan = store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309"));
+            store.SaveReviewLine(SatellesTSD.Core.Review.ReviewLine.AddedByHand(period.Id, mari.Id, new DateOnly(2026, 10, 5), 500m, "x"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null), ["38810140309"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null), ["38810140309"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            var runner = Runner(store, residency, pension);
+
+            Assert.Equal(new DateOnly(2026, 10, 5), runner.ControlDateFor(mari, period)); // the card's check
+            Assert.Equal(Control, runner.ControlDateFor(jaan, period)); // nobody paid him: the month's last day
+            var report = await runner.RunAsync(period.Id); // the month's run
+            Assert.Equal(new DateOnly(2026, 10, 5), report.Persons.Single(p => p.PersonId == mari.Id).ControlDate);
+            Assert.Equal(Control, report.Persons.Single(p => p.PersonId == jaan.Id).ControlDate);
+        }
+    }
+
+    [Fact]
+    public async Task A_register_person_without_a_code_is_named_as_skipped_once_also_when_paid()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup(jaanCodeless: true);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new SatellesTSD.Core.Review.ReviewWorkspace(store);
+            var card = workspace.Load(period.Id).Persons.Select(p => p.Person).Single(p => p is { PersonalCode: null })!; // the review made his card
+            workspace.AddHandLine(period.Id, card.Id, new DateOnly(2026, 10, 10), 100m, "x", "käsitsi", "Palgad"); // paid in the month
+
+            var report = await Runner(store, new FakeResidency(), new FakePension()).RunAsync(period.Id);
+
+            Assert.Single(report.Problems, p => p.StartsWith(LookupRunner.Skipped, StringComparison.Ordinal)); // the register's line, and no second one
+        }
+    }
+
+    [Fact]
+    public async Task A_paid_person_outside_the_register_without_a_code_is_named_as_skipped()
+    {
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: "KATI KASK", renterCode: "49001010008");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new SatellesTSD.Core.Review.ReviewWorkspace(store);
+            var view = workspace.Load(period.Id);
+            var codeless = workspace.AddPerson(company.Id, "Peeter", "Pihl", null, null);
+            workspace.SetPerson(view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ"), codeless.Id);
+
+            var report = await Runner(store, new FakeResidency(), new FakePension()).RunAsync(period.Id);
+
+            Assert.DoesNotContain(report.Persons, p => p.PersonId == codeless.Id); // nothing to ask by
+            Assert.Single(report.Problems, p => p.StartsWith(LookupRunner.Skipped, StringComparison.Ordinal) && p.Contains("paid in the month", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public async Task A_person_outside_the_register_given_a_row_by_hand_is_looked_up_on_its_day_and_a_row_given_nobody_asks_nobody()
     {
         const string otherCode = "39001010008";
