@@ -104,8 +104,25 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         }
 
         var persons = _store.Persons(person.CompanyId);
-        var paid = PaidDates(period, run, persons, RegisterIds(run, persons));
+        var paid = PaidDates(_store, period, run, persons, RegisterIds(run, persons));
         return ControlDateOf(period, paid.GetValueOrDefault(person.Id) ?? []);
+    }
+
+    /// <summary>The day every paid person's facts are checked for in the period as the review stands now (decision 138),
+    /// by the person's id; a person not among them is checked for the month's last day. None without a search: nobody
+    /// is dated yet. The build compares it with the day the facts were last checked for (decision 166).</summary>
+    public static IReadOnlyDictionary<Guid, DateOnly>? ControlDatesOf(IStore store, Period period)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(period);
+        var run = store.LoadMatchResult(period.Id);
+        if (run is null)
+        {
+            return null;
+        }
+
+        var persons = store.Persons(period.CompanyId);
+        return PaidDates(store, period, run, persons, RegisterIds(run, persons)).ToDictionary(p => p.Key, p => ControlDateOf(period, p.Value));
     }
 
     /// <summary>The store person each register person of the run stands for, when there is one — without making any.</summary>
@@ -130,19 +147,19 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     /// them; a row the accountant gave them; else the row as the search gave it — the register person it found, or a
     /// payee the row makes a person by decision 108 — unless the accountant gave the row to nobody. The search's own word
     /// alone (the hits) when the stored rows do not line up with it.</summary>
-    private Dictionary<Guid, List<DateOnly>> PaidDates(Period period, MatchResult run, IReadOnlyList<Person> persons, IReadOnlyDictionary<string, Guid> registerIds)
+    private static Dictionary<Guid, List<DateOnly>> PaidDates(IStore store, Period period, MatchResult run, IReadOnlyList<Person> persons, IReadOnlyDictionary<string, Guid> registerIds)
     {
         var paid = new Dictionary<Guid, List<DateOnly>>();
-        var lines = _store.ReviewLines(period.Id);
+        var lines = store.ReviewLines(period.Id);
         foreach (var line in lines.Where(l => l.IsByHand && l.PersonId is not null && l.Date is { } d && d.Year == period.Year && d.Month == period.Month))
         {
             Add(line.PersonId!.Value, line.Date!.Value);
         }
 
-        var storedRun = _store.MatchRun(period.Id);
-        var storedHits = storedRun is null ? [] : _store.MatchHits(storedRun.Id);
+        var storedRun = store.MatchRun(period.Id);
+        var storedHits = storedRun is null ? [] : store.MatchHits(storedRun.Id);
         var aligned = storedRun is not null && storedHits.Count == run.Hits.Count;
-        var catalog = storedRun is { CatalogJson.Length: > 0 } ? MatchCatalog.Parse(storedRun.CatalogJson) : new MatchRunner(_store).Catalog();
+        var catalog = storedRun is { CatalogJson.Length: > 0 } ? MatchCatalog.Parse(storedRun.CatalogJson) : new MatchRunner(store).Catalog();
         var overlays = aligned ? lines.Where(l => !l.IsByHand && !l.IsPart && l.RowId is not null).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.First()) : [];
         // the parts split off a row's payment (decision 150): each is paid to its own person
         var parts = aligned ? lines.Where(l => l.IsPart).GroupBy(l => l.RowId!.Value).ToDictionary(g => g.Key, g => g.ToList()) : [];
@@ -496,7 +513,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         // every person's payouts as the review stands (decision 138): the register's persons, and the persons the review gives
         // rows of the month though the register does not list them (a rent payee, a row given by hand), with a code to ask by
         var stored = _store.Persons(period.CompanyId);
-        var paid = PaidDates(period, run, stored, RegisterIds(run, stored));
+        var paid = PaidDates(_store, period, run, stored, RegisterIds(run, stored));
         persons.AddRange(asked.Select(p => (p, ControlDateOf(period, paid.GetValueOrDefault(p.Id) ?? []))));
         foreach (var other in stored.Where(p => p.PersonalCode is not null && paid.ContainsKey(p.Id) && persons.All(listed => listed.Item1.Id != p.Id)))
         {

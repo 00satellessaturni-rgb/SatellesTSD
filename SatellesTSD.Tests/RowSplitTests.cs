@@ -76,6 +76,68 @@ public class RowSplitTests
     }
 
     [Fact]
+    public void A_parts_category_is_the_accountants_word_and_never_follows_the_search()
+    {
+        var (store, period, workspace, _) = Ready();
+        using (store)
+        {
+            // a row the search gave no category to (a fee without a payee): the part split off it is stored as "none", the
+            // accountant's word, not as "whatever the search says" — a later search that finds a category leaves it none
+            var fee = workspace.Load(period.Id).Unmatched.Payments.Single(p => p.Amount == 0.38m);
+            Assert.Null(fee.DefaultCategory);
+            workspace.SetAmount(fee, 0.30m);
+            var stored = Assert.Single(store.ReviewLines(period.Id), l => l.IsPart);
+            Assert.Equal((null, true), (stored.Category, stored.NoCategory));
+
+            // a category given and taken away again: none once more, still the accountant's word
+            var part = workspace.Load(period.Id).Unmatched.Payments.Single(p => p.IsPart);
+            workspace.SetCategory(part, "Üür");
+            part = workspace.Load(period.Id).Unmatched.Payments.Single(p => p.IsPart);
+            Assert.Equal("Üür", part.Category);
+            workspace.SetCategory(part, null);
+            stored = Assert.Single(store.ReviewLines(period.Id), l => l.IsPart);
+            Assert.Equal((null, true), (stored.Category, stored.NoCategory));
+
+            // a part given the very category the search gives its row holds it by name: it is the part's own, whatever a later search says
+            var salary = Assert.Single(Rows(workspace, period));
+            workspace.SetAmount(salary, 800m);
+            var split = Rows(workspace, period)[1];
+            Assert.Equal("Palgad", split.DefaultCategory);
+            workspace.SetCategory(split, "Palgad");
+            Assert.Equal(("Palgad", false), store.ReviewLines(period.Id).Where(l => l.IsPart && l.RowId == salary.RowId).Select(l => (l.Category, l.NoCategory)).Single());
+            workspace.SetCategory(Rows(workspace, period)[1], null);
+            Assert.Equal((null, true), store.ReviewLines(period.Id).Where(l => l.IsPart && l.RowId == salary.RowId).Select(l => (l.Category, l.NoCategory)).Single());
+        }
+    }
+
+    [Fact]
+    public void A_part_saved_by_an_earlier_version_as_following_the_search_is_settled_once_as_it_shows_now()
+    {
+        var (store, period, workspace, _) = Ready();
+        using (store)
+        {
+            // as 0.26–0.28 saved them: no category of its own and not marked none
+            var fee = workspace.Load(period.Id).Unmatched.Payments.Single(p => p.Amount == 0.38m);
+            var salary = Assert.Single(Rows(workspace, period));
+            store.SaveReviewLine(ReviewLine.PartOf(period.Id, fee.RowId!.Value, 0.08m, noCategory: false));
+            store.SaveReviewLine(ReviewLine.PartOf(period.Id, salary.RowId!.Value, 100m, noCategory: false));
+            Assert.All(store.ReviewLines(period.Id).Where(l => l.IsPart), l => Assert.Equal((null, false), (l.Category, l.NoCategory)));
+
+            // the first load settles both: none where the search gives the row no category, the search's category by name where it does
+            var view = workspace.Load(period.Id);
+            Assert.Null(view.Unmatched.Payments.Single(p => p.IsPart).Category);
+            Assert.Equal("Palgad", Rows(workspace, period)[1].Category);
+            var stored = store.ReviewLines(period.Id).Where(l => l.IsPart).ToDictionary(l => l.RowId!.Value);
+            Assert.Equal((null, true), (stored[fee.RowId!.Value].Category, stored[fee.RowId!.Value].NoCategory));
+            Assert.Equal(("Palgad", false), (stored[salary.RowId!.Value].Category, stored[salary.RowId!.Value].NoCategory));
+
+            // settled lines are left alone by the next load
+            workspace.Load(period.Id);
+            Assert.Equal(stored.Values.OrderBy(l => l.Id), store.ReviewLines(period.Id).Where(l => l.IsPart).OrderBy(l => l.Id));
+        }
+    }
+
+    [Fact]
     public void A_part_takes_from_the_rows_share_or_gives_back_and_goes_at_zero()
     {
         var (store, period, workspace, _) = Ready();

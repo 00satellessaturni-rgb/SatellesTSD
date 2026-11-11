@@ -155,10 +155,11 @@ public sealed partial class SqliteStore
         var oldKeys = RowKeys(fileId);
         var decisions = Query(
             """
-            SELECT id, row_id FROM review_line WHERE row_id IN (
+            SELECT id, row_id, amount FROM review_line WHERE row_id IN (
                 SELECT r.id FROM statement_row r JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file)
             """,
-            r => (LineId: Guid.Parse(r.GetString(0)), RowId: Guid.Parse(r.GetString(1))), ("$file", G(fileId)));
+            r => (LineId: Guid.Parse(r.GetString(0)), RowId: Guid.Parse(r.GetString(1)), IsPart: !r.IsDBNull(2)), ("$file", G(fileId)));
+        var oldAmounts = RowAmounts(fileId);
 
         // the old file steps aside (its hash freed), the new one takes its place in every period's list — the link order kept
         Exec("UPDATE import_file SET sha256 = $gone WHERE id = $id", ("$gone", "replaced:" + G(fileId)), ("$id", G(fileId)));
@@ -167,11 +168,15 @@ public sealed partial class SqliteStore
 
         // the decisions follow their rows; one whose row is not read again goes
         var newRows = RowKeys(file.Id).ToDictionary(k => k.Value, k => k.Key);
+        var newAmounts = RowAmounts(file.Id);
         var carried = 0;
         var dropped = 0;
-        foreach (var (lineId, rowId) in decisions)
+        foreach (var (lineId, rowId, isPart) in decisions)
         {
-            if (oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out var target))
+            // a part is a share of its row's amount: it follows the row only onto a row of that very amount, so a row's
+            // own share can never come out as what the parts left of another sum (decision 164)
+            if (oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out var target)
+                && (!isPart || oldAmounts.GetValueOrDefault(rowId) == newAmounts.GetValueOrDefault(target)))
             {
                 Exec("UPDATE review_line SET row_id = $row WHERE id = $id", ("$row", G(target)), ("$id", G(lineId)));
                 carried++;
@@ -192,8 +197,12 @@ public sealed partial class SqliteStore
         return new ImportReplacement(file, carried, dropped);
     }
 
-    /// <summary>Every statement row of a file by the key a re-read finds it again under: the sheet's index, the row's
-    /// fingerprint, and its ordinal among the sheet's rows of that fingerprint (two identical fees stay two).</summary>
+    /// <summary>Every statement row of a file that can carry a decision, by the key a re-read finds it again under: the
+    /// sheet's index, the row's fingerprint, and its ordinal among the sheet's rows of that fingerprint (two identical
+    /// fees stay two). A row without a payee is stored with no fingerprint; here it gets one from what it says (its
+    /// account, date, amount, direction and description), so it is found by its content and never by its place among the
+    /// sheet's other payee-less rows (decision 164). A blank row and a header's copy carry no decision and have no key:
+    /// one more or one fewer of them moves nothing.</summary>
     private Dictionary<Guid, (int Sheet, string Hash, int Ordinal)> RowKeys(Guid fileId)
     {
         var keys = new Dictionary<Guid, (int, string, int)>();
@@ -202,14 +211,24 @@ public sealed partial class SqliteStore
             var seen = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var row in StatementRows(sheet.Id).OrderBy(r => r.Row.RowNo))
             {
-                var ordinal = seen.GetValueOrDefault(row.Row.RowHash);
-                seen[row.Row.RowHash] = ordinal + 1;
-                keys[row.Id] = (sheet.SheetIndex, row.Row.RowHash, ordinal);
+                if (row.Row.SkipReason is SkipReason.Blank or SkipReason.Header)
+                {
+                    continue;
+                }
+
+                var hash = row.Row.RowHash.Length > 0 ? row.Row.RowHash : StatementParser.HashOf(row.Row);
+                var ordinal = seen.GetValueOrDefault(hash);
+                seen[hash] = ordinal + 1;
+                keys[row.Id] = (sheet.SheetIndex, hash, ordinal);
             }
         }
 
         return keys;
     }
+
+    /// <summary>The amount of every statement row of a file (none where the row has none).</summary>
+    private Dictionary<Guid, decimal?> RowAmounts(Guid fileId) =>
+        Sheets(fileId).Where(s => s.Kind == SheetKind.Statement).SelectMany(s => StatementRows(s.Id)).ToDictionary(r => r.Id, r => r.Row.Amount);
 
     private void InsertSheet(Guid id, Guid fileId, ImportedSheet sheet, SheetKind kind, string? layoutId, string? layoutJson, int headerRowNo, IReadOnlyList<string> headers,
         string? account, string displayName, int rowCount, DateOnly? firstDate, DateOnly? lastDate, IReadOnlyList<ImportProblem> problems) =>

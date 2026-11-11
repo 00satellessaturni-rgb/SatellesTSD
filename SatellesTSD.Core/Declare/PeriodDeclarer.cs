@@ -30,6 +30,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string Excluded = "EXCLUDED";
     public const string Included = "INCLUDED";
     public const string FactsOfAnotherMonth = "FACTS_OF_ANOTHER_MONTH";
+    public const string FactsOfAnotherDay = "FACTS_OF_ANOTHER_DAY";
     public const string NoResidenceCountry = "NO_RESIDENCE_COUNTRY";
 
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
@@ -44,6 +45,22 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     private readonly TaxRates _rates = rates ?? TaxRates.Year2026;
     private readonly bool _ratesGiven = rates is not null;
     private readonly ReviewWorkspace _workspace = new(store, rates, clock);
+
+    /// <summary>The day each paid person is checked for as the review stands, worked out once per build of a period.</summary>
+    private (Guid PeriodId, IReadOnlyDictionary<Guid, DateOnly>? Days)? _controlDays;
+
+    /// <summary>The day the person's facts are checked for as the review stands: their latest payout of the month, else
+    /// its last day — the lookups' own rule. None without a search.</summary>
+    private DateOnly? ControlDayOf(Period period, Guid personId)
+    {
+        if (_controlDays is not { } known || known.PeriodId != period.Id)
+        {
+            known = (period.Id, LookupRunner.ControlDatesOf(_store, period));
+            _controlDays = known;
+        }
+
+        return known.Days is null ? null : known.Days.TryGetValue(personId, out var day) ? day : LookupRunner.ControlDateOf(period);
+    }
 
     /// <summary>The part of the month the minimum obligation covers: the employment's days in the month over 30
     /// (määrus nr 17 § 6), 1 for a whole month or an unknown employment.</summary>
@@ -194,6 +211,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// on the server, a build in the other cut is refused: it would cancel every line and declare the month anew.</summary>
     public BuildReport Build(Guid periodId, DeclarationMode mode = DeclarationMode.PerPayment)
     {
+        _controlDays = null; // the review may have changed since the last build: the persons' days are worked out afresh
         var view = _workspace.Load(periodId);
         if (!view.Editable)
         {
@@ -483,6 +501,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             // a note, not a refusal: the facts stand as the registers said them for that day; this month may say otherwise
             problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.");
+        }
+        else if (fromRegisters && person.FactsControlDate is { } checkedFor && ControlDayOf(period, person.Id) is { } due && due != checkedFor)
+        {
+            // a note, not a refusal: the registers answered for one day of the month, and the review now pays the person on
+            // another (a row given to them or taken away, a line added, or a check made before the search) — the residency or
+            // the membership may differ between the two days (decision 166)
+            problems.Add($"{FactsOfAnotherDay}: the residency and the pension were looked up for {checkedFor:dd.MM.yyyy}; as the review stands the person's day is {due:dd.MM.yyyy}; ask the registers again (Päringud).");
         }
         else if (fromRegisters && person.FactsControlDate is null
             && Earlier(person.ResidencySource == LookupSource.Emta ? person.ResidencyCheckedOn : null, person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived ? person.PensionCheckedOn : null) is { } checkedOn

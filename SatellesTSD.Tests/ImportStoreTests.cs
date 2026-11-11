@@ -287,6 +287,47 @@ public class ImportStoreTests
     }
 
     [Fact]
+    public void A_re_read_finds_a_row_without_a_payee_by_what_it_says_not_by_its_place_among_such_rows()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            // three rows without a payee (a fee with a description, two bare amounts) and a named one
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            var bytes = Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(),
+                ["EE497700771001131757", 1, new DateTime(2026, 10, 2), null, null, "D", -0.38d, null, null, "Teenustasu", "EUR"],
+                ["EE497700771001131757", 2, new DateTime(2026, 10, 3), null, null, "D", -200d, null, null, null, "EUR"],
+                ["EE497700771001131757", 3, new DateTime(2026, 10, 4), null, null, "D", -5d, null, null, null, "EUR"],
+                ["EE497700771001131757", 4, new DateTime(2026, 10, 5), "EE12", "Mari Maasikas", "D", -900d, null, null, "palk", "EUR"]);
+            var file = store.AddImport(company.Id, Importer.Read("konto.xlsx", bytes), bytes);
+            store.LinkImport(period.Id, file.Id);
+            var rows = store.StatementRows(store.Sheets(file.Id).Single().Id);
+            var twoHundred = rows.Single(r => r.Row.Amount is 200m or -200m);
+            Assert.Equal(3, rows.Count(r => r.Row.SkipReason == SkipReason.NoName && r.Row.RowHash.Length == 0)); // stored without a fingerprint, all three
+
+            // the accountant's decision on the 200 row, and a part split off it
+            store.SaveReviewLine(SatellesTSD.Core.Review.ReviewLine.ForRow(period.Id, twoHundred.Id) with { Category = "Üür", Note = "üür" });
+            store.SaveReviewLine(SatellesTSD.Core.Review.ReviewLine.PartOf(period.Id, twoHundred.Id, 150m));
+
+            // read again with a layout that takes the name from the description: the fee row now has a payee, so the 200 row
+            // is the first of the payee-less rows where it was the second
+            var swapped = lhv with { Roles = lhv.Roles with { Counterparty = lhv.Roles.Description, Description = lhv.Roles.Counterparty } };
+            var changed = new Importer(LayoutCatalog.Default.WithOverrides([swapped]), new ExcelTableReader());
+            var replaced = store.ReplaceImport(file.Id, changed.Read("konto.xlsx", bytes), bytes);
+
+            Assert.Equal((2, 0), (replaced.Carried, replaced.Dropped));
+            var after = store.StatementRows(store.Sheets(replaced.File.Id).Single().Id);
+            var same = after.Single(r => r.Row.RowNo == twoHundred.Row.RowNo);
+            Assert.Equal(twoHundred.Row.Amount, same.Row.Amount);
+            var lines = store.ReviewLines(period.Id);
+            Assert.Equal(2, lines.Count);
+            Assert.All(lines, l => Assert.Equal(same.Id, l.RowId)); // on the 200 row still, not on the 5 row that took its place in the count
+            Assert.Equal(("Üür", "üür"), (lines.Single(l => !l.IsPart).Category, lines.Single(l => !l.IsPart).Note));
+            Assert.Equal(150m, lines.Single(l => l.IsPart).Amount);
+        }
+    }
+
+    [Fact]
     public void A_re_read_is_refused_by_a_run_a_month_past_draft_and_bytes_that_are_not_the_files()
     {
         var (store, company, period) = Setup();

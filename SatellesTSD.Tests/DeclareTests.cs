@@ -1257,6 +1257,35 @@ public class DeclareTests
     }
 
     [Fact]
+    public void Facts_the_registers_gave_for_another_day_of_the_month_than_the_reviews_are_noted_on_the_build()
+    {
+        using var box = Ready();
+        var due = LookupRunner.ControlDatesOf(box.Store, box.Period)![box.Mari.Id]; // her latest payout of the month, as the review stands
+        Assert.NotEqual(new DateOnly(2026, 10, 31), due);
+
+        // checked for the month's last day (a check made before the search), paid earlier: noted, not refused
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, FactsControlDate = new DateOnly(2026, 10, 31) });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        var note = Assert.Single(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherDay, StringComparison.Ordinal));
+        Assert.Contains("31.10.2026", note);
+        Assert.Contains(due.ToString("dd.MM.yyyy", System.Globalization.CultureInfo.InvariantCulture), note);
+        Assert.Single(box.Lines);
+
+        // checked for her day: nothing to say; and the day follows the review at the next build (a line added later in the month)
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Emta, FactsControlDate = due });
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherDay, StringComparison.Ordinal));
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, due.AddDays(3), 50m, "x", "käsitsi", "Palgad");
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherDay, StringComparison.Ordinal));
+
+        // facts set by hand are nobody's day: nothing is said
+        box.Store.UpdatePerson(box.Mari with { ResidencySource = LookupSource.Manual, PensionSource = LookupSource.Manual, FactsControlDate = new DateOnly(2026, 10, 31) });
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.FactsOfAnotherDay, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void A_person_looked_up_before_the_control_date_was_kept_is_noted_by_the_day_of_the_check()
     {
         using var box = Ready();

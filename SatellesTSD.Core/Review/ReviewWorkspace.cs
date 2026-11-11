@@ -246,6 +246,18 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     : !shared && hit.PersonKey is null ? PayeeOf(hit, overlay, rowId) : null;
                 var candidates = shared ? indices.Select(i => run.Hits[i].PersonKey).OfType<string>().Distinct().Select(k => personsByKey[k].FullName).ToList() : [];
                 var parts = partsByRow.GetValueOrDefault(rowId) ?? [];
+                // a part saved by 0.26–0.28 could say "as the search says" (no category, not marked none): no part is saved
+                // so any more, so such a line is an old one and is settled here once, as the accountant sees it now — the
+                // category the search gives the row today by name, else none — and follows no later search (decision 165)
+                for (var n = 0; n < parts.Count; n++)
+                {
+                    if (parts[n] is { Category: null, NoCategory: false } old)
+                    {
+                        var settled = hit.Verdict.Kind == VerdictKind.Matched && hit.Verdict.Category?.Name is { } named ? old with { Category = named } : old with { NoCategory = true };
+                        parts[n] = period.State == PeriodState.Draft ? _store.SaveReviewLine(settled) : settled;
+                    }
+                }
+
                 // the row's own share is what its parts leave; each part is a payment of its own, with its own person and decisions
                 var whole = hit.Amount;
                 var rest = whole - parts.Sum(p => p.Amount!.Value);
@@ -461,8 +473,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var clean = Clean(category);
         return Change(payment,
             l => clean is null
-                ? l with { Category = null, NoCategory = payment.DefaultCategory is not null, TypeCode = null }
-                : l with { Category = Same(clean, payment.DefaultCategory) ? null : clean, NoCategory = false, TypeCode = null },
+                // a part never follows the run: none is stored as none, a category as the category named (decision 165)
+                ? l with { Category = null, NoCategory = payment.IsPart || payment.DefaultCategory is not null, TypeCode = null }
+                : l with { Category = !payment.IsPart && Same(clean, payment.DefaultCategory) ? null : clean, NoCategory = false, TypeCode = null },
             l => l with { Category = clean, NoCategory = false, TypeCode = null });
     }
 
@@ -567,8 +580,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 break;
             case AmountChangeKind.SplitOff:
                 var own = lines.FirstOrDefault(l => l.RowId == payment.RowId && !l.IsPart);
-                // the part split off has no category until the accountant gives it one: "(puudub)" where the run gave the row one
-                _store.SaveReviewLine(ReviewLine.PartOf(payment.PeriodId, payment.RowId!.Value, change.Difference, own?.PersonId, own?.NoPerson == true, noCategory: payment.DefaultCategory is not null));
+                // the part split off has no category until the accountant gives it one, whatever the run says of the row now or after a
+                // later search: "none" is stored as the accountant's word, never as "follow the run" (decision 165)
+                _store.SaveReviewLine(ReviewLine.PartOf(payment.PeriodId, payment.RowId!.Value, change.Difference, own?.PersonId, own?.NoPerson == true, noCategory: true));
                 break;
             case AmountChangeKind.PartResized:
                 _store.SaveReviewLine(lines.First(l => l.Id == payment.LineId) with { Amount = amount });

@@ -472,6 +472,30 @@ public class WindowTests
     }
 
     [Fact]
+    public void An_update_starts_the_new_version_on_the_one_off_in_hand_and_on_no_store_once_one_was_chosen_in_the_window()
+    {
+        // the rule: the command line's one-off is handed on while it is the store in hand (or the one that could not be
+        // opened); a store chosen in the window ends it — the settings name that store, and nothing is handed on
+        Assert.Equal(@"C:\b.db", MainForm.StoreHandedOn(oneOff: true, inHand: @"C:\b.db", commandLine: @"C:\b.db"));
+        Assert.Equal(@"C:\b.db", MainForm.StoreHandedOn(oneOff: true, inHand: null, commandLine: @"C:\b.db"));
+        Assert.Null(MainForm.StoreHandedOn(oneOff: false, inHand: @"C:\c.db", commandLine: @"C:\b.db"));
+        Assert.Null(MainForm.StoreHandedOn(oneOff: false, inHand: @"C:\c.db", commandLine: null));
+
+        Ui.Run(() =>
+        {
+            var release = new SatellesTSD.Infrastructure.Updates.ReleaseManifest(new Version(0, 11, 0, 0), "SatellesTSD-v0.11.0.zip", 1, new string('A', 64), "trial", null);
+            using var handing = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+            {
+                StoreToHandOn = @"C:\b.db",
+            };
+            var arguments = handing.StartArguments();
+            Assert.Equal(["--store", @"C:\b.db"], arguments.Take(2));
+            using var plain = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), Path.GetTempPath(), release, new Version(0, 10, 0, 0), fromStart: false, () => { });
+            Assert.DoesNotContain("--store", plain.StartArguments()); // whatever this process was started with
+        });
+    }
+
+    [Fact]
     public void The_update_dialog_closes_on_a_hand_over_and_only_then_while_it_works()
     {
         Ui.Run(() =>

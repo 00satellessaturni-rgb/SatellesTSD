@@ -586,7 +586,10 @@ public sealed class MainForm : Form
         var storePath = _services?.StorePath;
         // the store the new version will open: the one in hand, else the one the settings remember (a store that could
         // not be reached at the start is still the one it upgrades); its copies as they stand before this update
-        var upgraded = storePath ?? _storeOverride ?? _settings.StorePath;
+        // a one-off of the command line is handed on to the new version; a store chosen in the window is the settings' to
+        // name, and the command line's is handed on no more (decision 167)
+        var handOn = StoreHandedOn(_oneOff, storePath, _storeOverride);
+        var upgraded = handOn ?? storePath ?? _settings.StorePath;
         var copiesBefore = Updater.StoreCopiesOf(upgraded);
         CommitPendingNote(); // a note being typed is saved before the update may close the window
         using var dialog = new UpdateDialog(ExePath, _updateCheck.Folder, release, CurrentVersion, fromStart, () =>
@@ -598,7 +601,11 @@ public sealed class MainForm : Form
             _services = null;
             _view = null;
             _period = null;
-        });
+        })
+        {
+            StoreToHandOn = handOn,
+        };
+        UpdateOpening?.Invoke(dialog);
         dialog.ShowDialog(this);
         if (dialog.Started || dialog.LeftRunning)
         {
@@ -3122,6 +3129,14 @@ public sealed class MainForm : Form
 
     /// <summary>Whether the store shown is a one-off of the command line, which the settings do not remember.</summary>
     internal bool StoreIsOneOff => _oneOff;
+
+    /// <summary>The store an update starts the new version on: the command line's one-off while it is the one in hand (or
+    /// the one that could not be opened); none once a store was chosen in the window — the settings name that one, and the
+    /// command line's store is not opened behind the accountant's back (decision 167).</summary>
+    internal static string? StoreHandedOn(bool oneOff, string? inHand, string? commandLine) => oneOff ? inHand ?? commandLine : null;
+
+    /// <summary>Handed the update window before it is shown (a window test reads what it would start the new version with).</summary>
+    internal Action<UpdateDialog>? UpdateOpening;
 
     private void SaveSettings()
     {

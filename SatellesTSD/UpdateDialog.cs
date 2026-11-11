@@ -251,11 +251,15 @@ public sealed class UpdateDialog : Form
         }
     }
 
-    /// <summary>The store and the settings file this copy was started with, handed on when they were named.</summary>
-    private static string[] StartArguments()
+    /// <summary>The store the new version is started on: the command line's one-off while it is the store in hand; none
+    /// once a store was chosen in the window, which the settings then name (decision 167). The window sets it.</summary>
+    internal string? StoreToHandOn;
+
+    /// <summary>The store to open and the settings file this copy was started with, handed on when they were named.</summary>
+    internal string[] StartArguments()
     {
         var arguments = new List<string>();
-        if (Program.StorePathOverride is { } store)
+        if (StoreToHandOn is { } store)
         {
             arguments.AddRange(["--store", store]);
         }
