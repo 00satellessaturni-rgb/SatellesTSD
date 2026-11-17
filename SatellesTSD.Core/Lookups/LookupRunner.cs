@@ -310,8 +310,14 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             // "not a member" that only ever followed from non-residency goes with the residency, in the same write: a cancel
             // or a failure before Pensionikeskus answers leaves the pension unknown, never the stale inference
             derivedGone = isResident && current.PensionSource == LookupSource.Derived;
+            // a person the register now says is a non-resident: the basic exemption's application, ticked for every
+            // employee of the register by default, is taken off with the same write — a non-resident is not given the
+            // exemption by the payer. Only when the answer makes them one: a tick the accountant set on a person already
+            // a non-resident is the accountant's word and stands (decision 173)
+            var exemptionOff = !isResident && current.Residency != Residency.NonResident && current.BasicExemptionApplied;
             current = current with
             {
+                BasicExemptionApplied = !exemptionOff && current.BasicExemptionApplied,
                 Residency = isResident ? Residency.Resident : Residency.NonResident,
                 ResidencyCheckedOn = CheckedOn(residencyRecord!), // the day the answer was given, also when an answer of the month is reused
                 ResidencySource = LookupSource.Emta,
@@ -322,6 +328,10 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             };
             _store.UpdatePerson(current);
             steps.Add($"residency {(isResident ? "resident" : "non-resident")}");
+            if (exemptionOff)
+            {
+                steps.Add("basic exemption application taken off: a non-resident");
+            }
         }
 
         // the pension question: a non-resident is not a member here (the workbook never asked Pensionikeskus about one)

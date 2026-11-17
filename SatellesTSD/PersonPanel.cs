@@ -114,6 +114,12 @@ public sealed class PersonPanel : UserControl
             check.CheckedChanged += (_, _) => Touched();
         }
 
+        // set to a non-resident by the accountant's hand — picked, or confirmed as it stands: the basic exemption's
+        // application goes off with it, there to be seen and ticked again before the save if this person is to have it
+        // (decision 173)
+        _residency.SelectedIndexChanged += (_, _) => ExemptionOffForNonResident();
+        _confirmResidency.CheckedChanged += (_, _) => { if (_confirmResidency.Checked) { ExemptionOffForNonResident(); } };
+        _exemptionApplied.CheckedChanged += (_, _) => _exemptionTakenOff = false; // the box touched: the accountant's own word from here
         _save.Click += (_, _) => Save();
         _revert.Click += (_, _) => Present(_person, _editable);
         _lookUp.Click += (_, _) => { if (_person is not null) { LookUpRequested?.Invoke(_person); } };
@@ -168,6 +174,36 @@ public sealed class PersonPanel : UserControl
         Present(person, editable);
     }
 
+    /// <summary>The tick was taken off by the residency picked, not by the accountant: picking "resident" again puts it back.</summary>
+    private bool _exemptionTakenOff;
+
+    private void ExemptionOffForNonResident()
+    {
+        if (_filling)
+        {
+            return;
+        }
+
+        if (_residency.SelectedIndex == 1 && _exemptionApplied.Checked)
+        {
+            _exemptionApplied.Checked = false;
+            _exemptionTakenOff = true; // after the box's own handler, which reads a change of the box as the accountant's
+        }
+        else if (_residency.SelectedIndex == 0 && _exemptionTakenOff && !_exemptionApplied.Checked)
+        {
+            // non-resident picked by mistake (or passed with the wheel or the arrow keys) and resident picked again: a
+            // resident does not lose the application over it
+            _exemptionApplied.Checked = true;
+            _exemptionTakenOff = false;
+        }
+    }
+
+    internal ComboBox ResidencyBox => _residency;
+
+    internal CheckBox ConfirmResidencyBox => _confirmResidency;
+
+    internal CheckBox ExemptionAppliedBox => _exemptionApplied;
+
     /// <summary>Shows a person's facts (a fresh copy: the panel edits what it was shown, nothing older), for the year last given.</summary>
     public void Present(Person? person, bool editable)
     {
@@ -216,6 +252,7 @@ public sealed class PersonPanel : UserControl
         _revert.Enabled = on && editable;
         _lookUp.Enabled = on && editable && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
         _filling = false;
+        _exemptionTakenOff = false; // a card shown afresh: nothing on it was taken off by a pick
         IsDirty = false;
     }
 

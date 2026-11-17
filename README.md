@@ -90,6 +90,10 @@ person picked, every payment of the month, one per category, the payments withou
    person at a time; the person panel shows what was found and lets you confirm or set the facts by hand. A second
    run in the month reuses the answers it has; **Kontrolli registrist** on the person's card asks both registers
    again for that person, and when a fact set by hand differs from the answer, asks whether to take the register's.
+   A person the check makes a non-resident loses the tick of **Maksuvaba avaldus** (every employee of the
+   register starts with it), and so does one set a non-resident on the card; **Isik › Eemalda mitteresidentide
+   maksuvaba avaldus** takes it off every non-resident of the month at once — for those who were non-residents
+   already. A tick you set on a non-resident yourself stays.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
    checks say what would be refused. A row that holds two things (a salary and a compensation in one

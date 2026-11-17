@@ -37,6 +37,38 @@ public class ReviewWorkspaceTests
     private static ReviewPayment Stranger(ReviewView view) => view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ");
 
     [Fact]
+    public void The_basic_exemptions_application_is_taken_off_every_non_resident_the_month_shows_and_nobody_else()
+    {
+        var (store, company, period, workspace) = Run();
+        using (store)
+        {
+            var shown = workspace.Load(period.Id).Persons.Select(p => p.Person).OfType<Person>().ToList();
+            Assert.True(shown.Count >= 2);
+            Assert.All(shown, p => Assert.True(p.BasicExemptionApplied)); // an employee of the register: ticked by default
+            var abroad = shown[^1];
+            store.UpdatePerson(abroad with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta });
+            // a non-resident of the company the month does not show: not this month's to change
+            var elsewhere = store.AddPerson(Person.New(company.Id, "Peeter", "Pihl", "39001010008", Residency.NonResident) with { BasicExemptionApplied = true });
+
+            Assert.Equal([abroad.Id], workspace.NonResidentsWithExemption(period.Id).Select(p => p.Id));
+            var changed = workspace.ClearExemptionOfNonResidents(period.Id);
+
+            Assert.Equal([abroad.Id], changed.Select(p => p.Id));
+            var after = store.Persons(company.Id).ToDictionary(p => p.Id);
+            Assert.Equal((false, Residency.NonResident, LookupSource.Emta), (after[abroad.Id].BasicExemptionApplied, after[abroad.Id].Residency, after[abroad.Id].ResidencySource)); // nothing else touched
+            Assert.All(shown.Where(p => p.Id != abroad.Id), p => Assert.True(after[p.Id].BasicExemptionApplied)); // the residents keep it
+            Assert.True(after[elsewhere.Id].BasicExemptionApplied);
+            Assert.Empty(workspace.ClearExemptionOfNonResidents(period.Id)); // nothing left to do
+
+            // a month past Draft is not changed
+            store.UpdatePerson(after[abroad.Id] with { BasicExemptionApplied = true });
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Equal(ReviewWorkspace.PeriodNotDraft, Assert.Throws<ReviewException>(() => workspace.ClearExemptionOfNonResidents(period.Id)).Code);
+            Assert.True(store.Persons(company.Id).Single(p => p.Id == abroad.Id).BasicExemptionApplied);
+        }
+    }
+
+    [Fact]
     public void Without_a_run_the_view_holds_the_files_and_the_rows_nobody_matched_is_empty()
     {
         var (store, _, period, _) = ReviewFixtures.Setup();

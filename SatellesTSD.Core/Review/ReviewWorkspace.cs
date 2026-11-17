@@ -634,6 +634,39 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         _store.DeleteReviewLine(lineId);
     }
 
+    /// <summary>Takes the basic exemption's application off every non-resident among the persons the period shows (its
+    /// register persons and the persons its payments are given to): the exemption is ticked for every employee of the
+    /// register by default and a non-resident is not given it by the payer. The residency and every other fact stay as
+    /// they are. The persons changed are returned (decision 173).</summary>
+    public IReadOnlyList<Person> ClearExemptionOfNonResidents(Guid periodId)
+    {
+        var view = Load(periodId);
+        if (!view.Editable)
+        {
+            throw new ReviewException(PeriodNotDraft, $"The period is {view.Period.State}; the persons' facts are changed for a month while it is a Draft.");
+        }
+
+        var changed = new List<Person>();
+        foreach (var person in NonResidentsWithExemption(view))
+        {
+            var off = person with { BasicExemptionApplied = false };
+            _store.UpdatePerson(off);
+            changed.Add(off);
+        }
+
+        return changed;
+    }
+
+    /// <summary>The non-residents among the persons the period shows whose basic exemption's application is ticked, as the
+    /// store holds them now.</summary>
+    public IReadOnlyList<Person> NonResidentsWithExemption(Guid periodId) => NonResidentsWithExemption(Load(periodId));
+
+    private List<Person> NonResidentsWithExemption(ReviewView view)
+    {
+        var shown = view.Persons.Select(p => p.PersonId).OfType<Guid>().ToHashSet();
+        return _store.Persons(view.Period.CompanyId).Where(p => shown.Contains(p.Id) && p is { Residency: Residency.NonResident, BasicExemptionApplied: true }).ToList();
+    }
+
     /// <summary>Saves the facts the accountant edited onto a fresh copy of the person (so a lookup that ran meanwhile is
     /// not undone): a residency or pension changed — or confirmed — by hand becomes Manual, checked on today. The
     /// register link (<see cref="Person.RegisterKey"/>) stays, so a corrected code or name keeps the person one.</summary>

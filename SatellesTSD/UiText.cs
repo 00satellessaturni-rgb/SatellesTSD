@@ -311,6 +311,14 @@ internal static class UiText
         static string Pension(bool member, decimal? rate) => member ? $"liitunud, määr {Percent(rate)}" : Core.Report.ReportText.PensionNotMember;
     }
 
+    public const string ExemptionOffNonResidents = "Eemalda mitteresidentide maksuvaba avaldus";
+    public const string ExemptionOffNone = "Selle kuu isikute seas ei ole mitteresidenti, kellel oleks maksuvaba avaldus märgitud.";
+
+    public static string ExemptionOffQuestion(int count) =>
+        (count == 1 ? "Maksuvaba avaldus on märgitud 1 mitteresidendil. Eemaldada märge temalt?"
+            : $"Maksuvaba avaldus on märgitud {count} mitteresidendil. Eemaldada märge neilt kõigilt?")
+        + " Muud andmed ei muutu; üksiku isiku märke saab kaardil tagasi panna.";
+
     public const string LookupsLive = "Päringud lähevad EMTA ja Pensionikeskuse avalikele lehtedele, üks isik korraga. Jätkata?";
     public const string UnsavedPerson = "Isiku andmetes on salvestamata muudatused. Salvestada need?";
     public const string BusyClosing = "Töö käib. Oota, kuni see lõpeb, või katkesta see enne sulgemist.";

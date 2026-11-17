@@ -66,6 +66,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _lookupButton = new(UiText.RunLookups);
     private readonly ToolStripMenuItem _cancelButton = new(UiText.Cancel) { Enabled = false };
     private readonly ToolStripMenuItem _addLineButton = new(UiText.AddLine);
+    private readonly ToolStripMenuItem _exemptionOffButton = new(UiText.ExemptionOffNonResidents);
     private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
@@ -158,7 +159,8 @@ public sealed class MainForm : Form
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
         periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
-        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton]);
+        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton]);
+        _exemptionOffButton.Click += (_, _) => ExemptionOffNonResidents();
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
         toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
         // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
@@ -426,6 +428,52 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem RemoveLineButton => _removeLineButton;
 
     internal ToolStripMenuItem NewCompanyButton => _newCompanyButton;
+
+    internal ToolStripMenuItem ExemptionOffButton => _exemptionOffButton;
+
+    /// <summary>Takes the basic exemption's application off every non-resident of the month shown, after one question
+    /// that names how many (decision 173).</summary>
+    private void ExemptionOffNonResidents()
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        if (!SettleCard()) // the card's own edits first: the command changes the persons as saved
+        {
+            return;
+        }
+
+        try
+        {
+            var periodId = _view.Period.Id;
+            var due = _services.Workspace.NonResidentsWithExemption(periodId);
+            if (due.Count == 0)
+            {
+                Inform(UiText.ExemptionOffNone, UiText.ExemptionOffNonResidents);
+                return;
+            }
+
+            if (!Confirm(UiText.ExemptionOffQuestion(due.Count), UiText.ExemptionOffNonResidents))
+            {
+                return;
+            }
+
+            var changed = _services.Workspace.ClearExemptionOfNonResidents(periodId);
+            Log($"{UiText.ExemptionOffNonResidents}: {changed.Count} — {string.Join(", ", changed.Select(p => $"{p.LastName} {p.FirstName}"))}");
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+        finally
+        {
+            // whichever way it went — nobody to change, the question declined, done or failed: the card was settled above,
+            // so the card and the grids are shown again from the store
+            ReloadView(_personPanel.PresentedId);
+        }
+    }
 
     internal ToolStripMenuItem ReportButton => _reportButton;
 
@@ -2302,6 +2350,7 @@ public sealed class MainForm : Form
         _matchButton.Enabled = !_busy && Editable;
         _lookupButton.Enabled = !_busy && Editable && _services?.Pipeline.HasLookups == true; // a locked month's lookups would rewrite the facts other months are built with
         _addLineButton.Enabled = !_busy && hasCompany && editable;
+        _exemptionOffButton.Enabled = !_busy && Editable; // a month in hand, and a Draft
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
         _closeCompanyButton.Enabled = !_busy && hasCompany;

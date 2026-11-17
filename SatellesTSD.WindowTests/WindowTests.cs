@@ -1497,6 +1497,82 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_person_set_a_non_resident_by_hand_loses_the_exemptions_tick_and_the_menu_takes_it_off_all_of_the_months()
+    {
+        using var fixture = new WindowFixture();
+        var asked = new List<string>();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var notices = new List<string>();
+            form.Informing = notices.Add;
+            var card = form.PersonEditor;
+            Mari(form);
+            Assert.True(card.ExemptionAppliedBox.Checked);
+            Assert.Equal(0, card.ResidencyBox.SelectedIndex);
+
+            // picked as a non-resident by mistake and back: a resident does not lose the tick over it
+            card.ResidencyBox.SelectedIndex = 1;
+            Assert.False(card.ExemptionAppliedBox.Checked);
+            card.ResidencyBox.SelectedIndex = 0;
+            Assert.True(card.ExemptionAppliedBox.Checked);
+            // but a tick the accountant took off themselves stays off when the residency is passed through
+            card.ExemptionAppliedBox.Checked = false;
+            card.ResidencyBox.SelectedIndex = 1;
+            card.ResidencyBox.SelectedIndex = 0;
+            Assert.False(card.ExemptionAppliedBox.Checked);
+            card.ExemptionAppliedBox.Checked = true;
+
+            // picked as a non-resident: the tick goes at once, where it is seen; saved so
+            card.ResidencyBox.SelectedIndex = 1;
+            Assert.False(card.ExemptionAppliedBox.Checked);
+            card.SaveButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal((Residency.NonResident, false), (StoredMari(form).Residency, StoredMari(form).BasicExemptionApplied));
+
+            // ticked again by the accountant on the non-resident: it stays through the save
+            Mari(form);
+            card.ExemptionAppliedBox.Checked = true;
+            card.SaveButton.PerformClick();
+            Ui.Pump();
+            Assert.True(StoredMari(form).BasicExemptionApplied);
+
+            // the residency confirmed by hand as it stands: the tick goes again, and may be put back before the save
+            Mari(form);
+            Assert.True(card.ExemptionAppliedBox.Checked);
+            card.ConfirmResidencyBox.Checked = true;
+            Assert.False(card.ExemptionAppliedBox.Checked);
+            card.ExemptionAppliedBox.Checked = true;
+            card.SaveButton.PerformClick();
+            Ui.Pump();
+            Assert.True(StoredMari(form).BasicExemptionApplied);
+
+            // the menu: one question naming how many, then every non-resident of the month loses the tick
+            Assert.True(form.ExemptionOffButton.Enabled);
+            form.ExemptionOffButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(UiText.ExemptionOffQuestion(1), Assert.Single(asked));
+            Assert.False(StoredMari(form).BasicExemptionApplied);
+            Mari(form);
+            Assert.False(card.ExemptionAppliedBox.Checked); // the card shows it
+
+            // nobody left: said, nothing asked
+            form.ExemptionOffButton.PerformClick();
+            Ui.Pump();
+            Assert.Single(asked);
+            Assert.Equal(UiText.ExemptionOffNone, Assert.Single(notices));
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, title) =>
+        {
+            if (title == UiText.ExemptionOffNonResidents)
+            {
+                asked.Add(question);
+            }
+
+            return true;
+        }));
+    }
+
+    [Fact]
     public void An_amount_refused_on_a_row_never_split_speaks_of_no_parts()
     {
         var refusal = new ReviewException(ReviewWorkspace.SplitOwnShare, "x", 100m);

@@ -603,6 +603,43 @@ public class LookupRunnerTests
     }
 
     [Fact]
+    public async Task A_person_the_register_makes_a_non_resident_loses_the_basic_exemptions_application_once()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            // as the register's employees are made: the application ticked, the residency not yet checked
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with { BasicExemptionApplied = true });
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406") with { BasicExemptionApplied = true });
+            var residency = new FakeResidency
+            {
+                Answers =
+                {
+                    ["38810140309"] = LookupResult<ResidencyFinding>.Found(NonResidentSince(new DateOnly(2026, 3, 1)), null),
+                    ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null),
+                },
+            };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            var runner = Runner(store, residency, pension);
+
+            var report = await runner.RunAsync(period.Id);
+
+            var jaan = store.FindPerson(company.Id, "38810140309")!;
+            Assert.Equal((Residency.NonResident, false), (jaan.Residency, jaan.BasicExemptionApplied));
+            Assert.Contains("basic exemption application taken off: a non-resident", report.Persons.Single(p => p.PersonId == jaan.Id).Steps);
+            var mari = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((Residency.Resident, true), (mari.Residency, mari.BasicExemptionApplied)); // a resident keeps it
+            Assert.DoesNotContain(report.Persons.Single(p => p.PersonId == mari.Id).Steps, s => s.Contains("exemption", StringComparison.Ordinal));
+
+            // ticked again by the accountant on the non-resident: their word, which a later check with the same answer leaves alone
+            store.UpdatePerson(jaan with { BasicExemptionApplied = true });
+            var again = await runner.LookUpAsync(store.FindPerson(company.Id, "38810140309")!, Control, afresh: true);
+            Assert.True(store.FindPerson(company.Id, "38810140309")!.BasicExemptionApplied);
+            Assert.DoesNotContain(again.Steps, s => s.Contains("exemption", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public void Money_in_from_a_register_person_dates_nobody()
     {
         // a row of money in that names the register person, ten days after her salary: no payout, so not her day
