@@ -311,6 +311,20 @@ internal static class UiText
         static string Pension(bool member, decimal? rate) => member ? $"liitunud, määr {Percent(rate)}" : Core.Report.ReportText.PensionNotMember;
     }
 
+    public const string NonResidentsMenu = "Mitteresidendid kõigis ettevõtetes…";
+    public const string NonResidentsTitle = "Mitteresidendid kõigis ettevõtetes";
+    public const string NonResidentsOnlyExemption = "Ainult maksuvabaga";
+    public const string NonResidentsSave = "Salvesta xlsx…";
+    public const string XlsxFilter = "Exceli töövihik (*.xlsx)|*.xlsx";
+
+    public static string NonResidentsSummary(int companies, int persons, int appliedCompanies, int applied, int usedCompanies, int used) =>
+        persons == 0 && used == 0 ? "Andmebaasis ei ole ühtegi mitteresidenti."
+        : $"Mitteresidente: {persons}, ettevõtteid: {companies}. Maksuvaba avaldus märgitud: {applied} (ettevõtteid: {appliedCompanies}). "
+          + $"Maksuvaba kasutatud ridadel, kus isik oli mitteresident: isikuid {used} (ettevõtteid: {usedCompanies}).";
+
+    public static string NonResidentsLogged(int companies, int persons, int applied, int used) =>
+        $"{NonResidentsTitle}: isikuid {persons}, ettevõtteid {companies}; maksuvaba avaldus märgitud {applied}, maksuvaba kasutatud ridadel {used}";
+
     public const string ExemptionOffNonResidents = "Eemalda mitteresidentide maksuvaba avaldus";
     public const string ExemptionOffNone = "Selle kuu isikute seas ei ole mitteresidenti, kellel oleks maksuvaba avaldus märgitud.";
 

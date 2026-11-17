@@ -70,6 +70,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
+    private readonly ToolStripMenuItem _nonResidentsButton = new(UiText.NonResidentsMenu);
     private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
     private readonly ToolStripMenuItem _importLayoutsItem = new(UiText.ImportLayouts);
@@ -162,7 +163,8 @@ public sealed class MainForm : Form
         personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton]);
         _exemptionOffButton.Click += (_, _) => ExemptionOffNonResidents();
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
-        toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton]);
+        toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton, new ToolStripSeparator(), _nonResidentsButton]);
+        _nonResidentsButton.Click += (_, _) => ShowNonResidents();
         // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
         var viewMenu = new ToolStripMenuItem(UiText.MenuView);
         viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
@@ -430,6 +432,56 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem NewCompanyButton => _newCompanyButton;
 
     internal ToolStripMenuItem ExemptionOffButton => _exemptionOffButton;
+
+    internal ToolStripMenuItem NonResidentsButton => _nonResidentsButton;
+
+    /// <summary>Handed the non-residents list before it is shown, in place of showing it (a window test reads and drives it).</summary>
+    internal Action<NonResidentsDialog>? NonResidentsOpening;
+
+    /// <summary>The non-residents of every company of the store, listed (decision 174). Read from the store as saved: the
+    /// card's own edits are settled first.</summary>
+    private void ShowNonResidents()
+    {
+        if (_services is null || _busy)
+        {
+            return;
+        }
+
+        if (_personPanel.IsDirty)
+        {
+            if (ResolveDirtyPanel() == Unsaved.Kept)
+            {
+                return;
+            }
+
+            ReloadView();
+            if (_services is null)
+            {
+                return;
+            }
+        }
+
+        IReadOnlyList<Core.Report.NonResidentRow> rows;
+        try
+        {
+            rows = Core.Report.NonResidentOverview.Build(_services.Store);
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return;
+        }
+
+        Log(UiText.NonResidentsLogged(rows.Select(r => r.Company.Id).Distinct().Count(), rows.Count, rows.Count(r => r.Applied), rows.Count(r => r.Used)));
+        using var dialog = new NonResidentsDialog(rows, Log);
+        if (NonResidentsOpening is { } take)
+        {
+            take(dialog);
+            return;
+        }
+
+        dialog.ShowDialog(this);
+    }
 
     /// <summary>Takes the basic exemption's application off every non-resident of the month shown, after one question
     /// that names how many (decision 173).</summary>
@@ -2365,6 +2417,7 @@ public sealed class MainForm : Form
         _personPanel.Enabled = !_busy;
         _declaration.Enabled = !_busy;
         _calculatorButton.Enabled = !_busy;
+        _nonResidentsButton.Enabled = !_busy && _services is not null;
         _reportButton.Enabled = !_busy && _view is not null;
         _updateButton.Visible = UpdatesEnabled;
         _updateSeparator.Visible = UpdatesEnabled;

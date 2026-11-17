@@ -56,7 +56,7 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 
 The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
 (import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
-(the report, the calculator), **Vaade** (the log one line high; the persons grid showing only PALK NETO KOKKU
+(the report, the calculator, the non-residents of every company), **Vaade** (the log one line high; the persons grid showing only PALK NETO KOKKU
 of the sources) and **Seaded** (the declaration's cut, step 6; your own statement layouts: **Impordi väljavõtte
 paigutused…** reads a `.json` file holding one layout or a list of them, and the files are read by them at
 once, a stored file by **Loe uuesti** in Failid; **Väljavõtte paigutused…** lists every layout in force, writes
@@ -93,7 +93,10 @@ person picked, every payment of the month, one per category, the payments withou
    A person the check makes a non-resident loses the tick of **Maksuvaba avaldus** (every employee of the
    register starts with it), and so does one set a non-resident on the card; **Isik › Eemalda mitteresidentide
    maksuvaba avaldus** takes it off every non-resident of the month at once — for those who were non-residents
-   already. A tick you set on a non-resident yourself stays.
+   already. A tick you set on a non-resident yourself stays. **Tööriistad › Mitteresidendid kõigis ettevõtetes…**
+   looks through the whole store: every company's non-residents, whether the tick is on, and the lines on which
+   the exemption was used for a non-resident (how many e-MTA holds, how many have a correction not sent yet);
+   **Salvesta xlsx…** saves the list as it is shown. It changes nothing.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
    checks say what would be refused. A row that holds two things (a salary and a compensation in one

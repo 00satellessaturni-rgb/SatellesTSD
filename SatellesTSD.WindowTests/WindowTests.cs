@@ -1573,6 +1573,65 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_non_residents_of_every_company_are_listed_filtered_and_saved_as_a_workbook()
+    {
+        using var fixture = new WindowFixture(prepare: (store, company, _, _) =>
+        {
+            // the fixture's company: one non-resident with the tick; another company: one without it
+            var mari = store.FindPerson(company.Id, SatellesTSD.Tests.ReviewFixtures.MariCode)!;
+            store.UpdatePerson(mari with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta, BasicExemptionApplied = true });
+            var other = store.AddCompany("10000018", "Aabits OÜ");
+            store.AddPerson(Person.New(other.Id, "Peeter", "Pihl", "39001010008", Residency.NonResident));
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            NonResidentsDialog? shown = null;
+            form.NonResidentsOpening = dialog =>
+            {
+                shown = dialog;
+                dialog.StartPosition = FormStartPosition.Manual;
+                dialog.Location = new Point(-4000, -4000);
+                dialog.Show();
+                Ui.Pump();
+
+                // every non-resident of the store, both companies; the ones with the exemption stand out
+                Assert.Equal(2, dialog.Grid.Rows.Count);
+                Assert.Equal(["10000018", WindowFixture.RegistryCode], dialog.Grid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells[0].Value?.ToString()));
+                Assert.Equal(["ei", "jah"], dialog.Grid.Rows.Cast<DataGridViewRow>().Select(r => r.Cells[9].Value?.ToString()));
+                Assert.Equal(UiText.NonResidentsSummary(2, 2, 1, 1, 0, 0), dialog.SummaryText);
+
+                // only those with the exemption
+                dialog.OnlyExemptionBox.Checked = true;
+                Ui.Pump();
+                Assert.Equal(WindowFixture.RegistryCode, Assert.Single(dialog.Grid.Rows.Cast<DataGridViewRow>()).Cells[0].Value?.ToString());
+
+                // saved as shown: a cancelled dialog writes nothing, a name given writes the workbook
+                Directory.CreateDirectory(fixture.ExportFolder);
+                string? offered = null;
+                dialog.ChoosingFile = name => { offered = name; return null; };
+                dialog.SaveButton.PerformClick();
+                Assert.StartsWith("mitteresidendid-", offered, StringComparison.Ordinal);
+                Assert.Null(dialog.SavedPath);
+                var path = Path.Combine(fixture.ExportFolder, "mitteresidendid.xlsx");
+                dialog.ChoosingFile = _ => path;
+                dialog.SaveButton.PerformClick();
+                Assert.Equal(path, dialog.SavedPath);
+                var read = new SatellesTSD.Infrastructure.ExcelTableReader().Read("mitteresidendid.xlsx", File.ReadAllBytes(path));
+                Assert.Equal([SatellesTSD.Core.Report.NonResidentOverview.CompaniesSheet, SatellesTSD.Core.Report.NonResidentOverview.PersonsSheet], read.Sheets.Select(s => s.Name));
+                Assert.Equal(2, read.Sheets[1].Rows.Count); // the header and the one row shown
+                Assert.False(File.Exists(path + ".tmp"));
+                dialog.Close();
+            };
+
+            Assert.True(form.NonResidentsButton.Enabled);
+            form.NonResidentsButton.PerformClick();
+            Ui.Pump();
+            Assert.NotNull(shown);
+            Assert.Empty(fixture.Failures);
+        }));
+    }
+
+    [Fact]
     public void An_amount_refused_on_a_row_never_split_speaks_of_no_parts()
     {
         var refusal = new ReviewException(ReviewWorkspace.SplitOwnShare, "x", 100m);
