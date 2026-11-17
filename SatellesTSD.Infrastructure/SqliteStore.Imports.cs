@@ -160,6 +160,10 @@ public sealed partial class SqliteStore
             """,
             r => (LineId: Guid.Parse(r.GetString(0)), RowId: Guid.Parse(r.GetString(1)), IsPart: !r.IsDBNull(2)), ("$file", G(fileId)));
         var oldAmounts = RowAmounts(fileId);
+        // a sheet the card export's reading of before 0.16.0 read (decision 171): the same bytes read now give each row another
+        // amount, sign and direction, so another fingerprint — its rows are found again by their place in the sheet (a re-read
+        // is always of the very bytes stored), and a part by an amount of the same size
+        var oldPlaces = RowPlaces(fileId, oldCardReadingOnly: true);
 
         // the old file steps aside (its hash freed), the new one takes its place in every period's list — the link order kept
         Exec("UPDATE import_file SET sha256 = $gone WHERE id = $id", ("$gone", "replaced:" + G(fileId)), ("$id", G(fileId)));
@@ -169,14 +173,22 @@ public sealed partial class SqliteStore
         // the decisions follow their rows; one whose row is not read again goes
         var newRows = RowKeys(file.Id).ToDictionary(k => k.Value, k => k.Key);
         var newAmounts = RowAmounts(file.Id);
+        var newPlaces = oldPlaces.Count == 0 ? [] : RowPlaces(file.Id, oldCardReadingOnly: false).ToDictionary(p => p.Value, p => p.Key);
         var carried = 0;
         var dropped = 0;
         foreach (var (lineId, rowId, isPart) in decisions)
         {
             // a part is a share of its row's amount: it follows the row only onto a row of that very amount, so a row's
-            // own share can never come out as what the parts left of another sum (decision 164)
-            if (oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out var target)
-                && (!isPart || oldAmounts.GetValueOrDefault(rowId) == newAmounts.GetValueOrDefault(target)))
+            // own share can never come out as what the parts left of another sum (decision 164). A row of an old card
+            // reading goes by its place alone: that reading gave a payout and its refund of one size one fingerprint, so
+            // a fingerprint found again may be the other row's (decision 175)
+            var target = Guid.Empty;
+            var follows = oldPlaces.TryGetValue(rowId, out var place)
+                ? newPlaces.TryGetValue(place, out target)
+                    && (!isPart || (oldAmounts.GetValueOrDefault(rowId) is { } was && newAmounts.GetValueOrDefault(target) is { } now && Math.Abs(was) == Math.Abs(now)))
+                : oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out target)
+                    && (!isPart || oldAmounts.GetValueOrDefault(rowId) == newAmounts.GetValueOrDefault(target));
+            if (follows)
             {
                 Exec("UPDATE review_line SET row_id = $row WHERE id = $id", ("$row", G(target)), ("$id", G(lineId)));
                 carried++;
@@ -225,6 +237,13 @@ public sealed partial class SqliteStore
 
         return keys;
     }
+
+    /// <summary>Every statement row of a file that can carry a decision, by its place: the sheet's index and the row's
+    /// number in it. <paramref name="oldCardReadingOnly"/>: only the sheets the card export's reading of before 0.16.0 read.</summary>
+    private Dictionary<Guid, (int Sheet, int RowNo)> RowPlaces(Guid fileId, bool oldCardReadingOnly) =>
+        Sheets(fileId).Where(s => s.Kind == SheetKind.Statement && (!oldCardReadingOnly || s.Layout?.IsOldCardReading() == true))
+            .SelectMany(s => StatementRows(s.Id).Where(r => r.Row.SkipReason is not (SkipReason.Blank or SkipReason.Header)).Select(r => (r.Id, Place: (s.SheetIndex, r.Row.RowNo))))
+            .ToDictionary(r => r.Id, r => r.Place);
 
     /// <summary>The amount of every statement row of a file (none where the row has none).</summary>
     private Dictionary<Guid, decimal?> RowAmounts(Guid fileId) =>

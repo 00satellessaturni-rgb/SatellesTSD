@@ -311,8 +311,10 @@ public class PeriodPipelineTests
                 return row;
             }
 
+            // a payout and, below it, its refund of the same size: the old reading gave the two one fingerprint
             var bytes = Tables.Xlsx("Kaart", headers.ToArray<object?>(),
-                Row((card.Roles.Date, new DateTime(2026, 10, 5, 10, 0, 0)), (card.Roles.Counterparty, "Mari Maasikas"), ("Orig amount", 905.92d), (card.Roles.Amount, -905.92d), (card.Roles.Currency, "EUR")));
+                Row((card.Roles.Date, new DateTime(2026, 10, 5, 10, 0, 0)), (card.Roles.Counterparty, "Mari Maasikas"), ("Orig amount", 905.92d), (card.Roles.Amount, -905.92d), (card.Roles.Currency, "EUR")),
+                Row((card.Roles.Date, new DateTime(2026, 10, 5, 10, 0, 0)), (card.Roles.Counterparty, "Mari Maasikas"), ("Orig amount", 905.92d), (card.Roles.Amount, 905.92d), (card.Roles.Currency, "EUR")));
             var old = card with { Roles = card.Roles with { Amount = "Orig amount" } };
             var before = new PeriodPipeline(store, new Importer(LayoutCatalog.Default.WithOverrides([old]), new ExcelTableReader()));
             before.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook());
@@ -323,9 +325,26 @@ public class PeriodPipelineTests
             var said = Assert.Single(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.OldReading);
             Assert.Contains("Loe uuesti", said.Message, StringComparison.Ordinal);
 
-            // read again by the layout in force: the amounts are payouts again, and nothing is said
+            // the accountant's decisions on the row as it was read: a category and a note, and a part split off it
+            var oldRows = store.StatementRows(store.Sheets(file.Id).Single().Id).Where(r => r.Row.Amount is not null).OrderBy(r => r.Row.RowNo).ToList();
+            Assert.Equal([(905.92m, Direction.Credit), (905.92m, Direction.Credit)], oldRows.Select(r => (r.Row.Amount!.Value, r.Row.Direction)));
+            var (oldRow, oldRefund) = (oldRows[0], oldRows[1]);
+            store.SaveReviewLine(ReviewLine.ForRow(period.Id, oldRow.Id) with { Category = "Kompensatsioon", Note = "kaardilt" });
+            store.SaveReviewLine(ReviewLine.PartOf(period.Id, oldRow.Id, 100m, noCategory: true));
+            store.SaveReviewLine(ReviewLine.ForRow(period.Id, oldRefund.Id) with { Note = "tagasi" });
+
+            // read again by the layout in force: the amounts are payouts again, and nothing is said — and the decisions
+            // follow the row by its place, though its amount, sign and direction (its fingerprint) read otherwise now
             var now = new PeriodPipeline(store, ReviewFixtures.Importer);
-            Assert.True(now.RereadFile(period.Id, file.Id).Succeeded);
+            var reread = now.RereadFile(period.Id, file.Id);
+            Assert.True(reread.Succeeded);
+            Assert.Equal((3, 0), (reread.Carried, reread.Dropped));
+            var newRows = store.StatementRows(store.Sheets(reread.File!.Id).Single().Id).Where(r => r.Row.Amount is not null).OrderBy(r => r.Row.RowNo).ToList();
+            Assert.Equal([(-905.92m, Direction.Debit, oldRow.Row.RowNo), (905.92m, Direction.Credit, oldRefund.Row.RowNo)], newRows.Select(r => (r.Row.Amount!.Value, r.Row.Direction, r.Row.RowNo)));
+            var lines = store.ReviewLines(period.Id);
+            Assert.Equal([newRows[0].Id, newRows[0].Id], lines.Where(l => l.Note != "tagasi").Select(l => l.RowId)); // the payout's, though the refund now has its old fingerprint
+            Assert.Equal(newRows[1].Id, lines.Single(l => l.Note == "tagasi").RowId);
+            Assert.Equal(("Kompensatsioon", "kaardilt"), lines.Where(l => !l.IsPart && l.Note != "tagasi").Select(l => (l.Category, l.Note)).Single());
             now.RunMatch(period.Id);
             Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.OldReading);
         }

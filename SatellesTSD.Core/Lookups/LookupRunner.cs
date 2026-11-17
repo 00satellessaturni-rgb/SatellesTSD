@@ -531,12 +531,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             persons.Add((other, ControlDateOf(period, paid[other.Id])));
         }
 
-        // paid in the month, outside the register, and no code to ask by: said, as for a register person without one â
+        // paid in the month, outside the register, and no code to ask by: said, as for a register person without one —
         // their payments are refused until the residency is set on the card (decision 168)
         foreach (var codeless in stored.Where(p => p.PersonalCode is null && paid.ContainsKey(p.Id) && !registerIds.ContainsValue(p.Id) // a register person without a code was said above
                      && persons.All(listed => listed.Item1.Id != p.Id)))
         {
-            problems.Add($"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask â set the residency on the card.");
+            problems.Add($"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask — set the residency on the card.");
         }
 
         return persons;
