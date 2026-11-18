@@ -29,7 +29,7 @@ public class SqliteStoreTests
 
     private static StoredPayment SalaryDraft(SqliteStore store, Period period, Person person, LineAction action, string? lineNumber = null, decimal gross = 1000m)
     {
-        var facts = person.FactsFor(period.Year);
+        var facts = person.FactsFor(period.Year, 1);
         var result = Engine.Calculate(new TaxInput(Salary, gross, false, 700m), facts);
         var key = lineNumber ?? store.NewLineNumber(period.Id, Section.EE0201001);
         var line = DeclarationLineFactory.Create(key, 0, action, Salary, facts, person.PayeeId!, new DateOnly(period.Year, period.Month, 10), result);
@@ -90,7 +90,7 @@ public class SqliteStoreTests
             Assert.Null(rereadBare.PayeeId);
 
             Assert.Equal(new PayeeTaxFacts(Residency.NonResident, "LT", false, 0.04m, true, true, false, 500m, true, 0.5m, A1Case.ForeignA1WorkInEstonia, "LT", "FI", 0.10m),
-                expectedFull.FactsFor(2026, socialTaxMinimumShare: 0.5m));
+                expectedFull.FactsFor(2026, 1, socialTaxMinimumShare: 0.5m));
             Assert.Equal(PayeeId.Mrr("A0003689779"), expectedFull.PayeeId);
         }
     }
@@ -102,9 +102,9 @@ public class SqliteStoreTests
         using (store)
         {
             var aged = person with { PensionAgeYear = 2027 };
-            Assert.False(aged.FactsFor(2026).PensionAgeThisYear);
-            Assert.True(aged.FactsFor(2027).PensionAgeThisYear);
-            Assert.Equal(0.5m, aged.FactsFor(2027, socialTaxMinimumShare: 0.5m).SocialTaxMinimumShare);
+            Assert.False(aged.FactsFor(2026, 1).PensionAgeThisYear);
+            Assert.True(aged.FactsFor(2027, 1).PensionAgeThisYear);
+            Assert.Equal(0.5m, aged.FactsFor(2027, 1, socialTaxMinimumShare: 0.5m).SocialTaxMinimumShare);
             Assert.Equal(PayeeId.Estonian("48712219406"), person.PayeeId);
             Assert.Equal(PayeeId.Mrr("A0003689779"), (person with { PersonalCode = null, MrrCode = "A0003689779" }).PayeeId);
             Assert.Null((person with { PersonalCode = null }).PayeeId);
@@ -168,7 +168,7 @@ public class SqliteStoreTests
                 MrrCode = "A0003689779", ResidenceCountry = "LT", BasicExemptionApplied = true, A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI",
             });
             var type = PaymentTypes.Get("120");
-            var facts = person.FactsFor(period.Year);
+            var facts = person.FactsFor(period.Year, 1);
             var result = Engine.Calculate(new TaxInput(type, 1000m, true, 700m), facts);
             var key = store.NewLineNumber(period.Id, Section.EE0201001);
             var line = DeclarationLineFactory.Create(key, 0, LineAction.R, type, facts, person.PayeeId!, new DateOnly(2026, 10, 10), result, new DateOnly(2026, 9, 30), "TartuOsakond");
@@ -282,7 +282,7 @@ public class SqliteStoreTests
             var blue = store.AddPayment(SalaryDraft(store, period, person, LineAction.R, "0110test01"));
             var red = store.AddPayment(SalaryDraft(store, period, person, LineAction.R, "0117test01"));
             var rentType = PaymentTypes.Get("57");
-            var facts = person.FactsFor(2026);
+            var facts = person.FactsFor(2026, 1);
             StoredPayment Rent(string key) => StoredPayment.New(period.Id, person.Id, Section.EE0201002,
                 DeclarationLineFactory.Create(key, 0, LineAction.R, rentType, facts, person.PayeeId!, new DateOnly(2026, 10, 3), Engine.Calculate(new TaxInput(rentType, 100m, false, 0m), facts)),
                 facts, Engine.Calculate(new TaxInput(rentType, 100m, false, 0m), facts));

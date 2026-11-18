@@ -164,7 +164,7 @@ public class ReviewWorkspaceTests
         using (store)
         {
             new MatchRunner(store).Run(period.Id);
-            var workspace = new ReviewWorkspace(store);
+            var workspace = new ReviewWorkspace(store) { TwoContracts = TwoContractsRule.LatestStart }; // the old rule, decision 85
             var mari = workspace.Load(period.Id).Persons[0];
             Assert.Equal("600", mari.Register!.Entry.TypeId); // the month's entry: the later start of two valid ones
             workspace.AddHandLine(period.Id, mari.PersonId, new DateOnly(2026, 10, 20), 200m, "Mari Maasikas", "töövõtt", "Palgad");
@@ -182,6 +182,74 @@ public class ReviewWorkspaceTests
             workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { TorEmploymentTypeId = null });
             Assert.Equal(["10", "17"], workspace.Load(period.Id).Persons[0].Payments.OrderBy(p => p.Date).Select(p => p.DefaultTypeCode));
         }
+    }
+
+    [Fact]
+    public void A_salary_on_a_day_of_two_contracts_goes_by_the_Seaded_rule_the_Toeoeleping_by_default()
+    {
+        // the fifth audit, S11–S14 (decision 209): a Tööleping and a VÕS leping in force on the 20th
+        var (store, _, period, _) = ReviewFixtures.Setup(mariSecond: true);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = new ReviewWorkspace(store);
+            Assert.Equal(TwoContractsRule.SalaryToEmploymentContract, workspace.TwoContracts);
+            var mariId = workspace.Load(period.Id).Persons[0].PersonId;
+            workspace.AddHandLine(period.Id, mariId, new DateOnly(2026, 10, 20), 200m, "Mari Maasikas", "palk", "Palgad");
+            List<ReviewPayment> Payments() => workspace.Load(period.Id).Persons[0].Payments.OrderBy(p => p.Date).ToList();
+
+            // the default: the Tööleping's 10 on both days; the 20th says the two types it was picked from
+            var payments = Payments();
+            Assert.Equal(["10", "10"], payments.Select(p => p.DefaultTypeCode));
+            Assert.Empty(payments[0].ContractTypes); // the 5th: only the Tööleping in force
+            Assert.Equal(["1", "600"], payments[1].ContractTypes.Order(StringComparer.Ordinal));
+            Assert.DoesNotContain(payments[1].Checks, c => c.Code is ReviewChecks.TwoContracts or ReviewChecks.NoType); // the fixture's card facts unchecked aside
+
+            // ask: no type on the 20th, still to declare, refused as TWO_CONTRACTS alone until one is chosen
+            workspace.TwoContracts = TwoContractsRule.Ask;
+            payments = Payments();
+            Assert.Equal("10", payments[0].DefaultTypeCode);
+            Assert.Null(payments[1].DefaultTypeCode);
+            Assert.True(payments[1].Declare);
+            Assert.Contains(payments[1].Checks, c => c.Code == ReviewChecks.TwoContracts);
+            Assert.DoesNotContain(payments[1].Checks, c => c.Code == ReviewChecks.NoType);
+            Assert.DoesNotContain(payments[0].Checks, c => c.Code == ReviewChecks.TwoContracts);
+            workspace.SetTypeCode(payments[1], "17");
+            payments = Payments();
+            Assert.Equal("17", payments[1].TypeCode);
+            Assert.DoesNotContain(payments[1].Checks, c => c.Code == ReviewChecks.TwoContracts);
+            workspace.SetTypeCode(payments[1], null);
+
+            // the card's type for every payment stands over every rule
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { TorEmploymentTypeId = "1", TypeFromCard = true });
+            Assert.Equal(["10", "10"], Payments().Select(p => p.DefaultTypeCode));
+            Assert.All(Payments(), p => Assert.DoesNotContain(p.Checks, c => c.Code == ReviewChecks.TwoContracts));
+        }
+    }
+
+    [Fact]
+    public void The_two_contracts_rule_sees_only_types_in_force_that_declare_under_different_codes()
+    {
+        TorEntry Entry(int row, DateOnly start, string type, DateOnly? pauseFrom = null) =>
+            new(row, null, ReviewFixtures.MariCode, "MARI", "MAASIKAS", "EE", start, null, type, "x", pauseFrom is null ? "2" : "3", "x", null, null, null, null, [], null, PauseStart: pauseFrom);
+        MatchPerson Register(params TorEntry[] entries) => new(SearchPerson.Of(ReviewFixtures.MariCode, "MAASIKAS", "MARI"), entries, entries[^1], 0);
+        var day = new DateOnly(2026, 10, 25);
+        var both = Register(Entry(1, new DateOnly(2023, 1, 1), "1"), Entry(2, new DateOnly(2026, 9, 1), "600"));
+        TypePick Pick(MatchPerson register, TwoContractsRule rule, bool salary = true, Residency residency = Residency.Resident) =>
+            ReviewDefaults.PickFor(register, null, day, salary, residency, rule);
+
+        Assert.Equal("1", Pick(both, TwoContractsRule.SalaryToEmploymentContract).TorTypeId);
+        Assert.Equal("600", Pick(both, TwoContractsRule.LatestStart).TorTypeId);
+        Assert.Equal((null, true), (Pick(both, TwoContractsRule.Ask).TorTypeId, Pick(both, TwoContractsRule.Ask).Ask));
+        Assert.Equal(("600", 0), (Pick(both, TwoContractsRule.Ask, salary: false).TorTypeId, Pick(both, TwoContractsRule.Ask, salary: false).InForce.Count)); // not a salary: by its day
+        Assert.True(Pick(both, TwoContractsRule.Ask, residency: Residency.NonResident).Ask); // 120 and 123 differ too
+
+        var twoContracts = Register(Entry(1, new DateOnly(2023, 1, 1), "1"), Entry(2, new DateOnly(2026, 9, 1), "507"));
+        Assert.False(Pick(twoContracts, TwoContractsRule.Ask).Ask); // both declare as 10: no conflict
+        var paused = Register(Entry(1, new DateOnly(2023, 1, 1), "1", pauseFrom: new DateOnly(2026, 10, 1)), Entry(2, new DateOnly(2026, 9, 1), "600"));
+        Assert.Equal(("600", false), (Pick(paused, TwoContractsRule.Ask).TorTypeId, Pick(paused, TwoContractsRule.Ask).Ask)); // a paused Tööleping is not in force
+        var noContract = Register(Entry(1, new DateOnly(2023, 1, 1), "600"), Entry(2, new DateOnly(2026, 9, 1), "601"));
+        Assert.Equal("601", Pick(noContract, TwoContractsRule.SalaryToEmploymentContract).TorTypeId); // no Tööleping among them: the old rule
     }
 
     [Fact]

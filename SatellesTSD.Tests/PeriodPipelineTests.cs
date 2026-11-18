@@ -606,6 +606,20 @@ public class PeriodPipelineTests
             Assert.Contains("header row", Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed, LayoutCatalog.Default.Find("swedbank-et")! with { Id = "swed-copy" }]))).Message); // the second has a built-in header row: none saved
             Assert.Contains("repeats an id", Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed, renamed]))).Message);
             Assert.Contains("empty entry", Assert.Throws<ImportException>(() => pipeline.ImportLayouts("[null]")).Message);
+
+            // every refusal carries its code, so the window words it in Estonian (decision 211)
+            string? Code(string json) => LayoutsRefusal.CodeOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(json)));
+            Assert.Equal(LayoutsRefusal.NotJson, Code("{ not json"));
+            Assert.Equal(LayoutsRefusal.NoLayout, Code("[]"));
+            Assert.Equal(LayoutsRefusal.NoLayout, Code("   "));
+            Assert.Equal(LayoutsRefusal.NoLayout, Code("null")); // a bare null is no layout, not a crash
+            Assert.Equal(LayoutsRefusal.NullEntry, Code("[null]"));
+            Assert.Equal(LayoutsRefusal.Unusable, Code(LayoutCatalog.ToJson([renamed with { Headers = [] }])));
+            Assert.Equal(LayoutsRefusal.RepeatedId, Code(LayoutCatalog.ToJson([renamed, renamed])));
+            Assert.Equal(LayoutsRefusal.Collides, Code(LayoutCatalog.ToJson([renamed, LayoutCatalog.Default.Find("swedbank-et")! with { Id = "swed-copy" }])));
+            Assert.Equal("lhv-et-short", LayoutsRefusal.SubjectOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed with { Headers = [] }])))));
+            Assert.Equal("'lhv-et-short'", LayoutsRefusal.SubjectOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed, renamed]))))); // the ids alone, no English count
+            Assert.Equal("4", LayoutsRefusal.SubjectOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts("\r\n\n{\n  \"id\": ,\n}")))); // the line as the file counts it, blank lines above included
             Assert.Empty(pipeline.OwnerLayouts());
 
             // one file moves a layout's header row and gives the old row to a new layout: saved whole, in either order

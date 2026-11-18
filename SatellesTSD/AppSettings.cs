@@ -24,6 +24,20 @@ public sealed class AppSettings
     /// type, the payments added up and dated by the latest (the Seaded menu; kept across sessions).</summary>
     public bool DeclareTotalsPerType { get; set; }
 
+    /// <summary>The rule for a salary paid on a day two employments of different types are in force (the Seaded menu,
+    /// decision 209), by its name; kept as text so a name this build does not know reads as the default instead of
+    /// losing every other setting.</summary>
+    public string? TwoContracts { get; set; }
+
+    /// <summary>The two-contracts rule in force: the kept name, else the default (the Tööleping's type).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Core.Review.TwoContractsRule TwoContractsRule
+    {
+        get => Enum.TryParse<Core.Review.TwoContractsRule>(TwoContracts, ignoreCase: false, out var rule) && Enum.IsDefined(rule) && !int.TryParse(TwoContracts, out _)
+            ? rule : Core.Review.TwoContractsRule.SalaryToEmploymentContract;
+        set => TwoContracts = value.ToString();
+    }
+
     /// <summary>The log under the window one line high instead of its default height (the Vaade menu; kept across sessions).</summary>
     public bool LogOneRow { get; set; }
 
@@ -47,6 +61,9 @@ public sealed class AppSettings
 
     /// <summary>The persons grid's height above the payments grid, in pixels.</summary>
     public int? PersonsGridHeight { get; set; }
+
+    /// <summary>The sizable dialogs' size, place, maximized state and named splitters, by the dialog's key (decision 210).</summary>
+    public Dictionary<string, DialogPlace>? Dialogs { get; set; }
 
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "SatellesTSD", "settings.json");
 

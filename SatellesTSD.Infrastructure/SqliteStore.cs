@@ -509,6 +509,18 @@ public sealed partial class SqliteStore : IStore
         Query(PaymentSelect + " WHERE period_id = $period AND section = $section AND line_number = $line ORDER BY version", ReadPayment,
             ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber));
 
+    public IReadOnlyList<StoredPayment> SubmissionPayments(Guid submissionId) =>
+        Query(PaymentSelect + " WHERE submission_id = $submission ORDER BY section, line_number, version", ReadPayment, ("$submission", G(submissionId)));
+
+    public void SettleRefusals(Guid periodId, Section section, string lineNumber, int aboveVersion)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(lineNumber);
+        using var tx = Tx();
+        Exec("UPDATE payment SET settled = 1 WHERE period_id = $period AND section = $section AND line_number = $line AND version > $version AND status = $rejected AND settled = 0",
+            ("$period", G(periodId)), ("$section", section.ToString()), ("$line", lineNumber), ("$version", aboveVersion), ("$rejected", PaymentStatus.Rejected.ToString()));
+        tx.Commit();
+    }
+
     public void DeleteDraft(Guid paymentId)
     {
         using var tx = Tx();
@@ -523,7 +535,7 @@ public sealed partial class SqliteStore : IStore
 
     private const string PaymentSelect =
         """
-        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at, source_row_id, review_line_id
+        SELECT id, period_id, person_id, section, line_number, version, action, status, facts_json, result_json, line_json, net_paid, source_ref, submission_id, created_at, source_row_id, review_line_id, settled
         FROM payment
         """;
 
@@ -534,7 +546,7 @@ public sealed partial class SqliteStore : IStore
         r.IsDBNull(8) ? null : JsonSerializer.Deserialize<PayeeTaxFacts>(r.GetString(8), Json),
         r.IsDBNull(9) ? null : JsonSerializer.Deserialize<TaxResult>(r.GetString(9), Json),
         Dec(r, 11), Str(r, 12), r.IsDBNull(13) ? null : Guid.Parse(r.GetString(13)), Time(r, 14) ?? default,
-        r.IsDBNull(15) ? null : Guid.Parse(r.GetString(15)), r.IsDBNull(16) ? null : Guid.Parse(r.GetString(16)));
+        r.IsDBNull(15) ? null : Guid.Parse(r.GetString(15)), r.IsDBNull(16) ? null : Guid.Parse(r.GetString(16)), r.GetInt64(17) != 0);
 
     // ---------------------------------------------------------------- submissions and feedback
 
@@ -1258,6 +1270,12 @@ public sealed partial class SqliteStore : IStore
         // report of another file is not read onto this one. Null for a draft and for a line sent before this.
         """
         ALTER TABLE payment ADD COLUMN file_counter INTEGER;
+        """,
+
+        // v13 — a refused version settled by a later build (decision 205): the review back to what the server holds, a
+        // correction or cancellation refused over it no longer asks for the force. Every earlier version unsettled.
+        """
+        ALTER TABLE payment ADD COLUMN settled INTEGER NOT NULL DEFAULT 0;
         """,
     ];
 

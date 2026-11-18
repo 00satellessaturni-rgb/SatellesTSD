@@ -21,10 +21,13 @@ public sealed class SimulationDialog : Form
 
     private readonly string? _schemaRoot;
     private readonly string? _savedCatalog;
+    private readonly TwoContractsRule _startRule;
+    private readonly ToolTip _tips = new();
     private readonly NumericUpDown _year = new() { Minimum = 2000, Maximum = 2100, Width = 70 };
     private readonly NumericUpDown _month = new() { Minimum = 1, Maximum = 12, Width = 50 };
     private readonly ComboBox _register = Combo([new Choice(nameof(SimRegister.Listed), UiText.SimListed), new Choice(nameof(SimRegister.NotListed), UiText.SimNotListed), new Choice(nameof(SimRegister.NoRegister), UiText.SimNoRegister)], 260);
     private readonly ComboBox _mode = Combo([new Choice(nameof(DeclarationMode.PerPayment), UiText.DeclareEachPayment), new Choice(nameof(DeclarationMode.TotalsPerType), UiText.DeclareTotalsPerType)], 380);
+    private readonly ComboBox _twoContracts = Combo([.. Enum.GetValues<TwoContractsRule>().Select(r => new Choice(r.ToString(), UiText.TwoContractsText(r)))], 240);
 
     private readonly TextBox _first = new() { Width = 160 };
     private readonly TextBox _last = new() { Width = 160 };
@@ -59,8 +62,10 @@ public sealed class SimulationDialog : Form
 
     /// <param name="savedCatalog">The store in use's saved catalog document (the owner's phrases), so the example's rows are
     /// found as the app's own month finds them; null = the built-in phrases.</param>
-    public SimulationDialog(int year, int month, string? schemaRoot = null, string? savedCatalog = null)
+    /// <param name="twoContracts">The window's two-contracts rule (decision 209), the example's to start with.</param>
+    public SimulationDialog(int year, int month, string? schemaRoot = null, string? savedCatalog = null, TwoContractsRule twoContracts = TwoContractsRule.SalaryToEmploymentContract)
     {
+        _startRule = twoContracts;
         _schemaRoot = schemaRoot;
         _savedCatalog = savedCatalog;
         Text = UiText.SimTitle;
@@ -70,7 +75,8 @@ public sealed class SimulationDialog : Form
         MinimizeBox = false;
 
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
-        top.Controls.AddRange([Caption(UiText.SimMonth), _year, _month, Caption(UiText.SimRegisterLabel), _register, Caption(UiText.SimCut), _mode]);
+        top.Controls.AddRange([Caption(UiText.SimMonth), _year, _month, Caption(UiText.SimRegisterLabel), _register, Caption(UiText.SimCut), _mode, Caption(UiText.TwoContractsMenu), _twoContracts]);
+        _tips.SetToolTip(_twoContracts, UiText.TwoContractsMenuTip);
 
         var card = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(4) };
         void Field(string label, Control control)
@@ -137,10 +143,10 @@ public sealed class SimulationDialog : Form
         employmentsBox.Controls.Add(_employments);
         var rowsBox = new GroupBox { Text = UiText.SimRowsTitle, Dock = DockStyle.Fill };
         rowsBox.Controls.Add(_rows);
-        var right = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 150 };
+        var right = new SplitContainer { Name = "right", Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 150 };
         right.Panel1.Controls.Add(employmentsBox);
         right.Panel2.Controls.Add(rowsBox);
-        var inputs = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 430 };
+        var inputs = new SplitContainer { Name = "inputs", Dock = DockStyle.Fill, SplitterDistance = 430 };
         inputs.Panel1.Controls.Add(cardBox);
         inputs.Panel2.Controls.Add(right);
 
@@ -158,7 +164,7 @@ public sealed class SimulationDialog : Form
         AddTab(UiText.SimReviewTab, _review);
         AddTab(UiText.SimXmlTab, _xml);
 
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 470 };
+        var split = new SplitContainer { Name = "main", Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 470 };
         split.Panel1.Controls.Add(inputs);
         split.Panel2.Controls.Add(_results);
         var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };
@@ -177,13 +183,15 @@ public sealed class SimulationDialog : Form
         _exemption.CheckedChanged += (_, _) => _exemptionMonthly.Enabled = _exemption.Checked;
         _member.SelectedIndexChanged += (_, _) => _rate.Enabled = ((Choice)_member.SelectedItem!).Value == "1";
 
-        Fill(Example(year, month));
+        Fill(Example(year, month) with { TwoContracts = _startRule });
     }
 
     internal NumericUpDown YearBox => _year;
     internal NumericUpDown MonthBox => _month;
     internal ComboBox RegisterBox => _register;
     internal ComboBox ModeBox => _mode;
+
+    internal ComboBox TwoContractsBox => _twoContracts;
     internal TextBox FirstNameBox => _first;
     internal TextBox LastNameBox => _last;
     internal TextBox CodeBox => _code;
@@ -360,7 +368,7 @@ public sealed class SimulationDialog : Form
             return null;
         }
 
-        return new SimScenario(year, month, person, Enum.Parse<SimRegister>(((Choice)_register.SelectedItem!).Value), employments, rows, Enum.Parse<DeclarationMode>(((Choice)_mode.SelectedItem!).Value));
+        return new SimScenario(year, month, person, Enum.Parse<SimRegister>(((Choice)_register.SelectedItem!).Value), employments, rows, Enum.Parse<DeclarationMode>(((Choice)_mode.SelectedItem!).Value), Enum.Parse<TwoContractsRule>(((Choice)_twoContracts.SelectedItem!).Value));
     }
 
     /// <summary>A scenario put into the fields and grids.</summary>
@@ -370,6 +378,7 @@ public sealed class SimulationDialog : Form
         _month.Value = Math.Clamp(scenario.Month, 1, 12);
         Select(_register, scenario.Register.ToString());
         Select(_mode, scenario.Mode.ToString());
+        Select(_twoContracts, scenario.TwoContracts.ToString());
         var p = scenario.Person;
         _first.Text = p.FirstName;
         _last.Text = p.LastName;

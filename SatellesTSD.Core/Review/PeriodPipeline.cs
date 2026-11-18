@@ -367,36 +367,63 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     /// files by them from now on (decision 136). The ids saved are returned.</summary>
     public IReadOnlyList<string> ImportLayouts(string json)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+        ArgumentNullException.ThrowIfNull(json);
         var text = json.TrimStart('﻿', ' ', '\t', '\r', '\n');
+        if (text.Length == 0)
+        {
+            throw LayoutsRefusal.Of(LayoutsRefusal.NoLayout, "The layouts file holds no layout.");
+        }
+
+        // every refusal carries its code, so the window says it in Estonian (decision 211)
         List<StatementLayout> layouts;
         try
         {
-            layouts = text.StartsWith('[') ? LayoutCatalog.ParseLayouts(text).ToList() : [LayoutCatalog.FromJson(text)];
+            layouts = text.StartsWith('[') ? LayoutCatalog.ParseLayouts(text).ToList() : System.Text.Json.JsonSerializer.Deserialize<StatementLayout>(text, LayoutCatalog.Json) is { } one ? [one] : []; // a bare null is no layout
         }
         catch (System.Text.Json.JsonException e)
         {
-            throw new ImportException($"The layouts file is not valid JSON: {e.Message}", e);
+            // the line as the owner's editor counts it: the blank lines trimmed off the start counted back in
+            var skipped = json.AsSpan(0, json.Length - text.Length).Count('\n');
+            throw LayoutsRefusal.Of(LayoutsRefusal.NotJson, $"The layouts file is not valid JSON: {e.Message}",
+                subject: e.LineNumber is { } line ? (line + 1 + skipped).ToString(System.Globalization.CultureInfo.InvariantCulture) : null, detail: e.Message, inner: e);
         }
 
-        if (layouts.Count == 0 || layouts.Any(l => l is null))
+        if (layouts.Count == 0)
         {
-            throw new ImportException(layouts.Count == 0 ? "The layouts file holds no layout." : "The layouts file holds an empty entry (null) among its layouts.");
+            throw LayoutsRefusal.Of(LayoutsRefusal.NoLayout, "The layouts file holds no layout.");
+        }
+
+        if (layouts.Any(l => l is null))
+        {
+            throw LayoutsRefusal.Of(LayoutsRefusal.NullEntry, "The layouts file holds an empty entry (null) among its layouts.");
         }
 
         var problems = layouts.SelectMany(l => l.Problems().Select(p => $"{l.Id}: {p}")).ToList();
         if (problems.Count > 0)
         {
-            throw new ImportException("The layouts cannot be used:\n" + string.Join("\n", problems));
+            throw LayoutsRefusal.Of(LayoutsRefusal.Unusable, "The layouts cannot be used:\n" + string.Join("\n", problems),
+                subject: string.Join(", ", layouts.Where(l => l.Problems().Count > 0).Select(l => l.Id)), detail: string.Join("\n", problems));
         }
 
         var repeated = layouts.GroupBy(l => l.Id, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => $"'{g.Key}' {g.Count()} times").ToList();
         if (repeated.Count > 0)
         {
-            throw new ImportException($"The layouts file repeats an id ({string.Join(", ", repeated)}): one layout per id.");
+            // the subject names the ids alone: the window words the sentence in Estonian
+            throw LayoutsRefusal.Of(LayoutsRefusal.RepeatedId, $"The layouts file repeats an id ({string.Join(", ", repeated)}): one layout per id.",
+                subject: string.Join(", ", layouts.GroupBy(l => l.Id, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => $"'{g.Key}'")));
         }
 
-        _store.SaveLayouts(layouts); // whole or not at all, in any order
+        try
+        {
+            _store.SaveLayouts(layouts); // whole or not at all, in any order
+        }
+        catch (ImportException e) when (LayoutsRefusal.CodeOf(e) is null)
+        {
+            // the store's own check of the merged catalog: a header row another layout has (or one only '?' letters set apart)
+            var inner = e.InnerException?.Message ?? e.Message;
+            throw LayoutsRefusal.Of(LayoutsRefusal.Collides, e.Message, detail: inner[(inner.IndexOf('\n', StringComparison.Ordinal) + 1)..], inner: e);
+        }
+
         RefreshImporter();
         return layouts.Select(l => l.Id).ToList();
     }

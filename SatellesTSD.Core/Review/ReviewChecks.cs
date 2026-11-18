@@ -12,6 +12,9 @@ public static class ReviewChecks
     public const string NoPayeeId = "NO_PAYEE_ID";
     public const string ResidencyNotChecked = "RESIDENCY_NOT_CHECKED";
     public const string NoType = "NO_TYPE";
+
+    /// <summary>A salary paid on a day two employments of different types are in force, and the Seaded rule says ask (decision 209).</summary>
+    public const string TwoContracts = "TWO_CONTRACTS";
     public const string UnknownType = "UNKNOWN_TYPE";
     public const string NotInPeriod = "NOT_IN_PERIOD";
     public const string NotCounted = "NOT_COUNTED";
@@ -40,7 +43,9 @@ public static class ReviewChecks
         string.IsNullOrWhiteSpace(currency) || currency.Trim().Equals("EUR", StringComparison.OrdinalIgnoreCase) || currency.Trim() == "€";
 
     /// <param name="duplicate">The row is a copy of an earlier source's row (the run's DUPLICATE_ROW): the original counts, this one never.</param>
-    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown)
+    /// <param name="twoContracts">The TÖR types in force on the day when the Seaded rule asks for the type (decision 209):
+    /// a payment of no type is then asked, TWO_CONTRACTS, not NO_TYPE.</param>
+    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown, IReadOnlyList<string>? twoContracts = null)
     {
         ArgumentNullException.ThrowIfNull(rates);
         var refusals = new List<Refusal>();
@@ -93,7 +98,9 @@ public static class ReviewChecks
 
         if (typeCode is null)
         {
-            refusals.Add(new Refusal(NoType, "No payment type: the category has no code for this person, or the employment type is unknown."));
+            refusals.Add(twoContracts is { Count: > 0 }
+                ? new Refusal(TwoContracts, $"Two employments of different types are in force on the payment's day (TÖR {string.Join(", ", twoContracts)}); choose the payment type, or the card's employment type for every payment.")
+                : new Refusal(NoType, "No payment type: the category has no code for this person, or the employment type is unknown."));
         }
         else if (!PaymentTypes.TryGet(typeCode, out var type))
         {
@@ -101,7 +108,7 @@ public static class ReviewChecks
         }
         else if (person is not null)
         {
-            refusals.AddRange(PaymentChecks.Check(type!, person.FactsFor(year), amount, rates));
+            refusals.AddRange(PaymentChecks.Check(type!, person.FactsFor(year, 1), amount, rates)); // the checks look at no fact the month places
         }
 
         return refusals;

@@ -56,10 +56,11 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 
 The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
 (import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
-(the report, the calculator, the non-residents of every company), **Vaade** (the log one line high; the persons grid showing only PALK NETO KOKKU
-of the sources) and **Seaded** (the declaration's cut, step 6; your own statement layouts: **Impordi väljavõtte
-paigutused…** reads a `.json` file holding one layout or a list of them, and the files are read by them at
-once, a stored file by **Loe uuesti** in Failid; **Väljavõtte paigutused…** lists every layout in force, writes
+(the report, the calculator, the non-residents of every company), **Vaade** (the log one line high, one toggle; the persons grid showing only PALK NETO KOKKU
+of the sources) and **Seaded** (the declaration's cut, step 6; **Kaks lepingut korraga**, how a salary is typed on a day two
+contracts are in force, each choice with its tip; your own statement layouts in **Väljavõtte paigutused…**, which
+lists every layout in force, reads a `.json` file holding one layout or a list of them with **Impordi failist…** (the
+files are read by them at once, a stored file by **Loe uuesti** in Failid), writes
 them all to a file with **Salvesta paigutused faili…** — the shape to start from: copy the nearest layout, change
 the header, keep its id so the search's filters still apply to it — and deletes one of yours, the built-in
 coming back);
@@ -105,7 +106,7 @@ person picked, every payment of the month, one per category, the payments withou
    until given one — and a part's amount set to 0 takes the part out again.
 6. **Deklaratsioon › Koosta read**: the declared lines with their taxes, one per payment, plus the zero
    line for a valid employment without pay. Build again after every change; it reconciles in place.
-   The **Seaded** menu chooses the cut, and remembers it: one line per payment (the default), or one
+   The **Seaded** menu's one toggle chooses the cut, and remembers it: unticked, one line per payment (the default); ticked, one
    line per person and payment type with the month's payments added up and dated by the latest of
    them. Once a month's lines are on the server in one cut, the other is refused for that month.
 7. **Ekspordi XML…**: one file for the month into the folder you pick; the checklist that follows says

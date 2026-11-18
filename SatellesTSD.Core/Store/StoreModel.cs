@@ -75,13 +75,20 @@ public sealed record Person(
     /// <summary>The monthly exemption this person's lines would use in a year: the person's own figure, else the
     /// allowance in force (the pension-age one once the person has reached it), as the allocator reckons it.</summary>
     public decimal ExemptionMonthInForce(int year, TaxRates rates) =>
-        BasicExemptionMonthly ?? (PensionAgeYear is { } pensionAgeYear && year >= pensionAgeYear ? rates.PensionAgeExemptionMonth : rates.BasicExemptionMonth);
+        BasicExemptionMonthly ?? (AgeYear is { } pensionAgeYear && year >= pensionAgeYear ? rates.PensionAgeExemptionMonth : rates.BasicExemptionMonth);
 
-    public PayeeTaxFacts FactsFor(int year, decimal socialTaxMinimumShare = 1m) => new(
+    /// <summary>The year the person reaches pension age: the card's, else the personal code's by the law's table (decision
+    /// 208) — so the exemption (MVT_650 from 1 January of that year) and the unemployment insurance read the same age.</summary>
+    private int? AgeYear => PensionAgeYear ?? PensionAge.ReachedOn(PersonalCode)?.Year;
+
+    /// <summary>The person's facts for a payment month: <paramref name="month"/> places the pension age's month (the
+    /// employee's unemployment insurance ends after it, <see cref="PensionAge"/>).</summary>
+    public PayeeTaxFacts FactsFor(int year, int month, decimal socialTaxMinimumShare = 1m) => new(
         Residency, ResidenceCountry, FundedPensionMember, PensionRate, OnOldAgeOrFlexiblePension,
-        PensionAgeYear is { } pensionAgeYear && year >= pensionAgeYear,
+        AgeYear is { } pensionAgeYear && year >= pensionAgeYear,
         BasicExemptionApplied, BasicExemptionMonthly, SocialTaxMinimumApplies, socialTaxMinimumShare,
-        A1, A1Country, WorkCountry, TreatyIncomeTaxRate);
+        A1, A1Country, WorkCountry, TreatyIncomeTaxRate,
+        PensionAge.ReachedBefore(PensionAgeYear, PersonalCode, year, month));
 
     /// <summary>How the person is named on the declaration: the Estonian personal code, else the MTA non-resident code.</summary>
     public PayeeId? PayeeId =>
@@ -148,10 +155,14 @@ public sealed record StoredPayment(
     Guid? SubmissionId,
     DateTime CreatedAt,
     Guid? SourceRowId = null,
-    Guid? ReviewLineId = null)
+    Guid? ReviewLineId = null,
+    bool Settled = false)
 {
     public static StoredPayment New(Guid periodId, Guid? personId, Section section, PaymentLine line, PayeeTaxFacts? facts, TaxResult? result, decimal? netPaid = null, string? sourceRef = null, Guid? sourceRowId = null, Guid? reviewLineId = null) =>
         new(Guid.Empty, periodId, personId, section, line.LineNumber, 0, line.Action, PaymentStatus.Draft, line, facts, result, netPaid, sourceRef, null, default, sourceRowId, reviewLineId);
+
+    // Settled: a refused version (Rejected) a later build found moot, the review being back to the figures the server
+    // holds (decision 205): no longer a correction refused over the standing line.
 
     /// <summary>Whether this version is presumed to exist on MTA's side.</summary>
     public bool OnServer => Status is PaymentStatus.Sent or PaymentStatus.Accepted or PaymentStatus.NeedsChange or PaymentStatus.Review;

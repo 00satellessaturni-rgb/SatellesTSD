@@ -317,9 +317,8 @@ public sealed class HandLineDialog : FieldDialog
     }
 }
 
-/// <summary>The files the period's run reads, and the way to take one away (the run goes with it, the decisions on
-/// that file's rows too).</summary>
-/// <summary>The owner's statement layouts saved over the built-in catalog (decision 136): listed, and one taken back.</summary>
+/// <summary>The statement layouts in force (decision 136), in one Seaded row as the phrases (decision 211): listed, the
+/// owner's imported from a file, all saved to one, one of the owner's taken back.</summary>
 public sealed class LayoutsDialog : Form
 {
     private readonly AppServices _services;
@@ -327,16 +326,21 @@ public sealed class LayoutsDialog : Form
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false };
     private readonly Button _delete = new() { Text = UiText.DeleteLayout, AutoSize = true, Enabled = false };
     private readonly Button _save = new() { Text = UiText.SaveLayouts, AutoSize = true };
+    private readonly Button _import = new() { Text = UiText.LayoutsImport, AutoSize = true };
+    private readonly string? _folder;
     private readonly Label _none = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(6), Text = UiText.NoOwnerLayouts, Visible = false };
 
-    public LayoutsDialog(AppServices services, Action<string> log)
+    /// <param name="folder">Where the import's file dialog opens (the folder the files were last picked from).</param>
+    public LayoutsDialog(AppServices services, Action<string> log, string? folder = null)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _log = log ?? throw new ArgumentNullException(nameof(log));
+        _folder = folder;
         Text = UiText.LayoutsTitle;
         Size = new Size(640, 320);
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
+        MinimizeBox = false; // a modal dialog with no taskbar button, minimized, would strand itself
         _list.Columns.Add(UiText.LayoutId, 180);
         _list.Columns.Add(UiText.LayoutBank, 140);
         _list.Columns.Add(UiText.Kind, 80);
@@ -344,7 +348,7 @@ public sealed class LayoutsDialog : Form
         _list.Columns.Add(UiText.LayoutStanding, 150);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
         var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };
-        buttons.Controls.AddRange([close, _delete, _save]);
+        buttons.Controls.AddRange([close, _delete, _save, _import]);
         Controls.Add(_list);
         Controls.Add(_none);
         Controls.Add(buttons);
@@ -352,12 +356,23 @@ public sealed class LayoutsDialog : Form
         _list.SelectedIndexChanged += (_, _) => _delete.Enabled = _list.SelectedItems.Count > 0 && _list.SelectedItems[0].Tag is StatementLayout own && IsOwn(own);
         _delete.Click += (_, _) => Delete();
         _save.Click += (_, _) => Save();
+        _import.Click += (_, _) => Import();
         Fill();
     }
 
     internal ListView List => _list;
     internal Button DeleteButton => _delete;
     internal Button SaveButton => _save;
+    internal Button ImportButton => _import;
+
+    /// <summary>Whether the note that the owner has no layouts of their own shows.</summary>
+    internal bool NoOwnLayoutsShown => _none.Visible;
+
+    /// <summary>The file to write the layouts to, given the name offered; null = cancelled. A save dialog by default.</summary>
+    internal Func<string, string?>? ChoosingFile;
+
+    /// <summary>The file to read layouts from; null = cancelled. An open dialog by default.</summary>
+    internal Func<string?>? OpeningFile;
 
     private bool IsOwn(StatementLayout layout) => _services.Pipeline.OwnerLayouts().Any(l => l.Id == layout.Id);
 
@@ -383,21 +398,58 @@ public sealed class LayoutsDialog : Form
     /// <summary>The layouts in force written to a JSON file: the shape the import takes, so the owner changes a copy of the nearest one.</summary>
     private void Save()
     {
-        using var dialog = new SaveFileDialog { Filter = UiText.LayoutFilter, FileName = "paigutused.json", DefaultExt = "json" };
-        if (dialog.ShowDialog(this) != DialogResult.OK)
+        var path = ChoosingFile is { } choose ? choose("paigutused.json") : AskSavePath();
+        if (path is null)
         {
             return;
         }
 
         try
         {
-            File.WriteAllText(dialog.FileName, _services.Pipeline.ExportLayouts(), new System.Text.UTF8Encoding(false));
-            _log(UiText.LayoutsSaved(dialog.FileName, _services.Pipeline.Catalog.Layouts.Count));
+            File.WriteAllText(path, _services.Pipeline.ExportLayouts(), new System.Text.UTF8Encoding(false));
+            _log(UiText.LayoutsSaved(path, _services.Pipeline.Catalog.Layouts.Count));
         }
         catch (Exception e)
         {
             Tell(e.Message);
         }
+    }
+
+    private string? AskSavePath()
+    {
+        using var dialog = new SaveFileDialog { Filter = UiText.LayoutFilter, FileName = "paigutused.json", DefaultExt = "json" };
+        return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+    }
+
+    /// <summary>The owner's layouts from a JSON file (one layout or an array), saved whole or not at all and read by from now
+    /// on (decision 136); a refusal is said here in Estonian (decisions 183, 211) and logged; the list shows what is in force.</summary>
+    private void Import()
+    {
+        var path = OpeningFile is { } open ? open() : AskOpenPath();
+        if (path is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var ids = _services.Pipeline.ImportLayouts(File.ReadAllText(path));
+            _log(UiText.LayoutsImported(ids));
+        }
+        catch (Exception e)
+        {
+            var said = UiText.Worded(e) ?? e.Message;
+            _log($"{UiText.Problem}: {said}");
+            Tell(said);
+        }
+
+        Fill();
+    }
+
+    private string? AskOpenPath()
+    {
+        using var dialog = new OpenFileDialog { Filter = UiText.LayoutFilter, CheckFileExists = true, InitialDirectory = _folder ?? "" };
+        return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
     }
 
     /// <summary>The question asked before a layout is deleted (the text, the title): true = go on. A message box by default.</summary>
@@ -441,6 +493,8 @@ public sealed class LayoutsDialog : Form
     }
 }
 
+/// <summary>The files the period's run reads, and the way to take one away (the run goes with it, the decisions on
+/// that file's rows too).</summary>
 public sealed class FilesDialog : Form
 {
     private readonly AppServices _services;
@@ -466,6 +520,7 @@ public sealed class FilesDialog : Form
         Size = new Size(760, 360);
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
+        MinimizeBox = false; // a modal dialog with no taskbar button, minimized, would strand itself
         _list.Columns.Add(UiText.Name, 320);
         _list.Columns.Add(UiText.Kind, 90);
         _list.Columns.Add(UiText.ImportedAt, 140);

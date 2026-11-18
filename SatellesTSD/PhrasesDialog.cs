@@ -23,6 +23,7 @@ public sealed class PhrasesDialog : Form
         Text = UiText.PhrasesTitle;
         Size = new Size(900, 480);
         StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false; // a modal dialog with no taskbar button, minimized, would strand itself
         ShowInTaskbar = false;
         _list.Columns.Add(UiText.PhrasesSet, 110);
         _list.Columns.Add(UiText.PhrasesCategory, 130);

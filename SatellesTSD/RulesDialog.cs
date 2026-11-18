@@ -70,12 +70,12 @@ public sealed class RulesDialog : Form
 
         _notes.Text = string.Join(Environment.NewLine, UiText.RulesNotes().Select(n => "• " + n));
 
-        var below = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 640 };
+        var below = new SplitContainer { Name = "below", Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 640 };
         below.Panel1.Controls.Add(_ratesGrid);
         below.Panel1.Controls.Add(new Label { Text = UiText.RulesRatesTitle, Dock = DockStyle.Top, AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(2) });
         below.Panel2.Controls.Add(_notes);
         below.Panel2.Controls.Add(new Label { Text = UiText.RulesNotesTitle, Dock = DockStyle.Top, AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(2) });
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 440 };
+        var split = new SplitContainer { Name = "matrix", Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 440 };
         split.Panel1.Controls.Add(_grid);
         split.Panel2.Controls.Add(below);
         var close = new Button { Text = UiText.Ok, DialogResult = DialogResult.OK, AutoSize = true };

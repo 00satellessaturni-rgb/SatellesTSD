@@ -74,13 +74,14 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _rulesButton = new(UiText.Rules);
     private readonly ToolStripMenuItem _simulationButton = new(UiText.Simulation);
     private readonly ToolStripMenuItem _nonResidentsButton = new(UiText.NonResidentsMenu);
-    private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
-    private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
-    private readonly ToolStripMenuItem _importLayoutsItem = new(UiText.ImportLayouts);
+    private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType) { ToolTipText = UiText.DeclareTotalsPerTypeTip }; // one toggle: unticked = each payment its own line
+    private readonly ToolStripMenuItem _twoContractsMenu = new(UiText.TwoContractsMenu) { ToolTipText = UiText.TwoContractsMenuTip };
+    private readonly ToolStripMenuItem _twoSalaryItem = new(UiText.TwoContractsSalary) { ToolTipText = UiText.TwoContractsSalaryTip };
+    private readonly ToolStripMenuItem _twoAskItem = new(UiText.TwoContractsAsk) { ToolTipText = UiText.TwoContractsAskTip };
+    private readonly ToolStripMenuItem _twoLatestItem = new(UiText.TwoContractsLatest) { ToolTipText = UiText.TwoContractsLatestTip };
     private readonly ToolStripMenuItem _layoutsItem = new(UiText.Layouts);
     private readonly ToolStripMenuItem _phrasesItem = new(UiText.Phrases);
-    private readonly ToolStripMenuItem _logDefaultItem = new(UiText.LogHeightDefault);
-    private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow);
+    private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow) { ToolTipText = UiText.LogHeightOneRowTip }; // one toggle: unticked = the default height
     private readonly ToolStripMenuItem _salaryOnlyItem = new(UiText.PersonsSalaryOnly);
     private readonly ToolStripMenuItem _reportButton = new(UiText.ExportReport);
     private readonly ToolStripMenuItem _updateButton = new(UiText.CheckUpdates);
@@ -174,21 +175,26 @@ public sealed class MainForm : Form
         _nonResidentsButton.Click += (_, _) => ShowNonResidents();
         // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
         var viewMenu = new ToolStripMenuItem(UiText.MenuView);
-        viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
+        viewMenu.DropDownItems.AddRange([_logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
+        viewMenu.DropDown.ShowItemToolTips = true;
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
-        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem, new ToolStripSeparator(), _importLayoutsItem, _layoutsItem, new ToolStripSeparator(), _phrasesItem]);
+        _twoContractsMenu.DropDownItems.AddRange([_twoSalaryItem, _twoAskItem, _twoLatestItem]);
+        _twoContractsMenu.DropDown.ShowItemToolTips = true;
+        settingsMenu.DropDownItems.AddRange([_declareTotalsItem, new ToolStripSeparator(), _twoContractsMenu, new ToolStripSeparator(), _layoutsItem, _phrasesItem]);
+        settingsMenu.DropDown.ShowItemToolTips = true;
         _phrasesItem.Click += (_, _) => ShowPhrases();
-        _importLayoutsItem.Click += (_, _) => ImportLayouts();
         _layoutsItem.Click += (_, _) => ShowLayouts();
         _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, viewMenu, settingsMenu]);
-        _logDefaultItem.Click += (_, _) => SetLogOneRow(false);
-        _logOneRowItem.Click += (_, _) => SetLogOneRow(true);
+        _logOneRowItem.Click += (_, _) => SetLogOneRow(!_settings.LogOneRow);
         _salaryOnlyItem.Click += (_, _) => SetPersonsSalaryOnly(!_settings.PersonsSalaryOnly);
         _salaryOnlyItem.Checked = _settings.PersonsSalaryOnly;
-        _declareEachItem.Click += (_, _) => SetDeclarationMode(totals: false);
-        _declareTotalsItem.Click += (_, _) => SetDeclarationMode(totals: true);
+        _declareTotalsItem.Click += (_, _) => SetDeclarationMode(totals: !_settings.DeclareTotalsPerType);
         ShowDeclarationMode();
+        _twoSalaryItem.Click += (_, _) => SetTwoContracts(Core.Review.TwoContractsRule.SalaryToEmploymentContract);
+        _twoAskItem.Click += (_, _) => SetTwoContracts(Core.Review.TwoContractsRule.Ask);
+        _twoLatestItem.Click += (_, _) => SetTwoContracts(Core.Review.TwoContractsRule.LatestStart);
+        ShowTwoContracts();
         MainMenuStrip = _menu;
         _toolbar.Items.AddRange(
         [
@@ -326,10 +332,16 @@ public sealed class MainForm : Form
 
     internal Label SalaryTotalLabel => _salaryTotal;
 
-    internal ToolStripMenuItem DeclareEachItem => _declareEachItem;
 
     internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
-    internal ToolStripMenuItem ImportLayoutsItem => _importLayoutsItem;
+
+    internal ToolStripMenuItem TwoContractsMenu => _twoContractsMenu;
+
+    internal ToolStripMenuItem TwoSalaryItem => _twoSalaryItem;
+
+    internal ToolStripMenuItem TwoAskItem => _twoAskItem;
+
+    internal ToolStripMenuItem TwoLatestItem => _twoLatestItem;
     internal ToolStripMenuItem LayoutsItem => _layoutsItem;
 
     internal ToolStripMenuItem PhrasesItem => _phrasesItem;
@@ -345,6 +357,7 @@ public sealed class MainForm : Form
     {
         var year = _view?.Period.Year ?? 2026;
         using var dialog = new RulesDialog(TaxRates.For(year), year);
+        DialogLayout.Keep(dialog, _settings, "rules");
         if (RulesOpening is { } take)
         {
             take(dialog);
@@ -362,7 +375,8 @@ public sealed class MainForm : Form
     private void ShowSimulation()
     {
         var month = _view?.Period is { } period ? (period.Year, period.Month) : (DateTime.Today.AddMonths(-1).Year, DateTime.Today.AddMonths(-1).Month);
-        using var dialog = new SimulationDialog(month.Item1, month.Item2, Path.Combine(AppContext.BaseDirectory, "schemas", "apa-tsd"), _services?.Store.SavedMatchCatalog());
+        using var dialog = new SimulationDialog(month.Item1, month.Item2, Path.Combine(AppContext.BaseDirectory, "schemas", "apa-tsd"), _services?.Store.SavedMatchCatalog(), _settings.TwoContractsRule);
+        DialogLayout.Keep(dialog, _settings, "simulation");
         if (SimulationOpening is { } take)
         {
             take(dialog);
@@ -374,7 +388,9 @@ public sealed class MainForm : Form
 
     /// <summary>Takes the category phrases' dialog instead of showing it (the tests drive it). Shown modal by default.</summary>
     internal Action<PhrasesDialog>? PhrasesOpening;
-    internal ToolStripMenuItem LogDefaultItem => _logDefaultItem;
+
+    /// <summary>Takes the statement layouts' dialog instead of showing it (the tests drive it). Shown modal by default.</summary>
+    internal Action<LayoutsDialog>? LayoutsOpening;
     internal ToolStripMenuItem LogOneRowItem => _logOneRowItem;
     internal ToolStripMenuItem SalaryOnlyItem => _salaryOnlyItem;
     internal Panel LogPanel => _logPanel;
@@ -527,6 +543,7 @@ public sealed class MainForm : Form
 
         Log(UiText.NonResidentsLogged(rows.Select(r => r.Company.Id).Distinct().Count(), rows.Count, rows.Count(r => r.Applied), rows.Count(r => r.Used)));
         using var dialog = new NonResidentsDialog(rows, Log);
+        DialogLayout.Keep(dialog, _settings, "nonResidents");
         if (NonResidentsOpening is { } take)
         {
             take(dialog);
@@ -894,6 +911,7 @@ public sealed class MainForm : Form
         }
 
         var dialog = new HistoryDialog(_services, line);
+        DialogLayout.Keep(dialog, _settings, "history");
         dialog.ResolveRequested += (version, onServer) => Resolve(version, onServer, dialog.Reload);
         return dialog;
     }
@@ -1285,6 +1303,11 @@ public sealed class MainForm : Form
                 Log(outcome.Confirmation is { } confirmation
                     ? $"{UiText.ReadFeedback} {outcome.Source}: kinnitamise raport — {confirmation}"
                     : $"{UiText.ReadFeedback} {outcome.Source}: {outcome.Recorded} rida; {string.Join(", ", outcome.Statuses.Select(kv => $"{UiText.PaymentStatusText(kv.Key)} {kv.Value}"))}");
+                if (outcome.RefusedOverLines.Count > 0)
+                {
+                    Log("   " + UiText.RefusedOverNote(outcome.RefusedOverLines)); // the server still holds the earlier version (decision 205)
+                }
+
                 foreach (var general in outcome.General)
                 {
                     Log("   " + UiText.GeneralText(general)); // a finding about the file or a section, on no line
@@ -1544,6 +1567,7 @@ public sealed class MainForm : Form
         Updater.ForgetStoreCopy(ExePath, path, SqliteStore.SchemaVersion); // opened by a build older than a failed update's upgrade: that episode is over
         _services = opened;
         _services.Workspace.TotalsPerType = _settings.DeclareTotalsPerType;
+        _services.Workspace.TwoContracts = _services.Declarer.TwoContracts = _settings.TwoContractsRule;
 
         _storeLabel.Text = path;
         if (chosen)
@@ -1648,7 +1672,7 @@ public sealed class MainForm : Form
     /// <summary>The declaration's cut, as the settings keep it.</summary>
     private Core.Declare.DeclarationMode DeclarationMode => _settings.DeclareTotalsPerType ? Core.Declare.DeclarationMode.TotalsPerType : Core.Declare.DeclarationMode.PerPayment;
 
-    /// <summary>The Seaded menu's choice: kept in the settings at once, shown as the check mark, said in the log. The
+    /// <summary>The Seaded menu's toggle: kept in the settings at once, shown as the check mark, said in the log. The
     /// lines follow at the next "Koosta read".</summary>
     private void SetDeclarationMode(bool totals)
     {
@@ -1667,6 +1691,40 @@ public sealed class MainForm : Form
         }
 
         Log($"{UiText.DeclareModeChanged} {(totals ? UiText.ModeTotals : UiText.ModeEach)} ({UiText.BuildLines})");
+    }
+
+    /// <summary>The Seaded menu's two-contracts rule (decision 209): kept in the settings at once, shown as the check mark,
+    /// said in the log; the review follows at once, the lines at the next "Koosta read".</summary>
+    private void SetTwoContracts(Core.Review.TwoContractsRule rule)
+    {
+        if (_settings.TwoContractsRule == rule)
+        {
+            return;
+        }
+
+        _settings.TwoContractsRule = rule;
+        SaveSettings();
+        ShowTwoContracts();
+        if (_services is not null)
+        {
+            _services.Workspace.TwoContracts = _services.Declarer.TwoContracts = rule;
+            ReloadView();
+        }
+
+        Log($"{UiText.TwoContractsChanged} {UiText.TwoContractsText(rule)} ({UiText.BuildLines})");
+    }
+
+    /// <summary>Whether the payment's type is the two-contracts rule's own pick: two types in force, no question pending,
+    /// and the type the review defaulted to (a type set by hand is the accountant's, not the rule's).</summary>
+    private static bool PickedByRule(Core.Review.ReviewPayment payment) =>
+        payment.ContractTypes.Count > 0 && payment.TypeCode == payment.DefaultTypeCode && payment.Checks.All(c => c.Code != Core.Review.ReviewChecks.TwoContracts);
+
+    private void ShowTwoContracts()
+    {
+        var rule = _settings.TwoContractsRule;
+        _twoSalaryItem.Checked = rule == Core.Review.TwoContractsRule.SalaryToEmploymentContract;
+        _twoAskItem.Checked = rule == Core.Review.TwoContractsRule.Ask;
+        _twoLatestItem.Checked = rule == Core.Review.TwoContractsRule.LatestStart;
     }
 
     /// <summary>The log's default height, in pixels: about nine lines.</summary>
@@ -1717,7 +1775,6 @@ public sealed class MainForm : Form
 
     private void ShowLogHeight()
     {
-        _logDefaultItem.Checked = !_settings.LogOneRow;
         _logOneRowItem.Checked = _settings.LogOneRow;
         // one line: exactly the list's line and its border; no horizontal scrollbar there, which would cover the line
         // (a long line is cut at the window's edge, and the default height shows it whole)
@@ -1728,7 +1785,6 @@ public sealed class MainForm : Form
 
     private void ShowDeclarationMode()
     {
-        _declareEachItem.Checked = !_settings.DeclareTotalsPerType;
         _declareTotalsItem.Checked = _settings.DeclareTotalsPerType;
     }
 
@@ -2312,6 +2368,12 @@ public sealed class MainForm : Form
                 parts.Add($"({string.Join(", ", payment.Candidates)})");
             }
 
+            if (payment.ContractTypes.Count > 0)
+            {
+                // the type was picked by the Seaded rule from two contracts in force that day, or is asked (decision 209)
+                parts.Add($"{UiText.TwoContractsNote} {string.Join("/", payment.ContractTypes)}");
+            }
+
             var index = _paymentsGrid.Rows.Add(
                 payment.IsByHand ? UiText.ByHand : payment.Reference,
                 payment.Date is { } d ? d.ToDateTime(TimeOnly.MinValue) : null,
@@ -2329,7 +2391,8 @@ public sealed class MainForm : Form
                 string.Join("; ", parts));
             var row = _paymentsGrid.Rows[index];
             row.Tag = payment;
-            row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}"));
+            row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}")
+                .Concat(PickedByRule(payment) ? [UiText.TwoContractsPickedTip(payment.ContractTypes, payment.TypeCode)] : []));
             if (payment.DirectionAssumed)
             {
                 row.Cells["dc"].ToolTipText = UiText.DirectionAssumedTip;
@@ -2548,8 +2611,9 @@ public sealed class MainForm : Form
         _updateButton.Visible = UpdatesEnabled;
         _updateSeparator.Visible = UpdatesEnabled;
         _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
-        _declareEachItem.Enabled = _declareTotalsItem.Enabled = !_busy; // the review follows the cut: never switched under a run
-        _importLayoutsItem.Enabled = _layoutsItem.Enabled = !_busy && _services is not null; // the layouts live in the store
+        _declareTotalsItem.Enabled = !_busy; // the review follows the cut: never switched under a run
+        _twoContractsMenu.Enabled = !_busy; // nor the two-contracts rule
+        _layoutsItem.Enabled = !_busy && _services is not null; // the layouts live in the store
         _phrasesItem.Enabled = _layoutsItem.Enabled; // and so do the phrases
         UseWaitCursor = _busy;
     }
@@ -3129,31 +3193,6 @@ public sealed class MainForm : Form
         ReloadView(edited.Id);
     }
 
-    /// <summary>The owner's statement layouts from a JSON file, saved through the store and read by from now on (decision 136).</summary>
-    private void ImportLayouts()
-    {
-        if (_services is null || _busy)
-        {
-            return;
-        }
-
-        using var dialog = new OpenFileDialog { Filter = UiText.LayoutFilter, CheckFileExists = true, InitialDirectory = ImportFolder() };
-        if (dialog.ShowDialog(this) != DialogResult.OK)
-        {
-            return;
-        }
-
-        try
-        {
-            var ids = _services.Pipeline.ImportLayouts(File.ReadAllText(dialog.FileName));
-            Log(UiText.LayoutsImported(ids));
-        }
-        catch (Exception e)
-        {
-            Fail(e);
-        }
-    }
-
     /// <summary>The category phrases (decision 202): listed, saved to a file, read from one, the built-in ones put back.</summary>
     private void ShowPhrases()
     {
@@ -3163,6 +3202,7 @@ public sealed class MainForm : Form
         }
 
         using var dialog = new PhrasesDialog(_services, Log);
+        DialogLayout.Keep(dialog, _settings, "phrases");
         if (PhrasesOpening is { } take)
         {
             take(dialog);
@@ -3179,7 +3219,15 @@ public sealed class MainForm : Form
             return;
         }
 
-        using var dialog = new LayoutsDialog(_services, Log);
+        // one Seaded row, as the phrases (decision 211): listed, imported from a file, saved to one, one taken back
+        using var dialog = new LayoutsDialog(_services, Log, ImportFolder());
+        DialogLayout.Keep(dialog, _settings, "layouts");
+        if (LayoutsOpening is { } take)
+        {
+            take(dialog);
+            return;
+        }
+
         dialog.ShowDialog(this);
     }
 
@@ -3191,6 +3239,7 @@ public sealed class MainForm : Form
         }
 
         using var dialog = new FilesDialog(_services, _view, Log);
+        DialogLayout.Keep(dialog, _settings, "files");
         dialog.ShowDialog(this);
         ReloadView();
     }

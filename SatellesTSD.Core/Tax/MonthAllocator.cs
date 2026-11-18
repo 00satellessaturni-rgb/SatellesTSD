@@ -160,6 +160,7 @@ public sealed class MonthAllocator
         if (own.PensionRate != month.PensionRate) differences.Add(nameof(PayeeTaxFacts.PensionRate));
         if (own.OnOldAgeOrFlexiblePension != month.OnOldAgeOrFlexiblePension) differences.Add(nameof(PayeeTaxFacts.OnOldAgeOrFlexiblePension));
         if (own.PensionAgeThisYear != month.PensionAgeThisYear) differences.Add(nameof(PayeeTaxFacts.PensionAgeThisYear));
+        if (own.PensionAgeReached != month.PensionAgeReached) differences.Add(nameof(PayeeTaxFacts.PensionAgeReached));
         if (own.BasicExemptionApplied != month.BasicExemptionApplied) differences.Add(nameof(PayeeTaxFacts.BasicExemptionApplied));
         if (own.BasicExemptionMonthly != month.BasicExemptionMonthly) differences.Add(nameof(PayeeTaxFacts.BasicExemptionMonthly));
         if (own.SocialTaxMinimumApplies != month.SocialTaxMinimumApplies) differences.Add(nameof(PayeeTaxFacts.SocialTaxMinimumApplies));

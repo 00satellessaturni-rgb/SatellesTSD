@@ -251,15 +251,16 @@ public class WindowTests
     }
 
     [Fact]
-    public void The_Vaade_menu_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
+    public void The_Vaade_menus_one_toggle_sets_the_log_to_one_line_or_its_default_height_and_keeps_it_in_the_settings()
     {
         using var fixture = new WindowFixture();
         Ui.Run(() =>
         {
             fixture.Drive(form =>
             {
-                Assert.True(form.LogDefaultItem.Checked);
                 Assert.False(form.LogOneRowItem.Checked);
+                Assert.Equal(UiText.LogHeightOneRowTip, form.LogOneRowItem.ToolTipText);
+                Assert.Single(form.LogOneRowItem.Owner!.Items.OfType<ToolStripMenuItem>(), i => i.Text!.StartsWith("Logiaken", StringComparison.Ordinal)); // one row for the setting
                 var tall = form.LogPanel.Height;
 
                 // one line: the panel shrinks to a line (and room for a scrollbar), the grids above take the rest
@@ -267,12 +268,11 @@ public class WindowTests
                 Ui.Pump();
                 Assert.True(AppSettings.Load(fixture.SettingsPath).LogOneRow);
                 Assert.True(form.LogOneRowItem.Checked);
-                Assert.False(form.LogDefaultItem.Checked);
                 Assert.InRange(form.LogPanel.Height, 1, tall / 3);
 
                 // the line shown is the latest, and it fits: something said in the log (the Seaded choice says itself)
                 form.DeclareTotalsItem.PerformClick();
-                form.DeclareEachItem.PerformClick();
+                form.DeclareTotalsItem.PerformClick();
                 Ui.Pump();
                 var log = form.LogList;
                 Assert.True(log.Items.Count >= 2);
@@ -285,10 +285,10 @@ public class WindowTests
             {
                 Assert.True(form.LogOneRowItem.Checked);
                 var small = form.LogPanel.Height;
-                form.LogDefaultItem.PerformClick();
+                form.LogOneRowItem.PerformClick(); // the same row, unticked
                 Ui.Pump();
                 Assert.False(AppSettings.Load(fixture.SettingsPath).LogOneRow);
-                Assert.True(form.LogDefaultItem.Checked);
+                Assert.False(form.LogOneRowItem.Checked);
                 Assert.True(form.LogPanel.Height > small * 3);
             });
         });
@@ -307,8 +307,9 @@ public class WindowTests
         {
             fixture.Drive(form =>
             {
-                Assert.True(form.DeclareEachItem.Checked);
                 Assert.False(form.DeclareTotalsItem.Checked);
+                Assert.Equal(UiText.DeclareTotalsPerTypeTip, form.DeclareTotalsItem.ToolTipText);
+                Assert.Single(form.DeclareTotalsItem.Owner!.Items.OfType<ToolStripMenuItem>(), i => i.Text!.StartsWith("Deklaratsioon", StringComparison.Ordinal)); // one row for the cut
                 form.Tabs.SelectedIndex = 1;
                 Ui.Pump();
                 var panel = form.Declaration;
@@ -320,14 +321,12 @@ public class WindowTests
                 Ui.Pump();
                 Assert.True(AppSettings.Load(fixture.SettingsPath).DeclareTotalsPerType);
                 Assert.True(form.DeclareTotalsItem.Checked);
-                Assert.False(form.DeclareEachItem.Checked);
             });
 
             // a new window on the same settings: the choice stands, and the build adds the type up
             fixture.Drive(form =>
             {
                 Assert.True(form.DeclareTotalsItem.Checked);
-                Assert.False(form.DeclareEachItem.Checked);
                 form.Tabs.SelectedIndex = 1;
                 Ui.Pump();
                 var panel = form.Declaration;
@@ -339,14 +338,91 @@ public class WindowTests
                 Assert.StartsWith("koond, liik 10: ", row.Cells["source"].Value?.ToString(), StringComparison.Ordinal);
 
                 // and back: the totals draft goes, the two lines are made afresh
-                form.DeclareEachItem.PerformClick();
+                form.DeclareTotalsItem.PerformClick(); // the same row, unticked
                 Ui.Pump();
                 Assert.False(AppSettings.Load(fixture.SettingsPath).DeclareTotalsPerType);
+                Assert.False(form.DeclareTotalsItem.Checked);
                 panel.BuildButton.PerformClick();
                 Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 2, what: "the build, payment by payment again");
                 Assert.All(panel.LinesGrid.Rows.Cast<DataGridViewRow>(), r => Assert.DoesNotContain("koond", r.Cells["source"].Value?.ToString() ?? "", StringComparison.Ordinal));
             });
         });
+    }
+
+    [Fact]
+    public void The_Seaded_menu_chooses_the_two_contracts_rule_with_a_tip_on_each_choice_and_keeps_it_in_the_settings()
+    {
+        // decision 209: a Tööleping and a VÕS leping (from 6 October) in force on the 20th, a salary paid that day
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            workspace.AddHandLine(period.Id, workspace.Load(period.Id).Persons[0].PersonId, new DateOnly(2026, 10, 20), 200m, "Mari Maasikas", "palk", "Palgad");
+        }, mariSecond: true);
+        DataGridViewRow Twentieth(MainForm form) => form.PaymentsGrid.Rows.Cast<DataGridViewRow>().Single(r => r.Tag is ReviewPayment { IsByHand: true });
+        Ui.Run(() =>
+        {
+            fixture.Drive(form =>
+            {
+                Assert.Equal((true, false, false), (form.TwoSalaryItem.Checked, form.TwoAskItem.Checked, form.TwoLatestItem.Checked)); // the default
+                Assert.All(new[] { form.TwoContractsMenu, form.TwoSalaryItem, form.TwoAskItem, form.TwoLatestItem }, i => Assert.False(string.IsNullOrWhiteSpace(i.ToolTipText)));
+                Assert.True(form.TwoContractsMenu.DropDown.ShowItemToolTips);
+                Assert.Equal("10", Twentieth(form).Cells["type"].Value);
+                Assert.Contains($"{UiText.TwoContractsNote} ", Twentieth(form).Cells["check"].Value?.ToString(), StringComparison.Ordinal); // the two types it was picked from
+                var picked = (ReviewPayment)Twentieth(form).Tag!;
+                Assert.Contains(UiText.TwoContractsPickedTip(picked.ContractTypes, "10"), Twentieth(form).Cells["check"].ToolTipText, StringComparison.Ordinal);
+
+                // a type set by hand is the accountant's: the tip no longer says the Seaded rule picked it
+                form.Services!.Workspace.SetTypeCode(picked, "17");
+                form.Reload();
+                Ui.Pump();
+                Assert.Equal("17", Twentieth(form).Cells["type"].Value);
+                Assert.DoesNotContain(UiText.TwoContractsPickedTip(picked.ContractTypes, "17"), Twentieth(form).Cells["check"].ToolTipText, StringComparison.Ordinal);
+                form.Services.Workspace.SetTypeCode((ReviewPayment)Twentieth(form).Tag!, null);
+                form.Reload();
+                Ui.Pump();
+
+                // ask: kept at once, the check mark moves, the review follows — no type, refused as TWO_CONTRACTS
+                form.TwoAskItem.PerformClick();
+                Ui.Pump();
+                Assert.Equal("Ask", AppSettings.Load(fixture.SettingsPath).TwoContracts);
+                Assert.Equal((false, true), (form.TwoSalaryItem.Checked, form.TwoAskItem.Checked));
+                Assert.Equal("", Twentieth(form).Cells["type"].Value);
+                Assert.Contains(ReviewChecks.TwoContracts, Twentieth(form).Cells["check"].Value?.ToString(), StringComparison.Ordinal);
+            });
+
+            // a new window on the same settings: the choice stands
+            fixture.Drive(form =>
+            {
+                Assert.True(form.TwoAskItem.Checked);
+                Assert.Contains(ReviewChecks.TwoContracts, Twentieth(form).Cells["check"].Value?.ToString(), StringComparison.Ordinal);
+                form.TwoLatestItem.PerformClick();
+                Ui.Pump();
+                Assert.Equal("17", Twentieth(form).Cells["type"].Value); // the old rule: the VÕS leping begun later
+                Assert.Equal("LatestStart", AppSettings.Load(fixture.SettingsPath).TwoContracts);
+            });
+        });
+    }
+
+    [Fact]
+    public void A_two_contracts_rule_this_build_does_not_know_reads_as_the_default_and_keeps_the_other_settings()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"satellestsd-settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, """{ "DeclareTotalsPerType": true, "TwoContracts": "Nonsense" }""");
+            var settings = AppSettings.Load(path);
+            Assert.True(settings.DeclareTotalsPerType);
+            Assert.Equal(TwoContractsRule.SalaryToEmploymentContract, settings.TwoContractsRule);
+            File.WriteAllText(path, """{ "TwoContracts": "1" }""");
+            Assert.Equal(TwoContractsRule.SalaryToEmploymentContract, AppSettings.Load(path).TwoContractsRule); // a number is no name
+            settings.TwoContractsRule = TwoContractsRule.Ask;
+            settings.Save(path);
+            Assert.Equal(TwoContractsRule.Ask, AppSettings.Load(path).TwoContractsRule);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
@@ -1343,7 +1419,7 @@ public class WindowTests
             Ui.Until(() => residency.Waiting, what: "the first query");
             Assert.True(form.IsBusy);
             Assert.True(form.StopButton.Visible);
-            Assert.False(form.DeclareTotalsItem.Enabled || form.DeclareEachItem.Enabled); // the cut is never switched under a run
+            Assert.False(form.DeclareTotalsItem.Enabled); // the cut is never switched under a run
             Assert.Equal("Päringud: 0 / 2", form.ProgressLabel.Text);
             Assert.Equal((0, 2), (form.ProgressBar.Value, form.ProgressBar.Maximum));
 
@@ -1366,7 +1442,7 @@ public class WindowTests
             Assert.Equal(2, residency.Asked);
             Assert.False(form.ProgressBar.Visible || form.ProgressLabel.Visible || form.StopButton.Visible);
             Assert.Equal(0, form.ProgressBar.Value);
-            Assert.True(form.DeclareTotalsItem.Enabled && form.DeclareEachItem.Enabled);
+            Assert.True(form.DeclareTotalsItem.Enabled);
             Assert.False(form.UseWaitCursor);
             Assert.Equal(Cursors.Default, persons.Cursor);
             Assert.Equal(Cursors.Default, form.PaymentsGrid.Cursor);

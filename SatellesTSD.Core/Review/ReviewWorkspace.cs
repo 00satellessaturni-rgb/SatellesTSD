@@ -49,6 +49,10 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// refused payment holds its whole type, and the persons say so (decision 79).</summary>
     public bool TotalsPerType { get; set; }
 
+    /// <summary>The rule for a salary paid on a day two employments of different types are in force (the window's Seaded
+    /// choice, decision 209).</summary>
+    public TwoContractsRule TwoContracts { get; set; } = TwoContractsRule.SalaryToEmploymentContract;
+
     /// <summary>The catalog in force for a new run: the owner's saved document, else the embedded default.</summary>
     public MatchCatalog CatalogInForce() => new MatchRunner(_store).Catalog();
 
@@ -529,8 +533,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         // gives it — and is ticked, or not unticked while its default declares it (decision 190)
         bool HandLineDeclares(ReviewLine line, Person person)
         {
-            var torType = ReviewDefaults.EmploymentTypeFor(run is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, person, line.Date);
-            var typeCode = line.TypeCode ?? ReviewDefaults.TypeCodeFor(line.Category is null ? null : catalog.Find(line.Category), torType, person.Residency);
+            var found = line.Category is null ? null : catalog.Find(line.Category);
+            var pick = ReviewDefaults.PickFor(run is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, person, line.Date, found is { IsSalary: true }, person.Residency, TwoContracts);
+            var typeCode = line.TypeCode ?? (pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, person.Residency));
             return typeCode is not null && (line.Declare ?? true);
         }
     }
@@ -889,18 +894,22 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var amount = partAmount ?? hit.Amount;
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
         var category = overlay is { NoCategory: true } ? null : overlay?.Category ?? defaultCategory;
-        var torType = ReviewDefaults.EmploymentTypeFor(register, person, hit.Row.Date);
-        var defaultType = ReviewDefaults.TypeCodeFor(category is null ? null : catalog.Find(category), torType, person?.Residency ?? Residency.Resident);
+        var found = category is null ? null : catalog.Find(category);
+        var residency = person?.Residency ?? Residency.Resident;
+        var pick = ReviewDefaults.PickFor(register, person, hit.Row.Date, found is { IsSalary: true }, residency, TwoContracts);
+        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency);
         var typeCode = overlay?.TypeCode ?? defaultType;
+        var asking = pick.Ask && typeCode is null; // a type set by hand ends the question (decision 209)
         // the amount counts when it was read, the row is one person's, it is no copy of an earlier source's row, and it is in euros
         var euro = ReviewChecks.IsEuro(hit.Row.Currency);
         var duplicate = hit.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal);
         var amountOk = hit.Row.Amount is not null && (!shared || person is not null) && !duplicate;
         // money that came in is no payout, whatever category the accountant gave the row (decision 141)
         var moneyIn = hit.Row.Direction == Direction.Credit;
-        var defaultDeclare = typeCode is not null && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
+        // a salary asked for its type stays to declare, refused until it is chosen: dropped, it would leave the month unpaid
+        var defaultDeclare = (typeCode is not null || asking) && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
         var declare = overlay?.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction, asking ? pick.InForce : null);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -931,6 +940,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Category = category,
             DefaultTypeCode = defaultType,
             TypeCode = typeCode,
+            ContractTypes = pick.InForce,
             DefaultDeclare = defaultDeclare,
             Declare = declare,
             InPeriod = hit.InPeriod,
@@ -947,14 +957,17 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     private ReviewPayment FromHandLine(Period period, ReviewLine line, Person? person, MatchPerson? register, MatchCatalog catalog)
     {
-        var torType = ReviewDefaults.EmploymentTypeFor(register, person, line.Date);
-        var defaultType = ReviewDefaults.TypeCodeFor(line.Category is null ? null : catalog.Find(line.Category), torType, person?.Residency ?? Residency.Resident);
+        var found = line.Category is null ? null : catalog.Find(line.Category);
+        var residency = person?.Residency ?? Residency.Resident;
+        var pick = ReviewDefaults.PickFor(register, person, line.Date, found is { IsSalary: true }, residency, TwoContracts);
+        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency);
         var typeCode = line.TypeCode ?? defaultType;
+        var asking = pick.Ask && typeCode is null;
         var inPeriod = line.Date is { } date && date.Year == period.Year && date.Month == period.Month;
         var amount = line.Amount ?? 0m;
-        var defaultDeclare = typeCode is not null && inPeriod && person is not null;
+        var defaultDeclare = (typeCode is not null || asking) && inPeriod && person is not null;
         var declare = line.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year));
+        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year), twoContracts: asking ? pick.InForce : null);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -977,6 +990,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             Category = line.Category,
             DefaultTypeCode = defaultType,
             TypeCode = typeCode,
+            ContractTypes = pick.InForce,
             DefaultDeclare = defaultDeclare,
             Declare = declare,
             InPeriod = inPeriod,

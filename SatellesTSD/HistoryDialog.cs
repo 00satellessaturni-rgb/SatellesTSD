@@ -46,6 +46,7 @@ public sealed class HistoryDialog : Form
         Text = $"{UiText.HistoryTitle} {_line.LineNumber}";
         Size = new Size(960, 360);
         StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false; // a modal dialog with no taskbar button, minimized, would strand itself
         ShowInTaskbar = false;
         foreach (var (name, header, right) in new[]
         {

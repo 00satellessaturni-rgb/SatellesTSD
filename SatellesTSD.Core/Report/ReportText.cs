@@ -135,6 +135,23 @@ public static class ReportText
         _ => status.ToString(),
     };
 
+    /// <summary>A line's status as the tab and the report show it: a correction or cancellation MTA refused over it is
+    /// said beside the status of the version that stands (decision 205).</summary>
+    public static string LineStatusText(Declare.DeclaredLine line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        return line.RefusedAttempt is { } refused
+            ? $"{PaymentStatusText(line.Payment.Status)}; {(refused.Action == LineAction.T ? "tühistus" : "parandus")} tagasi lükatud"
+            : PaymentStatusText(line.Payment.Status);
+    }
+
+    /// <summary>The feedback a line's row shows: the refused correction's when there is one, else the standing line's.</summary>
+    public static string? FeedbackText(Declare.DeclaredLine line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+        return (line.RefusedFeedback ?? line.LastFeedback) is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : null;
+    }
+
     /// <summary>The note written on the card of a rent payee the register lists for the first time (decision 109).</summary>
     public const string PayeeNowEmployee = "Isik oli enne registrisse kandmist üüri saaja: töötamise liik, SM miinimumkohustus ja maksuvaba tulu avaldus on nüüd pandud nagu registri töötajal — kontrolli kaarti.";
 

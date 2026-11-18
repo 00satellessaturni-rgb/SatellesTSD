@@ -69,7 +69,7 @@ public static class Simulator
             return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
         }
 
-        var workspace = new ReviewWorkspace(store, rates, clock);
+        var workspace = new ReviewWorkspace(store, rates, clock) { TwoContracts = scenario.TwoContracts };
         Person person;
         try
         {
@@ -81,7 +81,7 @@ public static class Simulator
             return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
         }
 
-        var declarer = new PeriodDeclarer(store, rates, clock);
+        var declarer = new PeriodDeclarer(store, rates, clock) { TwoContracts = scenario.TwoContracts };
         BuildReport report;
         try
         {

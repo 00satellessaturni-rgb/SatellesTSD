@@ -77,6 +77,10 @@ public sealed class ReviewPayment
 
     public string? TypeCode { get; init; }
 
+    /// <summary>The TÖR types in force on the payment's day when it is a salary and they declare under different codes
+    /// (decision 209): the type was picked by the Seaded rule, or is asked (TWO_CONTRACTS); empty otherwise.</summary>
+    public IReadOnlyList<string> ContractTypes { get; init; } = [];
+
     public bool DefaultDeclare { get; init; }
 
     public bool Declare { get; init; }

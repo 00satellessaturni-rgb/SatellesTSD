@@ -1,3 +1,4 @@
+using SatellesTSD.Core.Import;
 using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 
@@ -10,8 +11,62 @@ namespace SatellesTSD.Core.Review;
 /// a resident; 186 for a non-resident's car rent is the app's proposal (plan question 7, open with the accountant).
 /// A codeless category (Dividendid, Kommunaalkulud, Kompensatsioon, Laenud, Trahvid, TÖR-väline palgad) gives nothing:
 /// found, never declared (plan question 10).</summary>
+/// <summary>The rule for a salary paid on a day two employments of different types are in force (the window's Seaded
+/// choice, decision 209, amending 85): the Tööleping's type; no type, asked of the accountant (TWO_CONTRACTS); or the
+/// old rule, the valid one first, then the latest start.</summary>
+public enum TwoContractsRule
+{
+    SalaryToEmploymentContract,
+    Ask,
+    LatestStart,
+}
+
+/// <summary>The employment type a payment goes by under the two-contracts rule.</summary>
+/// <param name="TorTypeId">The TÖR type; null when the rule asks.</param>
+/// <param name="Ask">The rule asks: no type is offered and the payment is refused (TWO_CONTRACTS) until one is chosen.</param>
+/// <param name="InForce">The TÖR types in force on the day when they declare a salary under different codes; empty otherwise.</param>
+public sealed record TypePick(string? TorTypeId, bool Ask, IReadOnlyList<string> InForce);
+
 public static class ReviewDefaults
 {
+    /// <summary>The TÖR types of an employment contract (Tööleping): 1, and 507 by visa.</summary>
+    public static readonly IReadOnlySet<string> EmploymentContractTypes = new HashSet<string>(["1", "507"], StringComparer.Ordinal);
+
+    /// <summary>The employment type a payment goes by (decision 209): the card's type when the card says it stands for every
+    /// payment; for a salary on a day two employments in force declare under different codes (a Tööleping and a VÕS contract,
+    /// say), the rule's choice — the Tööleping in force (with none among them, the old rule), none (asked), or the old rule;
+    /// else <see cref="EmploymentTypeFor"/>. Two Töölepingud (1 and 507, both 10) are no conflict.</summary>
+    public static TypePick PickFor(MatchPerson? register, Store.Person? person, DateOnly? day, bool salary, Residency residency, TwoContractsRule rule)
+    {
+        var old = EmploymentTypeFor(register, person, day);
+        if (person is { TypeFromCard: true, TorEmploymentTypeId: { Length: > 0 } card } && EmploymentTypes.Find(card) is not null)
+        {
+            return new TypePick(card, false, []);
+        }
+
+        if (!salary || day is not { } d || register is null)
+        {
+            return new TypePick(old, false, []);
+        }
+
+        var inForce = register.Entries.Where(e => e.InForceOn(d)).ToList(); // by its dates and its pause (decision 181)
+        if (inForce.Select(e => EmploymentTypes.DefaultCode(e.TypeId, residency) ?? e.TypeId).Distinct(StringComparer.Ordinal).Count() < 2)
+        {
+            return new TypePick(old, false, []);
+        }
+
+        var types = inForce.Select(e => e.TypeId).Distinct(StringComparer.Ordinal).ToList();
+        return rule switch
+        {
+            TwoContractsRule.SalaryToEmploymentContract => new TypePick(
+                inForce.Where(e => EmploymentContractTypes.Contains(e.TypeId?.Trim() ?? ""))
+                    .OrderBy(e => e.StateId == TorStates.Valid ? 0 : 1).ThenByDescending(e => e.StartDate ?? DateOnly.MinValue)
+                    .FirstOrDefault()?.TypeId ?? old, false, types),
+            TwoContractsRule.Ask => new TypePick(null, true, types),
+            _ => new TypePick(old, false, types),
+        };
+    }
+
     /// <summary>The resident and the non-resident VALJAMLIIK codes of a category's code.</summary>
     public static readonly IReadOnlyDictionary<string, (string Resident, string NonResident)> CategoryCodes = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
     {

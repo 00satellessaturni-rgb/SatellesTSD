@@ -38,6 +38,7 @@ public sealed class NonResidentsDialog : Form
         Size = new Size(1100, 520);
         MinimumSize = new Size(640, 320);
         StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false; // a modal dialog with no taskbar button, minimized, would strand itself
         ShowInTaskbar = false;
         // the counts, the amount and the date are held as what they are, so a click on their header sorts them as numbers
         // and days, not as text

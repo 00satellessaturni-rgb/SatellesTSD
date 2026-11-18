@@ -398,7 +398,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 ReportCell.Of(p.Section.ToString()),
                 ReportCell.Of(p.LineNumber),
                 ReportCell.Of(ReportText.ActionText(p.Action)),
-                ReportCell.Of(ReportText.PaymentStatusText(p.Status)),
+                ReportCell.Of(ReportText.LineStatusText(line)),
                 ReportCell.Of(line.Person is { } person ? $"{person.LastName} {person.FirstName}" : null),
                 ReportCell.Of(p.Line.Payee?.Code),
                 ReportCell.Of(p.Line.TypeCode),
@@ -413,7 +413,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.IncomeTax),
                 r is null || r.ExemptionUsed == 0 ? ReportCell.Empty : ReportCell.Amount(r.ExemptionUsed),
                 ReportCell.Of(ReportText.SourceText(p.SourceRef)),
-                ReportCell.Of(line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : null),
+                ReportCell.Of(ReportText.FeedbackText(line)),
                 ReportCell.Of(line.Versions.ToString(CultureInfo.InvariantCulture)),
             ]));
         }

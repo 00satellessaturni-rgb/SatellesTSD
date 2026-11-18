@@ -75,7 +75,9 @@ public readonly record struct EffectiveFlags(
         bool minimumOnType = estonianA1 ? type.SocialTaxMinimumWithEstonianA1 : type.SocialTaxMinimum;
         bool socialTaxMinimum = socialTax && minimumOnType && payee.SocialTaxMinimumApplies;
         bool employerInsurance = type.UnemploymentInsurance && !foreignA1;
-        bool employeeInsurance = employerInsurance && !payee.OnOldAgeOrFlexiblePension;
+        // the employee's 1.6 % ends with an old-age or flexible pension, and with the month the pension age is reached
+        // (TKindlS § 42 lg 1 p 1, whether or not a pension is granted); the employer's 0.8 % stays
+        bool employeeInsurance = employerInsurance && !payee.OnOldAgeOrFlexiblePension && !payee.PensionAgeReached;
 
         bool fundedPension = false;
         if (type.FundedPension && !nonResident && !foreignA1)

@@ -22,6 +22,19 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string SectionChanged = "SECTION_CHANGED";
     public const string CancellationPending = "CANCELLATION_PENDING";
     public const string NotAllocated = "NOT_ALLOCATED";
+    public const string NotBuilt = "NOT_BUILT";
+
+    /// <summary>The person was paid this month in minimum-carrying pay the review refused: no zero line, and no top-up on
+    /// the other payments; the minimum waits for the payment to be put right (decision 207).</summary>
+    public const string MinimumHeld = "MINIMUM_HELD";
+
+    /// <summary>The rule for a salary paid on a day two employments of different types are in force (decision 209): the
+    /// build reads the review through its own workspace, so the window sets it here too.</summary>
+    public TwoContractsRule TwoContracts
+    {
+        get => _workspace.TwoContracts;
+        set => _workspace.TwoContracts = value;
+    }
     public const string NoPayee = "NO_PAYEE";
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
     public const string ModeChanged = "MODE_CHANGED";
@@ -67,6 +80,18 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public static decimal MonthShare(TorEntry? entry, int year, int month) => MonthShare(entry, [], year, month);
 
     private static bool Carries(string? typeId) => EmploymentTypes.Find(typeId) is { SocialTaxMinimum: true };
+
+    /// <summary>The codes that say a refused row is no pay of this person in this month: it holds no minimum (decision 207).</summary>
+    private static readonly HashSet<string> NotThisMonthsPay = new(StringComparer.Ordinal)
+        { ReviewChecks.NotInPeriod, ReviewChecks.MoneyIn, ReviewChecks.DuplicateRow, ReviewChecks.NotCounted };
+
+    /// <summary>Whether a payment the review refused is still this month's pay of a type that carries the minimum: the
+    /// person was paid, so the month is not one without pay (decision 207). A payment of no type or an unknown one cannot
+    /// be told to be such pay.</summary>
+    private static bool IsMonthsMinimumPay(ReviewPayment payment) =>
+        payment.Amount > 0m && !payment.Checks.Any(c => NotThisMonthsPay.Contains(c.Code))
+        && (payment.TypeCode is { } code ? PaymentTypes.TryGet(code, out var type) && type!.SocialTaxMinimum
+            : payment.Checks.Any(c => c.Code == ReviewChecks.TwoContracts)); // a salary asked for its type is pay all the same (decision 209)
 
     /// <summary>The share of the month the minimum is measured by (decision 89): the days covered by the person's register
     /// rows of the month whose employment type carries the minimum — the entry standing for the month among them when its
@@ -140,12 +165,19 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var persons = _store.Persons(period.CompanyId).ToDictionary(p => p.Id);
         return _store.Payments(periodId)
             .OrderBy(p => p.Section).ThenBy(p => p.LineNumber, StringComparer.Ordinal)
-            .Select(p => new DeclaredLine
+            .Select(p =>
             {
-                Payment = p,
-                Person = p.PersonId is { } id && persons.TryGetValue(id, out var person) ? person : null,
-                LastFeedback = _store.Feedback(p.Id).LastOrDefault(),
-                Versions = _store.History(periodId, p.Section, p.LineNumber).Count,
+                var history = _store.History(periodId, p.Section, p.LineNumber);
+                var refused = DeclaredLine.RefusedOver(p, history); // a correction refused over what the server holds (decision 205)
+                return new DeclaredLine
+                {
+                    Payment = p,
+                    Person = p.PersonId is { } id && persons.TryGetValue(id, out var person) ? person : null,
+                    LastFeedback = _store.Feedback(p.Id).LastOrDefault(),
+                    Versions = history.Count,
+                    RefusedAttempt = refused,
+                    RefusedFeedback = refused is null ? null : _store.Feedback(refused.Id).LastOrDefault(),
+                };
             })
             .ToList();
     }
@@ -153,7 +185,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// <summary>Whether a payment of this type carries the social-tax minimum for this person, their A1 case applied (the
     /// engine's rule); the pension fact, which the engine wants known, has no say in it and is given as "not a member".</summary>
     private static bool CarriesMinimumFor(PaymentType type, Person person, int year) =>
-        EffectiveFlags.Of(type, person.FactsFor(year) with { FundedPensionMember = false, PensionRate = null }).SocialTaxMinimum;
+        EffectiveFlags.Of(type, person.FactsFor(year, 1) with { FundedPensionMember = false, PensionRate = null }).SocialTaxMinimum; // the month has no say in the minimum
 
     /// <summary>The earlier of two days, either missing.</summary>
     private static DateOnly? Earlier(DateOnly? first, DateOnly? second) => first is null ? second : second is null ? first : first < second ? first : second;
@@ -330,12 +362,17 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var refusedTypes = new HashSet<string>(StringComparer.Ordinal); // the totals cut: a type with a refused payment is not rebuilt
         var keptMinimum = false; // a refused payment's line left standing carries the minimum: no zero line beside it
         var keptPools = new List<string>(); // refused payments' lines on the server that used the month's exemption or minimum
+        var minimumHeldBy = new List<string>(); // refused pay of the month that carries the minimum: the minimum waits for it (decision 207)
         foreach (var payment in reviewPerson.Payments.Where(p => p.Declare))
         {
             var source = SourceOf(payment);
             if (payment.Checks.Count > 0)
             {
                 problems.Add($"{Refused}: {payment.Reference}: {string.Join(", ", payment.Checks.Select(c => c.Code))}");
+                if (IsMonthsMinimumPay(payment))
+                {
+                    minimumHeldBy.Add(payment.Reference);
+                }
                 if (payment.TypeCode is { } refusedType)
                 {
                     refusedTypes.Add(refusedType);
@@ -373,6 +410,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var monthPayments = new List<MonthPayment>();
         var references = new Dictionary<string, (string Reference, Guid? RowId, Guid? LineId)>(StringComparer.Ordinal);
+        void Withdraw(IEnumerable<string> sources, string note) => WithdrawSources(sources, note, bySource, claimed, references, lines);
         if (mode == DeclarationMode.TotalsPerType)
         {
             // one line per type: the payments of the type added up, dated by the latest of them; the line stands for the
@@ -386,6 +424,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     // a refused payment in the type: what stands for the type, stands — as a refused payment's own line
                     // does in the other cut — until the payment is put right or taken out of the declaration
                     claimed.Add(source);
+                    if (byType.TryGetValue(typeCode, out var heldPay) && PaymentTypes.TryGet(typeCode, out var heldType) && heldType!.SocialTaxMinimum)
+                    {
+                        minimumHeldBy.AddRange(heldPay.Where(p => p.Amount > 0m).Select(p => p.Reference)); // held, not unpaid (decisions 199, 207)
+                    }
+
                     if (bySource.TryGetValue(source, out var stale) && stale.Status == PaymentStatus.Draft)
                     {
                         _store.DeleteDraft(stale.Id);
@@ -440,6 +483,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var zeroTypeId = InForce(carrier) ? cardType ?? carrier!.TypeId
             : !include ? null
             : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
+        // what the zero line's build says, said once the line is built: a build that stops later (no payee, a month that
+        // cannot be computed, the line factory's refusal) withdraws it instead, and says that (the fifth audit, item 2)
+        string? zeroNote = null;
+        var zeroNoteAt = 0;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
             && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed
@@ -466,20 +513,30 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     }
                 }
             }
+            else if (minimumHeldBy.Count > 0)
+            {
+                // the person was paid this month in pay the review refused: not a month without pay, so no zero line; the
+                // minimum waits for the payment to be put right or taken out of the declaration. A draft zero line goes,
+                // one on the server stands, nothing is cancelled (decision 207, after 92 and 191)
+                problems.Add($"{MinimumHeld}: no zero line (type {zeroCode}): the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the minimum waits for it to be put right (or taken out of the declaration) — a draft zero line standing is withdrawn, a line on the server stands.");
+                references[zeroSource] = (MinimumSource, null, null);
+                Withdraw([zeroSource], MinimumHeld);
+            }
             else
             {
                 monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
                 references[zeroSource] = (MinimumSource, null, null);
-                problems.Add(InForce(carrier)
+                zeroNoteAt = problems.Count;
+                zeroNote = InForce(carrier)
                     ? $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
-                    : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
+                    : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.";
             }
         }
 
         if (include && !InForce(entry))
         {
             // the card's choice is said, and so is why it made no zero line where one was looked for
-            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
+            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
                 ? zeroTypeId is null ? " No zero line: no employment type is known (neither the register nor the card's TÖR type)."
                 : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? $" No zero line: employment type {zeroTypeId} carries no minimum."
                 : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? " No zero line: the person's A1 case carries no Estonian social tax."
@@ -502,12 +559,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         if (person.PayeeId is not { } payee)
         {
-            problems.Add($"{NoPayee}: the person has neither a personal code nor an MTA non-resident code; nothing declared and nothing undone.");
-            foreach (var source in monthPayments.Select(m => m.Key))
-            {
-                claimed.Add(source);
-            }
-
+            problems.Add($"{NoPayee}: the person has neither a personal code nor an MTA non-resident code; nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands.");
+            Withdraw(monthPayments.Select(m => m.Key), NoPayee);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
         }
 
@@ -517,31 +570,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // e-MTA cannot know (decision 142). A draft standing under it (built before the code was found wrong) goes,
             // since the export takes every draft; a line on the server stands, nothing is cancelled.
             problems.Add($"{ReviewChecks.CodeInvalid}: the person's code '{invalidCode}' is not an Estonian personal code; nothing built under it — a draft standing under it is withdrawn, a line on the server stands. Correct the code on the card.");
-            foreach (var source in monthPayments.Select(m => m.Key))
-            {
-                claimed.Add(source);
-                if (!bySource.TryGetValue(source, out var held))
-                {
-                    continue;
-                }
-
-                var reference = references.TryGetValue(source, out var known) ? known.Reference : source;
-                if (held.Status == PaymentStatus.Draft)
-                {
-                    _store.DeleteDraft(held.Id);
-                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = reference, Note = ReviewChecks.CodeInvalid });
-                }
-                else
-                {
-                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = reference, Note = ReviewChecks.CodeInvalid });
-                }
-            }
-
+            Withdraw(monthPayments.Select(m => m.Key), ReviewChecks.CodeInvalid);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
         }
 
         var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
-        var facts = person.FactsFor(period.Year, share);
+        var facts = person.FactsFor(period.Year, period.Month, share);
         var fromRegisters = person.ResidencySource == LookupSource.Emta || person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
         if (fromRegisters && person.FactsControlDate is { } asked && (asked.Year != period.Year || asked.Month != period.Month))
         {
@@ -589,11 +623,19 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // the employment is paused for every day of the month (or its pause has no start): no day counts, no minimum
             // is owed — the engine takes a whole share with the minimum switched off, never a share of nothing
             var owed = facts.SocialTaxMinimumApplies;
-            facts = person.FactsFor(period.Year, 1m) with { SocialTaxMinimumApplies = false };
+            facts = person.FactsFor(period.Year, period.Month, 1m) with { SocialTaxMinimumApplies = false };
             if (owed)
             {
                 problems.Add($"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.");
             }
+        }
+
+        if (minimumHeldBy.Count > 0 && !keptMinimum && facts.SocialTaxMinimumApplies && monthPayments.Any(m => m.Type.SocialTaxMinimum))
+        {
+            // refused pay carries the month's minimum beside these payments: topped up here, the minimum would be declared on
+            // them as if the refused pay did not exist, and again on it once it is put right — it waits (decision 207)
+            facts = facts with { SocialTaxMinimumApplies = false };
+            problems.Add($"{MinimumHeld}: the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the person's other payments are built without the minimum's top-up until it is put right (or taken out of the declaration).");
         }
 
         if (keptPools.Count > 0 && monthPayments.Count > 0)
@@ -601,28 +643,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // a refused payment's line on the server used the month's exemption or minimum: the other payments would be given
             // them again (MTA refuses the month's exemption twice, KR_KOOND_02) — nothing is allocated until it is put right
             problems.Add($"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.");
-            foreach (var source in monthPayments.Select(m => m.Key))
-            {
-                // what stands on the server stands, nothing is cancelled; a draft, allocated in an earlier build beside the
-                // refused payment's own draft (gone now), would go out with the month's exemption or minimum once more — it
-                // goes, to be allocated afresh once the payment is put right
-                claimed.Add(source);
-                if (!bySource.TryGetValue(source, out var held))
-                {
-                    continue;
-                }
-
-                if (held.Status == PaymentStatus.Draft)
-                {
-                    _store.DeleteDraft(held.Id);
-                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = references[source].Reference, Note = NotAllocated });
-                }
-                else
-                {
-                    lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = references[source].Reference, Note = NotAllocated });
-                }
-            }
-
+            // what stands on the server stands, nothing is cancelled; a draft, allocated in an earlier build beside the
+            // refused payment's own draft (gone now), would go out with the month's exemption or minimum once more — it
+            // goes, to be allocated afresh once the payment is put right
+            Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems, MinimumShare = share };
         }
 
@@ -633,12 +657,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)
         {
-            problems.Add($"{NotAllocated}: {e.Message}");
-            foreach (var source in monthPayments.Select(m => m.Key))
-            {
-                claimed.Add(source); // what stands, stands; nothing is cancelled over a month that cannot be computed
-            }
-
+            // what stands on the server stands; nothing is cancelled over a month that cannot be computed — but a draft of
+            // an earlier build goes, since the export takes every draft and its figures are no longer the month's
+            problems.Add($"{NotAllocated}: {e.Message} Nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands.");
+            Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems, MinimumShare = share };
         }
 
@@ -652,6 +674,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             try
             {
                 lines.Add(Reconcile(period, person, existing, reference, rowId, lineId, type, type.Section, facts, allocated, problems));
+                if (zeroNote is not null && source == MinimumKey(person.Id))
+                {
+                    problems.Insert(Math.Min(zeroNoteAt, problems.Count), zeroNote);
+                }
             }
             catch (LineKeyException e)
             {
@@ -659,7 +685,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             }
             catch (InvalidOperationException e)
             {
-                problems.Add($"{reference}: {e.Message}");
+                // the line factory refused the line (an A1 case without its countries, say): a draft of an earlier build
+                // goes with it, its figures or facts no longer the review's; a line on the server stands
+                problems.Add($"{NotBuilt}: {reference}: {e.Message} A draft standing for it is withdrawn, a line on the server stands.");
+                Withdraw([source], NotBuilt);
             }
         }
 
@@ -676,6 +705,40 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             MinimumShortfall = allocation.MinimumShortfall,
             TopUpKey = allocation.TopUpKey is { } top && references.TryGetValue(top, out var topRef) ? topRef.Reference : allocation.TopUpKey,
         };
+    }
+
+    /// <summary>The month's sources withdrawn from a build that stops (the fifth audit, item 2; decisions 142, 191): each
+    /// is claimed, so nothing standing for it is retired or cancelled; a draft under it goes — the export takes every
+    /// draft, and one of an earlier build carries figures or facts that are no longer the review's — and a line on the
+    /// server stands.</summary>
+    private void WithdrawSources(IEnumerable<string> sources, string note, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, Dictionary<string, (string Reference, Guid? RowId, Guid? LineId)> references, List<BuiltLine> lines)
+    {
+        foreach (var source in sources)
+        {
+            claimed.Add(source);
+            if (!bySource.TryGetValue(source, out var held))
+            {
+                continue;
+            }
+
+            var reference = references.TryGetValue(source, out var known) ? known.Reference : source;
+            if (held.Status == PaymentStatus.Draft)
+            {
+                // the line's own reconciling may have taken the draft away before it was refused (a draft of another action
+                // or section): deleted once, said once
+                if (_store.History(held.PeriodId, held.Section, held.LineNumber).Any(v => v.Id == held.Id && v.Status == PaymentStatus.Draft))
+                {
+                    _store.DeleteDraft(held.Id);
+                }
+
+                lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = reference, Note = note });
+            }
+            else if (held.OnServer)
+            {
+                // a key refused black or cancelled holds nothing, so it is not said to stand (decision 200)
+                lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = reference, Note = note });
+            }
+        }
     }
 
     private BuiltLine Reconcile(Period period, Person person, StoredPayment? existing, string reference, Guid? rowId, Guid? lineId, PaymentType type, Section section, PayeeTaxFacts facts, AllocatedPayment allocated, List<string> problems)
@@ -711,6 +774,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     // the review is back to the figures on the server: an M would change nothing, so the draft goes and
                     // the line beneath stands (decision 198)
                     _store.DeleteDraft(existing.Id);
+                    _store.SettleRefusals(period.Id, beneath.Section, beneath.LineNumber, beneath.Version); // a refusal over it is moot (decision 205)
                     return new BuiltLine { Key = existing.LineNumber, Section = section, Action = beneath.Action, Change = LineChange.Kept, Source = reference };
                 }
 
@@ -771,6 +835,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var change = Draft(existing.LineNumber, LineAction.M, null);
         if (SameLine(change.Line, existing.Line))
         {
+            // the review wants what the server holds: a correction or cancellation refused over it is moot (decision 205)
+            _store.SettleRefusals(period.Id, existing.Section, existing.LineNumber, existing.Version);
             return new BuiltLine { Key = existing.LineNumber, Section = section, Action = existing.Action, Change = LineChange.Kept, Source = reference };
         }
 

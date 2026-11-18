@@ -18,6 +18,10 @@ public sealed class DeclareException(string code, string message) : InvalidOpera
 
     /// <summary>The keys a confirmation found drafted and never sent: a force does not pass them.</summary>
     public IReadOnlyList<string> DraftLines { get; init; } = [];
+
+    /// <summary>The keys a confirmation found with a correction or cancellation MTA refused over a version the server
+    /// holds, which still holds the earlier figures (decision 205).</summary>
+    public IReadOnlyList<string> RefusedOverLines { get; init; } = [];
 }
 
 /// <summary>How the period's lines are cut: one per payment (what the review shows), or one per person and payment
@@ -106,6 +110,23 @@ public sealed class DeclaredLine
     public LineFeedback? LastFeedback { get; init; }
 
     public int Versions { get; init; }
+
+    /// <summary>The latest version of the key refused after the one that stands: an M or T MTA refused (black, or settled
+    /// as refused by hand) over a version the server holds, which so still holds the earlier figures (decision 205); null
+    /// when the standing version is the key's latest, or is itself refused.</summary>
+    public StoredPayment? RefusedAttempt { get; init; }
+
+    /// <summary>The refused attempt's own last feedback (its black message).</summary>
+    public LineFeedback? RefusedFeedback { get; init; }
+
+    /// <summary>The version refused over the standing one, from the key's history; null when there is none.</summary>
+    public static StoredPayment? RefusedOver(StoredPayment standing, IReadOnlyList<StoredPayment> history)
+    {
+        ArgumentNullException.ThrowIfNull(standing);
+        ArgumentNullException.ThrowIfNull(history);
+        return standing.Status == PaymentStatus.Rejected ? null
+            : history.LastOrDefault(v => v.Version > standing.Version && v.Status == PaymentStatus.Rejected && !v.Settled);
+    }
 }
 
 /// <summary>What the month's declaration adds up to: the net paid and the taxes the company owes MTA for it — the
@@ -170,7 +191,12 @@ public sealed class FeedbackOutcome
 
     public int Recorded { get; init; }
 
+    /// <summary>The statuses of the versions the file carried, whatever stands on their keys now.</summary>
     public IReadOnlyDictionary<PaymentStatus, int> Statuses { get; init; } = new Dictionary<PaymentStatus, int>();
+
+    /// <summary>The keys whose correction or cancellation in this file was refused while an earlier version stays on the
+    /// server (decision 205).</summary>
+    public IReadOnlyList<string> RefusedOverLines { get; init; } = [];
 
     /// <summary>The report's findings that point at no line (a file refusal, a section-level finding); a confirmation
     /// report's own answer is its <see cref="Confirmation"/>, not one of these.</summary>

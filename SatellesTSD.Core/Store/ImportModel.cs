@@ -165,3 +165,30 @@ public static class ImportRefusal
 
     public static string? SubjectOf(Exception e) => e?.Data["Subject"] as string;
 }
+
+/// <summary>A refusal of the owner's layouts file (decision 136): an ImportException whose code, subject and the Core's
+/// detail lines are in its Data, so the window words it in Estonian (decisions 183, 211); the English text stays for the log.</summary>
+public static class LayoutsRefusal
+{
+    public const string NotJson = "LAYOUTS_NOT_JSON";
+    public const string NoLayout = "LAYOUTS_NO_LAYOUT";
+    public const string NullEntry = "LAYOUTS_NULL_ENTRY";
+    public const string Unusable = "LAYOUTS_UNUSABLE";
+    public const string RepeatedId = "LAYOUTS_REPEATED_ID";
+    public const string Collides = "LAYOUTS_COLLIDE";
+
+    public static ImportException Of(string code, string message, string? subject = null, string? detail = null, Exception? inner = null)
+    {
+        var refusal = new ImportException(message, inner);
+        refusal.Data["Code"] = code;
+        refusal.Data["Subject"] = subject;
+        refusal.Data["Detail"] = detail;
+        return refusal;
+    }
+
+    public static string? CodeOf(Exception e) => e?.Data["Code"] as string is { } code && code.StartsWith("LAYOUTS_", StringComparison.Ordinal) ? code : null;
+
+    public static string? SubjectOf(Exception e) => e?.Data["Subject"] as string;
+
+    public static string? DetailOf(Exception e) => e?.Data["Detail"] as string;
+}

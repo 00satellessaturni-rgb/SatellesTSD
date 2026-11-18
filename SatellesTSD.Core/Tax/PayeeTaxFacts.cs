@@ -29,6 +29,8 @@ namespace SatellesTSD.Core.Tax;
 /// <param name="WorkCountry">RTK2T2013ap code of the place of work (RR_TOOKOHA_ASUKOHT); required when A1 is not None.</param>
 /// <param name="TreatyIncomeTaxRate">A tax-treaty rate (fraction) that replaces the income-tax rate on types that allow it,
 /// only when the non-resident holds a residency certificate.</param>
+/// <param name="PensionAgeReached">Reached old-age pension age in a month before the payment's (<see cref="PensionAge"/>):
+/// no TSD_TK, whether or not a pension is granted (Töötuskindlustuse seadus § 42 lg 1 p 1); the employer's TSD_TTK stays.</param>
 public sealed record PayeeTaxFacts(
     Residency Residency,
     string? ResidenceCountry = null,
@@ -43,7 +45,8 @@ public sealed record PayeeTaxFacts(
     A1Case A1 = A1Case.None,
     string? A1Country = null,
     string? WorkCountry = null,
-    decimal? TreatyIncomeTaxRate = null)
+    decimal? TreatyIncomeTaxRate = null,
+    bool PensionAgeReached = false)
 {
     /// <summary>A resident employee with the usual facts: II pillar checked and active, exemption applied in full, minimum applies.</summary>
     public static PayeeTaxFacts ResidentEmployee(decimal pensionRate = 0.02m, bool exemptionApplied = true) =>

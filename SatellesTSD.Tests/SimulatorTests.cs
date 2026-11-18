@@ -21,6 +21,35 @@ public class SimulatorTests
         [new SimRow(new DateOnly(2026, 10, 5), "Mari Maasikas", salary, "palk")]);
 
     [Fact]
+    public void A_salary_paid_under_a_Toeoeleping_and_a_VOES_leping_at_once_follows_the_two_contracts_rule()
+    {
+        // the fifth audit's S11: the old rule typed the Tööleping salary 17 by the VÕS leping begun later, and added the
+        // minimum's zero line for the Tööleping (decision 209)
+        SimScenario Scenario(TwoContractsRule rule) => Mari(salary: 1200m, minimum: true) with
+        {
+            Employments = [new SimEmployment("1", new DateOnly(2023, 1, 1)), new SimEmployment("600", new DateOnly(2026, 9, 1))],
+            Rows = [new SimRow(new DateOnly(2026, 10, 25), "Mari Maasikas", 1200m, "oktoobri palk")],
+            TwoContracts = rule,
+        };
+
+        var byContract = Simulator.Run(Scenario(TwoContractsRule.SalaryToEmploymentContract), SchemaRoot);
+        Assert.Equal("10", Assert.Single(byContract.Lines).Line.TypeCode);
+        Assert.DoesNotContain(byContract.Build!.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.NotNull(byContract.Xml);
+
+        var asked = Simulator.Run(Scenario(TwoContractsRule.Ask), SchemaRoot);
+        Assert.Empty(asked.Lines);
+        Assert.Contains(asked.Build!.Problems, p => p.StartsWith(PeriodDeclarer.Refused, StringComparison.Ordinal) && p.Contains(ReviewChecks.TwoContracts, StringComparison.Ordinal));
+        Assert.Contains(asked.Build.Problems, p => p.StartsWith(PeriodDeclarer.MinimumHeld, StringComparison.Ordinal)); // no zero line while the salary waits for its type
+
+        var old = Simulator.Run(Scenario(TwoContractsRule.LatestStart), SchemaRoot);
+        Assert.Contains(old.Lines, l => l.Line.TypeCode == "17");
+        Assert.Contains(old.Build!.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+
+        Assert.Equal(TwoContractsRule.Ask, SimScenario.Parse(Scenario(TwoContractsRule.Ask).ToJson()).TwoContracts); // kept in the file
+    }
+
+    [Fact]
     public void A_listed_employees_salary_gives_the_very_line_the_apps_own_month_gives()
     {
         var result = Simulator.Run(Mari(), SchemaRoot);

@@ -21,7 +21,7 @@ internal sealed class WindowFixture : IDisposable
     /// <param name="empty">A store with nothing in it: no company, no period — the window opens on it with no company shown.</param>
     /// <param name="conflicting">The statement has a row the catalog finds three categories in (see <see cref="ReviewFixtures.Workbook"/>).</param>
     /// <param name="mariPaused">The register has Mari's employment paused (see <see cref="ReviewFixtures.Workbook"/>).</param>
-    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null, bool empty = false, bool mariPaused = false, bool conflicting = false)
+    public WindowFixture(Action<SqliteStore, Company, Period, string>? prepare = null, bool empty = false, bool mariPaused = false, bool conflicting = false, bool mariSecond = false)
     {
         Folder = Path.Combine(Path.GetTempPath(), $"satellestsd-window-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Folder);
@@ -43,7 +43,7 @@ internal sealed class WindowFixture : IDisposable
         {
             var company = store.AddCompany(RegistryCode, "Näidis OÜ");
             var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-            var bytes = ReviewFixtures.Workbook(mariPaused: mariPaused, conflicting: conflicting);
+            var bytes = ReviewFixtures.Workbook(mariPaused: mariPaused, conflicting: conflicting, mariSecond: mariSecond);
             var file = store.AddImport(company.Id, ReviewFixtures.Importer.Read("palgad.xlsx", bytes), bytes);
             store.LinkImport(period.Id, file.Id);
             new MatchRunner(store).Run(period.Id);

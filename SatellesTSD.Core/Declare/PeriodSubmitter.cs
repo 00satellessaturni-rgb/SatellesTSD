@@ -267,8 +267,9 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     }
 
     /// <summary>The accountant confirmed the declaration in e-MTA. Refused while a line still awaits a verdict, needs a
-    /// change, or was refused by MTA and so is not on the server (black, or settled as refused by hand), unless forced:
-    /// a payment the review no longer declares may stay refused.</summary>
+    /// change, or was refused by MTA and so is not on the server (black, or settled as refused by hand), or had a
+    /// correction or cancellation refused over a version the server holds (decision 205), unless forced: a payment the
+    /// review no longer declares may stay refused.</summary>
     public void MarkConfirmed(Guid periodId, bool force = false)
     {
         var period = FindPeriod(periodId);
@@ -287,11 +288,15 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             };
         }
 
-        // the one question names everything the force would pass: the lines still open, and the keys whose every version
-        // MTA refused (nothing of them is on the server) — a refused T aside, it took nothing back and nothing resends it
+        // the one question names everything the force would pass: the lines still open, the keys whose every version MTA
+        // refused (nothing of them is on the server; a refused T aside, it took nothing back), and the keys whose
+        // correction or cancellation MTA refused over a version on the server, which so still holds the earlier figures
+        // while the review shows others (decision 205)
         var open = lines.Where(p => p.Pending || p.Status == PaymentStatus.NeedsChange).ToList();
         var refused = lines.Where(p => p.Status == PaymentStatus.Rejected && p.Action != LineAction.T).ToList();
-        if (!force && (open.Count > 0 || refused.Count > 0))
+        var refusedOver = lines.Where(p => p.OnServer && !p.Pending && p.Status != PaymentStatus.NeedsChange
+            && DeclaredLine.RefusedOver(p, _store.History(periodId, p.Section, p.LineNumber)) is not null).ToList();
+        if (!force && (open.Count > 0 || refused.Count > 0 || refusedOver.Count > 0))
         {
             var parts = new List<string>();
             if (open.Count > 0)
@@ -304,10 +309,16 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
                 parts.Add($"{refused.Count} line(s) were refused by MTA and are not on the server: {string.Join(", ", refused.Select(p => p.LineNumber))} (reopen the period and build again to resend what the review still declares)");
             }
 
+            if (refusedOver.Count > 0)
+            {
+                parts.Add($"{refusedOver.Count} correction(s) or cancellation(s) were refused by MTA over a line on the server, which still holds the earlier version: {string.Join(", ", refusedOver.Select(p => p.LineNumber))} (reopen the period and build again to resend what the review declares)");
+            }
+
             throw new DeclareException(LinesPending, string.Join("; ", parts) + "; or confirm anyway.")
             {
                 OpenLines = open.Select(p => p.LineNumber).ToList(),
                 RefusedLines = refused.Select(p => p.LineNumber).ToList(),
+                RefusedOverLines = refusedOver.Select(p => p.LineNumber).ToList(),
             };
         }
 
@@ -346,9 +357,14 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             }
 
             var recorded = _store.RecordFeedback(submissionId, report);
-            var statuses = _store.Payments(FindSubmission(submissionId).PeriodId).Where(p => p.SubmissionId == submissionId)
-                .GroupBy(p => p.Status).ToDictionary(g => g.Key, g => g.Count());
-            outcomes.Add(new FeedbackOutcome { Source = report.Source ?? Path.GetFileName(path), Kind = report.Kind, Recorded = recorded.Count, Statuses = statuses, General = report.GeneralValidations });
+            // counted over the versions this file carried, not over what stands: an M refused over an accepted R is this
+            // file's refusal, though the R (an earlier file's) still stands for the key (decision 205)
+            var carried = _store.SubmissionPayments(submissionId);
+            var statuses = carried.GroupBy(p => p.Status).ToDictionary(g => g.Key, g => g.Count());
+            var refusedOver = carried.Where(p => p.Status == PaymentStatus.Rejected
+                    && _store.History(p.PeriodId, p.Section, p.LineNumber).Any(v => v.Version < p.Version && v.OnServer))
+                .Select(p => p.LineNumber).ToList();
+            outcomes.Add(new FeedbackOutcome { Source = report.Source ?? Path.GetFileName(path), Kind = report.Kind, Recorded = recorded.Count, Statuses = statuses, RefusedOverLines = refusedOver, General = report.GeneralValidations });
         }
 
         return outcomes;

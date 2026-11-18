@@ -23,7 +23,8 @@ internal static class WindowLayout
     /// was saved. <paramref name="frame"/> is the width of the window's invisible resize border (Windows 10 and 11 count
     /// it in the window's bounds, left, right and below): a window laid flush against a screen's edge reaches that far
     /// past it, and comes back as it was left.</summary>
-    public static (Point? Location, Size Size)? Fit(int? x, int? y, int? width, int? height, IReadOnlyList<Rectangle> workingAreas, int frame = 0)
+    /// <param name="least">The window's least size; the main window's when not given (a dialog gives its own, decision 210).</param>
+    public static (Point? Location, Size Size)? Fit(int? x, int? y, int? width, int? height, IReadOnlyList<Rectangle> workingAreas, int frame = 0, Size? least = null)
     {
         ArgumentNullException.ThrowIfNull(workingAreas);
         if (width is not { } w || height is not { } h || w <= 0 || h <= 0 || workingAreas.Count == 0)
@@ -41,7 +42,8 @@ internal static class WindowLayout
         }
 
         var screen = home.IsEmpty ? areas.OrderByDescending(a => (long)a.Width * a.Height).First() : home;
-        var size = new Size(Math.Clamp(w, MinimumSize.Width, Math.Max(MinimumSize.Width, screen.Width)), Math.Clamp(h, MinimumSize.Height, Math.Max(MinimumSize.Height, screen.Height)));
+        var min = least ?? MinimumSize;
+        var size = new Size(Math.Clamp(w, min.Width, Math.Max(min.Width, screen.Width)), Math.Clamp(h, min.Height, Math.Max(min.Height, screen.Height)));
         if (home.IsEmpty)
         {
             return (null, size);

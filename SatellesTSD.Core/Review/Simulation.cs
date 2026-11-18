@@ -63,7 +63,8 @@ public sealed record SimScenario(
     SimRegister Register,
     IReadOnlyList<SimEmployment> Employments,
     IReadOnlyList<SimRow> Rows,
-    DeclarationMode Mode = DeclarationMode.PerPayment)
+    DeclarationMode Mode = DeclarationMode.PerPayment,
+    TwoContractsRule TwoContracts = TwoContractsRule.SalaryToEmploymentContract)
 {
     public const string FileKind = "satellestsd-simulation";
 

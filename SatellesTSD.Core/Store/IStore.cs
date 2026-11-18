@@ -52,6 +52,14 @@ public interface IStore : IImportStore, IMatchStore, ILookupStore, IReviewStore
     /// <summary>Every version of one line, oldest first.</summary>
     IReadOnlyList<StoredPayment> History(Guid periodId, Section section, string lineNumber);
 
+    /// <summary>Every version a file carried, whatever has been built on its keys since, by key and version.</summary>
+    IReadOnlyList<StoredPayment> SubmissionPayments(Guid submissionId);
+
+    /// <summary>Marks the key's refused versions above <paramref name="aboveVersion"/> settled: a build kept the version that
+    /// stands, the review being back to what the server holds, so a correction or cancellation refused over it is moot
+    /// (decision 205).</summary>
+    void SettleRefusals(Guid periodId, Section section, string lineNumber, int aboveVersion);
+
     /// <summary>Deletes a Draft version that was never sent. Anything else is history and stays.</summary>
     void DeleteDraft(Guid paymentId);
 

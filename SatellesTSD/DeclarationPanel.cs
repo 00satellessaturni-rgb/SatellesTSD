@@ -171,7 +171,7 @@ public sealed class DeclarationPanel : UserControl
             var index = _lines.Rows.Add(
                 p.LineNumber,
                 UiText.ActionText(p.Action),
-                UiText.PaymentStatusText(p.Status),
+                Core.Report.ReportText.LineStatusText(line),
                 line.Person is { } person ? $"{person.LastName} {person.FirstName}" : "",
                 p.Line.TypeCode ?? "",
                 UiText.Day(p.Line.DocumentDate),
@@ -185,11 +185,14 @@ public sealed class DeclarationPanel : UserControl
                 r is null ? null : r.IncomeTax,
                 r is null || r.ExemptionUsed == 0 ? null : r.ExemptionUsed,
                 Core.Report.ReportText.SourceText(p.SourceRef),
-                line.LastFeedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "",
+                Core.Report.ReportText.FeedbackText(line) ?? "",
                 line.Versions);
             var row = _lines.Rows[index];
             row.Tag = line;
-            FeedbackTips.Set(row, line.LastFeedback is { } detail ? UiText.FeedbackDetail(detail, r) : null);
+            // a correction refused over the line: the tip says so, and gives the refused version's own feedback (decision 205)
+            FeedbackTips.Set(row, line.RefusedAttempt is { } refusedOver
+                ? UiText.RefusedOverTip(refusedOver, p) + (line.RefusedFeedback is { } refusedFeedback ? Environment.NewLine + UiText.FeedbackDetail(refusedFeedback, refusedOver.Result) : "")
+                : line.LastFeedback is { } detail ? UiText.FeedbackDetail(detail, r) : null);
 
             row.DefaultCellStyle.BackColor = p.Status switch
             {
@@ -200,6 +203,11 @@ public sealed class DeclarationPanel : UserControl
                 PaymentStatus.Review => Color.LightYellow,
                 _ => Color.Gainsboro,
             };
+            if (line.RefusedAttempt is not null)
+            {
+                row.DefaultCellStyle.BackColor = Color.MistyRose; // the server holds the earlier figures: not the green of a month done
+            }
+
             if (p.Status is PaymentStatus.Rejected or PaymentStatus.Cancelled)
             {
                 row.DefaultCellStyle.ForeColor = Color.Gray;

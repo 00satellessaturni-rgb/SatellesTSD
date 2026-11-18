@@ -385,14 +385,36 @@ internal static class UiText
     public const string ScopeConflict = "Kategooriate konflikt";
     public const string BadAmountMark = "?";
     public const string MenuView = "&Vaade";
-    public const string LogHeightDefault = "Logiaken: tavakõrgus";
     public const string LogHeightOneRow = "Logiaken: üks rida";
+    public const string LogHeightOneRowTip = "Märgitud: logiaken on ühe rea kõrgune ja näitab viimast rida. Märkimata: logiaken on tavakõrgusega.";
     public const string PersonsSalaryOnly = "Isikute tabel: allikate veerud peidetud, ainult PALK NETO KOKKU";
     public const string MenuSettings = "&Seaded";
-    public const string DeclareEachPayment = "Deklaratsioon: iga makse eraldi reana";
+    public const string DeclareEachPayment = "Deklaratsioon: iga makse eraldi reana"; // the simulation's choice; the menu has one toggle
     public const string DeclareTotalsPerType = "Deklaratsioon: koond väljamakse liigi kaupa, viimase kuupäevaga";
+    public const string DeclareTotalsPerTypeTip = "Märgitud: üks rida väljamakse liigi kohta, kuu viimase makse kuupäevaga. Märkimata: iga makse eraldi reana. Read muutuvad järgmisel „Koosta read“.";
     public const string DeclareModeChanged = "Deklaratsiooni read koostatakse nüüd";
-    public const string ImportLayouts = "Impordi väljavõtte paigutused…";
+    public const string TwoContractsMenu = "Kaks lepingut korraga";
+    public const string TwoContractsMenuTip = "Mis liigi saab kategooria Palgad makse päeval, mil isikul kehtib kaks eri liiki töötamist (nt tööleping ja VÕS leping). Makse enda Väljamakse liik ja kaardi „Kaardi töötamise liik kõigile maksetele“ on alati ülimuslikud. Valik kehtib järgmisest „Koosta read“ ja simulatsioonist.";
+    public const string TwoContractsSalary = "Palgad → tööleping (1/507)";
+    public const string TwoContractsSalaryTip = "Palk saab päeval kehtiva töölepingu liigi (10, mitteresidendil 120). Sobib, kui palgad makstakse töölepingu alusel. NB: ka VÕS-tasu, mis on kategoorias Palgad, saab siis liigi 10 – kontrolli neid ridu (veerus „Kontroll“ on mõlemad TÖR liigid) ja vajadusel vali makse liik ise.";
+    public const string TwoContractsAsk = "Küsi makse liiki";
+    public const string TwoContractsAskTip = "Sellisele palgale liiki ei pakuta: makse on deklareerimiseks märgitud, kuid blokeeritud (TWO_CONTRACTS), kuni valid Väljamakse liigi või kaardi töötamise liigi kõigile maksetele. Seni ei lisata ka miinimumi nullrida. Kõige täpsem, kuid nõuab iga sellise rea juures üht valikut.";
+    public const string TwoContractsLatest = "Hiliseim algus (endine reegel)";
+    public const string TwoContractsLatestTip = "Palk saab päeval kehtiva lepingu liigi: kehtiv enne peatatut, siis hiliseima algusega (otsus 85). Kui VÕS leping algas pärast töölepingut, saab töölepingu palk liigi 17 ja töölepingule lisandub miinimumi nullrida – kasuta ainult siis, kui see on õige.";
+    public const string TwoContractsChanged = "Kaks lepingut korraga:";
+    public const string TwoContractsNote = "TÖR";
+
+    /// <summary>The check cell's tip on a salary whose type the Seaded rule picked from two contracts in force that day.</summary>
+    public static string TwoContractsPickedTip(IReadOnlyList<string> types, string? typeCode) =>
+        $"Makse päeval kehtib kaks eri liiki töötamist (TÖR {string.Join(", ", types)}); liik {typeCode ?? "–"} on valitud seadete järgi (Seaded → {TwoContractsMenu}). Kontrolli, et see sobib.";
+
+    public static string TwoContractsText(Core.Review.TwoContractsRule rule) => rule switch
+    {
+        Core.Review.TwoContractsRule.Ask => TwoContractsAsk,
+        Core.Review.TwoContractsRule.LatestStart => TwoContractsLatest,
+        _ => TwoContractsSalary,
+    };
+    public const string LayoutsImport = "Impordi failist…";
     public const string Layouts = "Väljavõtte paigutused…";
     public const string LayoutsTitle = "Väljavõtte paigutused (omad)";
     public const string LayoutFilter = "Paigutuste fail (*.json)|*.json|Kõik failid (*.*)|*.*";
@@ -408,7 +430,26 @@ internal static class UiText
     public const string NoOwnerLayouts = "Omi paigutusi pole: failid loetakse sisseehitatud paigutustega. Alustuseks salvesta paigutused faili, muuda sobivat ja impordi.";
     public static string LayoutsSaved(string path, int count) => $"{SaveLayouts.TrimEnd('…')}: {count} paigutust kirjutatud faili {path}.";
     public static string DeleteLayoutConfirm(string id) => $"Kustutada paigutus „{id}“? Sama ID-ga sisseehitatud paigutus (kui on) tuleb tagasi; salvestatud failid jäävad loetuks, nagu nad on.";
-    public static string LayoutsImported(IReadOnlyList<string> ids) => $"{ImportLayouts.TrimEnd('…')}: salvestatud {ids.Count} paigutus{(ids.Count == 1 ? "" : "t")} ({string.Join(", ", ids)}); failid loetakse nüüd nendega — salvestatud fail loetakse uuesti „Loe uuesti“ nupuga.";
+    public static string LayoutsImported(IReadOnlyList<string> ids) => $"{Layouts.TrimEnd('…')}: imporditud {ids.Count} paigutus{(ids.Count == 1 ? "" : "t")} ({string.Join(", ", ids)}); failid loetakse nüüd nendega — salvestatud fail loetakse uuesti „Loe uuesti“ nupuga.";
+
+    /// <summary>A refusal of the owner's layouts file, in Estonian by its code (decisions 136, 183, 211); null for any other.
+    /// The Core's detail lines follow: they name the layouts' ids and the JSON fields, English in the file too.</summary>
+    public static string? LayoutsRefused(Exception refusal)
+    {
+        var subject = Core.Store.LayoutsRefusal.SubjectOf(refusal);
+        var detail = Core.Store.LayoutsRefusal.DetailOf(refusal);
+        var said = Core.Store.LayoutsRefusal.CodeOf(refusal) switch
+        {
+            Core.Store.LayoutsRefusal.NotJson => $"Fail ei ole loetav paigutuste JSON{(subject is null ? "" : $" (rida {subject})")}.",
+            Core.Store.LayoutsRefusal.NoLayout => "Failis ei ole ühtegi paigutust.",
+            Core.Store.LayoutsRefusal.NullEntry => "Failis on paigutuste seas tühi kirje (null).",
+            Core.Store.LayoutsRefusal.Unusable => $"Paigutust ei saa kasutada ({subject}): igal paigutusel peab olema ID, pank, päised ja kuupäeva, saaja ja summa veerg päiste seas.",
+            Core.Store.LayoutsRefusal.RepeatedId => $"Failis on sama ID mitu korda ({subject}): üks paigutus ühe ID kohta.",
+            Core.Store.LayoutsRefusal.Collides => "Paigutuse päiserida on juba teisel paigutusel: faili lehte ei saaks neist eristada. Muuda päiseid või kasuta sisseehitatud paigutuse ID-d.",
+            _ => null,
+        };
+        return said is null ? null : said + " Midagi ei salvestatud." + (detail is null ? "" : Environment.NewLine + detail);
+    }
     public const string ModeEach = "iga makse eraldi reana";
     public const string ModeTotals = "koondina liigi kaupa";
     public const string RatesMissing = "Selle aasta maksumäärad ja kuumäär ei ole programmis: kuu ridu ei saa koostada enne, kui uus versioon need toob.";
@@ -464,7 +505,15 @@ internal static class UiText
         Core.Declare.WithdrawnFileState.FolderUnknown => $"Tagasi võetud faili {file.FileName} asukoht ei ole teada; kustuta see või ära seda e-MTA-sse laadi.",
         _ => $"Tagasi võetud faili ei saanud ümber nimetada ({file.Path}: {file.Error}); kustuta see käsitsi või ära seda e-MTA-sse laadi.",
     };
-    public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris). Märkida periood siiski kinnitatuks?";
+    public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris või serveris on alles varasem rida). Märkida periood siiski kinnitatuks?";
+
+    /// <summary>The feedback's note on the keys whose correction or cancellation MTA refused over a line on the server (decision 205).</summary>
+    public static string RefusedOverNote(IReadOnlyList<string> keys) =>
+        $"e-MTA lükkas tagasi paranduse või tühistuse: {string.Join(", ", keys)}. Serveris on alles varasem rida; „Ava parandamiseks“ ja „Koosta read“ saadavad ülevaate oma uuesti.";
+
+    /// <summary>The tip of a line whose correction or cancellation MTA refused: the figures shown are the server's.</summary>
+    public static string RefusedOverTip(StoredPayment refused, StoredPayment standing) =>
+        $"Versioon {refused.Version} ({ActionText(refused.Action)}) lükati e-MTA-s tagasi; serveris on versioon {standing.Version} – read näitavad selle summasid.";
 
     /// <summary>The confirmation's refusal in the window's own words (decision 183): drafts never sent stop it (a force does
     /// not pass them); lines open or refused are named, and the question follows.</summary>
@@ -484,6 +533,11 @@ internal static class UiText
         if (refusal.RefusedLines.Count > 0)
         {
             parts.Add($"e-MTA tagasi lükatud read (pole serveris): {string.Join(", ", refusal.RefusedLines)}. Mida ülevaade veel deklareerib, saadab uuesti „Ava parandamiseks“ ja „Koosta read“.");
+        }
+
+        if (refusal.RefusedOverLines.Count > 0)
+        {
+            parts.Add($"e-MTA tagasi lükatud parandused või tühistused (serveris on alles varasem rida): {string.Join(", ", refusal.RefusedOverLines)}. Mida ülevaade deklareerib, saadab uuesti „Ava parandamiseks“ ja „Koosta read“.");
         }
 
         return string.Join(Environment.NewLine, parts);
@@ -520,7 +574,7 @@ internal static class UiText
     }
 
     /// <summary>A refusal the window words itself (the card's save, a file's removal), or null: the exception's own text then.</summary>
-    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : PhrasesRefused(refusal) ?? FileRefused(refusal);
+    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : PhrasesRefused(refusal) ?? LayoutsRefused(refusal) ?? FileRefused(refusal);
 
     /// <summary>A refusal of the category phrases' file, in Estonian by its code (decision 202); null for any other.</summary>
     public static string? PhrasesRefused(Exception refusal)
@@ -664,7 +718,7 @@ internal static class UiText
         "SM miinimum ei kehti SMS § 2 lg 4 juhtudel (riikliku pensioni saaja, vähenenud töövõimega isik, alla 3-aastase lapse või kolme alla 19-aastase lapse vanem, õpilane või üliõpilane jt) ega teisel tööandjal, kui miinimumi kannab maksuvaba tulu arvestav tööandja; märge on isiku kaardil.",
         "Mitteresident saab maksuvaba tulu ainult EMP riigi residendina residentsustõendiga (KR_MVT_06/07); kaardil EMP-väline riik keelab selle (EXEMPTION_NOT_EEA).",
         "Maksuvaba tulu ei ületa makset, millest on maha arvatud II sammas ja töötuskindlustusmakse (KR_MVT_08); kuu maksuvaba jagatakse isiku maksete vahel.",
-        "Vanadus- või paindliku vanaduspensioni saajalt kindlustatu töötuskindlustusmakset ei peeta kinni (KR_TK_2).",
+        "Vanadus- või paindliku vanaduspensioni saajalt kindlustatu töötuskindlustusmakset ei peeta kinni (KR_TK_2), samuti pensioniea saabumise kuule järgnevast kuust (TKindlS § 42 lg 1 p 1; kuu isikukoodi sünniaja ja kaardi pensioniea aasta järgi).",
         "Välisriigi A1 tõendiga töötaja Eestis: sotsiaalmaks, töötuskindlustusmakse ja II sammas puuduvad. Eesti A1 tõendiga töö välismaal: tulumaks puudub. A1 mõjub ainult liikidel, millel on A1 variant.",
         $"Lepingumäär asendab tulumaksu määra ainult mitteresidendile residentsustõendiga, liikidel {string.Join(", ", PaymentTypes.All.Where(t => t.TreatyRateAllowed).Select(t => t.Code))}; täisprotsent, mitte üle liigi oma määra (TREATY_RATE_INVALID).",
         "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäide kasutab 820 €, küsimus on lahtine.",
