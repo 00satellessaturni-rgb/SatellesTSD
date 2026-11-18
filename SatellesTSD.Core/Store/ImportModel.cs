@@ -97,8 +97,12 @@ public interface IImportStore : IDisposable
     IReadOnlyList<ImportFile> PeriodImports(Guid periodId);
 
     /// <summary>Removes a file with its sheets and rows. Refused while a declared line points at one of its rows, or
-    /// while a period past Draft lists it among the files of its run.</summary>
-    void RemoveImport(Guid fileId);
+    /// while a period past Draft lists it among the files of its run, or while a totals line on the server may add up
+    /// its rows (decision 177).</summary>
+    /// <param name="unlinkedFrom">The one period that listed the file until a moment ago, in the same transaction ("Eemalda
+    /// fail" takes the file out of the month first): its totals lines on the server count as if it still listed the file.
+    /// Null for a file no period listed when the removal began: the lines are then looked for by the rows they name.</param>
+    void RemoveImport(Guid fileId, Guid? unlinkedFrom = null);
 
     /// <summary>Puts a fresh reading of a stored file (the same bytes, read with the layouts in force) in the stored one's
     /// place: the new file takes the old one's place in every period's list of files (the link order kept), the review's

@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false)
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null)
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond, mariEndOn: mariEndOn, mariPauseFrom: mariPauseFrom);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -830,6 +830,112 @@ public class DeclareTests
         var line = Assert.Single(ended.Lines);
         Assert.Equal((0m, 0m, 0m), (line.Result!.SocialTaxMinimumIncrease, mari.MinimumDue, mari.MinimumShortfall));
         Assert.True(line.Result.Gross < 886m);
+    }
+
+    [Fact]
+    public void Pay_to_a_store_person_the_months_register_does_not_list_owes_no_minimum_unless_the_card_says_kaasa()
+    {
+        // a contract ended in an earlier month has dropped out of the month's export; the final settlement is given to the
+        // person by hand, under the card's employment type
+        using var box = Ready(minimum: true);
+        var kati = box.Workspace.AddPerson(box.Company.Id, "Kati", "Kask", ReviewFixtures.TwinCode, "1");
+        box.Workspace.SavePerson(kati with { FundedPensionMember = false, BasicExemptionApplied = true, SocialTaxMinimumApplies = true }, confirmResidency: true, confirmPension: true);
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 5), 200m, "Kati Kask", typeCode: "10", declare: true);
+        var report = box.Declarer.Build(box.Period.Id);
+        var built = report.Persons.Single(p => p.PersonId == kati.Id);
+        Assert.Contains(built.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal) && p.Contains("does not list", StringComparison.Ordinal));
+        var line = Assert.Single(box.Lines, l => l.PersonId == kati.Id);
+        Assert.Equal((0m, 0m), (line.Result!.SocialTaxMinimumIncrease, built.MinimumDue));
+
+        // "kaasa" on the card: declared as if employed, the pay is topped up to the minimum
+        box.Workspace.SavePerson(box.Store.Persons(box.Company.Id).Single(p => p.Id == kati.Id) with { Declaration = DeclarationChoice.Include });
+        var included = box.Declarer.Build(box.Period.Id);
+        Assert.DoesNotContain(included.Persons.Single(p => p.PersonId == kati.Id).Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal));
+        Assert.True(Assert.Single(box.Lines, l => l.PersonId == kati.Id).Result!.SocialTaxMinimumIncrease > 0m);
+    }
+
+    [Fact]
+    public void A_contract_that_ran_through_the_month_and_was_ended_or_paused_after_it_carries_the_months_zero_line()
+    {
+        // the export taken in November shows October's contract ended on 3 November, or paused from 1 November: October
+        // owes the minimum all the same, so a month without pay gets its zero line
+        foreach (var (ended, paused, word) in new (DateTime?, DateTime?, string)[] { (new DateTime(2026, 11, 3), null, "ended on 03.11.2026"), (null, new DateTime(2026, 11, 1), "paused from 01.11.2026") })
+        {
+            using var box = Ready(minimum: true, mariEndOn: ended, mariPauseFrom: paused);
+            box.Workspace.SetDeclare(box.Salary, false);
+            var report = box.Declarer.Build(box.Period.Id);
+            var mari = report.Persons.Single(p => p.PersonId == box.Mari.Id);
+            var zero = Assert.Single(box.Lines);
+            Assert.Equal((PeriodDeclarer.MinimumSource, "10", 886m, 1m), (zero.SourceRef, zero.Line.TypeCode, zero.Result!.SocialTaxMinimumIncrease, mari.MinimumShare));
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal) && p.Contains(word, StringComparison.Ordinal));
+        }
+
+        // ended or paused within the month: its days in force carry their share
+        using (var half = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 10, 17)))
+        {
+            half.Workspace.SetDeclare(half.Salary, false);
+            var report = half.Declarer.Build(half.Period.Id);
+            Assert.Equal(16m / 30m, report.Persons.Single(p => p.PersonId == half.Mari.Id).MinimumShare);
+            Assert.Equal(472.53m, Assert.Single(half.Lines).Result!.SocialTaxMinimumIncrease);
+        }
+
+        // "kaasa" on the card: a pause within the month counts as days in force, and the build says so; a pause after the
+        // month changes nothing and says nothing
+        using (var included = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 10, 17)))
+        {
+            included.Workspace.SetDeclare(included.Salary, false);
+            included.Workspace.SavePerson(included.Mari with { Declaration = DeclarationChoice.Include });
+            var report = included.Declarer.Build(included.Period.Id);
+            var mari = report.Persons.Single(p => p.PersonId == included.Mari.Id);
+            Assert.Equal(1m, mari.MinimumShare);
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal) && p.Contains("paused from 17.10.2026", StringComparison.Ordinal));
+        }
+
+        using (var after = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 11, 1)))
+        {
+            after.Workspace.SetDeclare(after.Salary, false);
+            after.Workspace.SavePerson(after.Mari with { Declaration = DeclarationChoice.Include });
+            Assert.DoesNotContain(after.Declarer.Build(after.Period.Id).Persons.Single(p => p.PersonId == after.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        }
+
+        // paused through the month, as before: no zero line
+        using var through = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 9, 1));
+        through.Workspace.SetDeclare(through.Salary, false);
+        through.Declarer.Build(through.Period.Id);
+        Assert.Empty(through.Lines);
+    }
+
+    [Fact]
+    public void A_code_corrected_on_the_card_drops_what_the_registers_said_for_the_old_code()
+    {
+        using var box = Ready();
+        var asked = new DateOnly(2026, 11, 4);
+        box.Store.UpdatePerson(box.Mari with
+        {
+            ResidencySource = LookupSource.Emta, ResidencyCheckedOn = asked, FundedPensionMember = true, PensionRate = 0.02m,
+            PensionSource = LookupSource.Pensionikeskus, PensionCheckedOn = asked, FactsControlDate = new DateOnly(2026, 10, 31),
+        });
+
+        // another field saved, the code as it was: what the registers said stands
+        var kept = box.Workspace.SavePerson(box.Mari with { Notes = "kaart" });
+        Assert.Equal((LookupSource.Emta, LookupSource.Pensionikeskus, (bool?)true, (DateOnly?)new DateOnly(2026, 10, 31)), (kept.ResidencySource, kept.PensionSource, kept.FundedPensionMember, kept.FactsControlDate));
+
+        // the code corrected: the residency's check, the pension and the control date go, so the review asks for the registers again
+        var corrected = box.Workspace.SavePerson(kept with { PersonalCode = ReviewFixtures.TwinCode });
+        Assert.Equal((LookupSource.Unknown, (DateOnly?)null, LookupSource.Unknown, (DateOnly?)null, (bool?)null, (decimal?)null, (DateOnly?)null),
+            (corrected.ResidencySource, corrected.ResidencyCheckedOn, corrected.PensionSource, corrected.PensionCheckedOn, corrected.FundedPensionMember, corrected.PensionRate, corrected.FactsControlDate));
+        Assert.Equal(ReviewFixtures.TwinCode, corrected.PersonalCode);
+        var salary = box.Workspace.Load(box.Period.Id).Persons.Single(p => p.PersonId == corrected.Id).Payments.Single(p => !p.IsByHand);
+        Assert.Contains(salary.Checks, r => r.Code == ReviewChecks.ResidencyNotChecked);
+
+        // a fact the accountant set by hand stands when the code is corrected again; the register's pension goes
+        box.Store.UpdatePerson(corrected with
+        {
+            Residency = Residency.Resident, ResidencySource = LookupSource.Manual, ResidencyCheckedOn = asked,
+            FundedPensionMember = false, PensionSource = LookupSource.Pensionikeskus, PensionCheckedOn = asked,
+        });
+        var back = box.Workspace.SavePerson(box.Store.Persons(box.Company.Id).Single(p => p.Id == corrected.Id) with { PersonalCode = ReviewFixtures.MariCode });
+        Assert.Equal((LookupSource.Manual, (DateOnly?)asked, LookupSource.Unknown, (bool?)null), (back.ResidencySource, back.ResidencyCheckedOn, back.PensionSource, back.FundedPensionMember));
     }
 
     [Fact]

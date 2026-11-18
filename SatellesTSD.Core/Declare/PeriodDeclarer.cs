@@ -261,6 +261,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var rates = _ratesGiven ? _rates : TaxRates.For(period.Year)
             ?? throw new DeclareException(RatesMissing, $"This version knows no tax rates for {period.Year}; the month's lines cannot be built until a version that does.");
         var allocator = new MonthAllocator(new TaxEngine(rates));
+        // whether the month was searched against a register: only then does a person it does not list have no employment in it
+        var monthHasRegister = view.StoredRun?.TorSheetId is not null || view.Persons.Any(p => p.Register is not null);
         _store.InTransaction(() =>
         {
             foreach (var reviewPerson in view.Persons.Where(p => !p.IsUnmatched && p.PersonId is { } id && persons.ContainsKey(id)))
@@ -272,7 +274,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     continue;
                 }
 
-                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode));
+                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode, monthHasRegister));
             }
 
             // what nobody claimed is declared no more: a draft goes, a line on the server gets its T
@@ -308,7 +310,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         return new BuildReport { Period = period, Persons = builds, Problems = problems };
     }
 
-    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode)
+    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode, bool monthHasRegister)
     {
         var name = $"{person.LastName} {person.FirstName}";
         var lines = new List<BuiltLine>();
@@ -419,9 +421,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // the valid employment the zero line's type comes from: the standing entry when its own type carries the minimum,
         // else another valid row of the month whose type does (a board seat newer than the Tööleping stands for the
         // month; the Tööleping carries the minimum)
-        var carrier = entry is { StateId: TorStates.Valid } && Carries(entry.TypeId) ? entry
-            : reviewPerson.Register?.Entries.Where(e => e.Overlaps(period.Year, period.Month) && e.StateId == TorStates.Valid && Carries(e.TypeId)).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault() ?? entry;
-        var zeroTypeId = carrier is { StateId: TorStates.Valid } ? cardType ?? carrier.TypeId
+        // "valid" is the month's, by the row's dates, not the state the export was taken in: a contract that ran through the
+        // month and was ended or paused after it (as an export downloaded the next month shows it) carries the month's
+        // minimum like a valid one (decision 181)
+        bool InForce(TorEntry? e) => e is not null && e.InForceIn(period.Year, period.Month);
+        var carrier = InForce(entry) && Carries(entry!.TypeId) ? entry
+            : reviewPerson.Register?.Entries.Where(e => InForce(e) && Carries(e.TypeId)).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault() ?? entry;
+        var zeroTypeId = InForce(carrier) ? cardType ?? carrier!.TypeId
             : !include ? null
             : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
@@ -432,12 +438,12 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             var zeroSource = MinimumKey(person.Id);
             monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
             references[zeroSource] = (MinimumSource, null, null);
-            problems.Add(carrier is { StateId: TorStates.Valid }
-                ? $"{ZeroLine}: a valid employment{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
+            problems.Add(InForce(carrier)
+                ? $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
                 : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
         }
 
-        if (include && entry is not { StateId: TorStates.Valid })
+        if (include && !InForce(entry))
         {
             // the card's choice is said, and so is why it made no zero line where one was looked for
             var unmet = person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
@@ -447,6 +453,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 : ""
                 : "";
             problems.Add($"{Included}: declared as if employed (the person card's choice); the register has no valid employment for the month.{unmet}");
+        }
+        else if (include && person.SocialTaxMinimumApplies && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom } && Carries(entry.TypeId)
+            && pausedFrom <= lastDay && (entry.PauseEnd is not { } pausedTo || pausedTo >= new DateOnly(period.Year, period.Month, 1))
+            && (entry.StartDate is not { } begun || begun <= lastDay))
+        {
+            // in force on days of the month, paused on others: the card's choice counts the pause's days too, and says so
+            problems.Add($"{Included}: declared as if employed (the person card's choice); the register has the employment paused from {entry.PauseStart:dd.MM.yyyy}, and the minimum counts the pause's days as well.");
         }
 
         if (monthPayments.Count == 0)
@@ -529,6 +542,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // pay after the employment ended (a final settlement): the register covers no day of the month, so no minimum is owed on it
             facts = facts with { SocialTaxMinimumApplies = false };
             problems.Add($"{NoEmploymentInMonth}: no employment of the register covers the month; the minimum is not owed on this pay.");
+        }
+        else if (monthHasRegister && reviewPerson.Register is null && facts.SocialTaxMinimumApplies && !include)
+        {
+            // a store person the month's register does not list at all (a contract ended in an earlier month drops out of a
+            // month's export), paid by hand or by a row given to them: no employment of the month, no minimum — the same as
+            // pay after an ended row the export still lists; "kaasa" on the card declares them as if employed (decision 176)
+            facts = facts with { SocialTaxMinimumApplies = false };
+            problems.Add($"{NoEmploymentInMonth}: the month's register does not list the person; the minimum is not owed on this pay (set the card's Deklareerimine to \"kaasa\" if the person was employed in the month).");
         }
         else if (share == 0m)
         {

@@ -1404,6 +1404,14 @@ public sealed class MainForm : Form
             }
             else
             {
+                if (!chosen)
+                {
+                    // the new version an update started cannot open the store the old one could: it ends, so the old one
+                    // puts itself back rather than handing over to a copy without its store (decision 178) — the failure
+                    // written to viga.log
+                    Program.EndFailedStart(e);
+                }
+
                 Fail(e);
             }
 

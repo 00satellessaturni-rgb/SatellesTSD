@@ -157,6 +157,53 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             unmatchedProblems.Add(new MatchProblem(MatchProblem.OldReading, $"{stale.Name} was read by an earlier version, which took every amount of a card export as money in: its payouts are left out. Read the file again (Failid › Loe uuesti).", Source: stale.Name));
         }
 
+        // a sheet read before its layout read the transaction's state (decision 179): a reverted, declined or failed row
+        // of it stands as a payment until the file is read again — said in a month that can still be put right
+        if (period.State == PeriodState.Draft && run is not null && storedHits.Count == run.Hits.Count)
+        {
+            // only the rows the review would declare: paid to a person (by the search or by hand), money out, not taken
+            // out of the declaration — a shop's declined card payment or a top-up never pending is no business of the TSD
+            var hitRows = new Dictionary<(string Source, int RowNo), (Guid RowId, bool Person)>();
+            for (var i = 0; i < run.Hits.Count; i++)
+            {
+                var key = (run.Hits[i].Source, run.Hits[i].Row.RowNo);
+                hitRows[key] = (storedHits[i].RowId, (hitRows.TryGetValue(key, out var was) && was.Person) || run.Hits[i].PersonKey is not null);
+            }
+
+            bool Declared(MatchSource source, StatementRow row) => row.Direction == Direction.Debit && hitRows.TryGetValue((source.Name, row.RowNo), out var hit)
+                && (hit.Person || (overlays.TryGetValue(hit.RowId, out var given) && given.PersonId is not null))
+                && !(overlays.TryGetValue(hit.RowId, out var overlay) && overlay.Declare == false);
+            foreach (var source in run.Sources)
+            {
+                if (source.SheetId is not { } id || !sheetsById.TryGetValue(id, out var sheet) || sheet.Layout is not { } snapshot || snapshot.IsOldCardReading()
+                    || snapshot.Roles.State is not null || layouts.Find(snapshot.Id) is not { Roles.State: { } state, StatesNotDone: { Count: > 0 } notDone }
+                    || snapshot.ColumnOf(state) is not (> 0 and var column))
+                {
+                    continue;
+                }
+
+                // the rows of the month whose stored state cell says the money did not move: named, and only when there are any
+                var rows = source.Rows.Where(r => r.IsPayment && r.Date is { } day && day.Year == period.Year && day.Month == period.Month && column <= r.Cells.Count
+                    && notDone.Any(s => string.Equals(s.Trim(), r.Cells[column - 1].Trim(), StringComparison.OrdinalIgnoreCase)) && Declared(source, r)).Select(r => r.RowNo).ToList();
+                if (rows.Count == 0)
+                {
+                    continue;
+                }
+
+                // the re-read's own refusals (decision 131): a month past Draft lists the file, or a line built from it has
+                // been on the server (a month reopened for a correction keeps its lines' status)
+                var listing = _store.Periods(period.CompanyId).Where(p => _store.PeriodImports(p.Id).Any(f => f.Id == sheet.FileId)).ToList();
+                var fileRows = _store.Sheets(sheet.FileId).Where(s => s.Kind == SheetKind.Statement).SelectMany(s => _store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+                var locked = listing.Any(p => p.State != PeriodState.Draft)
+                    || listing.Any(p => _store.Payments(p.Id).Any(x => (x.Status != PaymentStatus.Draft || x.Version > 1)
+                        && ((x.SourceRowId is { } rowId && fileRows.Contains(rowId)) || Declare.PeriodDeclarer.IsTotals(x))));
+                unmatchedProblems.Add(new MatchProblem(MatchProblem.StateUnread,
+                    $"{source.Name} was read by an earlier version, which did not read the transaction's state: row(s) {string.Join(", ", rows)} moved no money (reverted, declined, failed or pending) yet count as payments. "
+                    + (locked ? "The file cannot be read again (a month past Draft lists it, or a line built from it has been on the server): take these rows out of the declaration (Deklareeri) by hand." : "Read the file again (Failid › Loe uuesti), or take these rows out of the declaration (Deklareeri) by hand."),
+                    Source: source.Name, RowNo: rows[0]));
+            }
+        }
+
         var assumed = run?.Sources
             .Where(s => (s.SheetId is { } sheetId && sheetsById.TryGetValue(sheetId, out var sheet) && sheet.Layout is { } snapshot ? snapshot : layouts.Find(s.LayoutId))?.DirectionIsAssumed() == true)
             .Select(s => s.Name).ToHashSet(StringComparer.Ordinal) ?? [];
@@ -702,6 +749,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             throw new ReviewException(MrrInvalid, mrrProblem);
         }
 
+        // the registers answered for the code as it was: a corrected code drops what they said (residency, pension, the
+        // days of the checks, the control date), so the review asks for the registers again under the new code — a fact
+        // the accountant set by hand stands (decision 180)
+        var codeChanged = !string.Equals(code, Clean(fresh.PersonalCode), StringComparison.Ordinal);
+        var dropResidency = codeChanged && !residencyChanged && fresh.ResidencySource == LookupSource.Emta;
+        var dropPension = codeChanged && !pensionChanged && fresh.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
@@ -730,6 +783,21 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             TorEmploymentTypeId = PickText(edited.TorEmploymentTypeId, basis?.TorEmploymentTypeId, fresh.TorEmploymentTypeId),
             Notes = PickText(edited.Notes, basis?.Notes, fresh.Notes),
         };
+        if (dropResidency)
+        {
+            next = next with { ResidencyCheckedOn = null, ResidencySource = LookupSource.Unknown };
+        }
+
+        if (dropPension)
+        {
+            next = next with { FundedPensionMember = null, PensionRate = null, PensionCheckedOn = null, PensionSource = LookupSource.Unknown };
+        }
+
+        if (codeChanged)
+        {
+            next = next with { FactsControlDate = null };
+        }
+
         _store.UpdatePerson(next);
         return next;
     }

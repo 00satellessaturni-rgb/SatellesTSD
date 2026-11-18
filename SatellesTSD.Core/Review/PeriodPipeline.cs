@@ -320,7 +320,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
             }
 
             DeleteDraftsFrom(fileId, periods, listedHere ? [periodId] : []); // a file no month lists was read by no run: no totals are its
-            _store.RemoveImport(fileId);
+            _store.RemoveImport(fileId, listedHere ? periodId : null); // the month it was taken out of a moment ago still counts as listing it (decision 177)
         });
     }
 

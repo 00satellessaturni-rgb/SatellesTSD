@@ -33,7 +33,8 @@ public sealed record LayoutRoles(
     string? Currency = null,
     string? CounterpartyCode = null,
     string? TransactionId = null,
-    string? Reference = null);
+    string? Reference = null,
+    string? State = null);
 
 /// <summary>One statement layout: how a sheet is recognised (its exact header row) and read (which column plays which
 /// role, how direction, dates and amounts are written). The defaults are the workbook's seventeen; the owner can
@@ -62,13 +63,14 @@ public sealed record StatementLayout(
     bool AmountHasCurrency = false,
     bool AllowHeaderless = false,
     string? HeaderlessAccountPattern = null,
-    string? Notes = null)
+    string? Notes = null,
+    IReadOnlyList<string>? StatesNotDone = null)
 {
     public bool Equals(StatementLayout? other) =>
         other is not null && Id == other.Id && Bank == other.Bank && Kind == other.Kind && Seq.Equal(Headers, other.Headers) && Equals(Roles, other.Roles)
         && Direction == other.Direction && DebitMarker == other.DebitMarker && CreditMarker == other.CreditMarker && Seq.Equal(DateFormats, other.DateFormats)
         && DecimalSeparator == other.DecimalSeparator && TimeZone == other.TimeZone && AmountHasCurrency == other.AmountHasCurrency && AllowHeaderless == other.AllowHeaderless
-        && HeaderlessAccountPattern == other.HeaderlessAccountPattern && Notes == other.Notes;
+        && HeaderlessAccountPattern == other.HeaderlessAccountPattern && Notes == other.Notes && Seq.Equal(StatesNotDone, other.StatesNotDone);
 
     public override int GetHashCode() => HashCode.Combine(Id, Bank, Kind, Seq.Hash(Headers), Roles, Direction);
 
@@ -148,6 +150,7 @@ public sealed record StatementLayout(
                      ("Account", Roles.Account), ("Date", Roles.Date), ("Counterparty", Roles.Counterparty), ("Amount", Roles.Amount),
                      ("Description", Roles.Description), ("DebitCredit", Roles.DebitCredit), ("Currency", Roles.Currency),
                      ("CounterpartyCode", Roles.CounterpartyCode), ("TransactionId", Roles.TransactionId), ("Reference", Roles.Reference),
+                     ("State", Roles.State),
                  })
         {
             if (!string.IsNullOrEmpty(header) && ColumnOf(header) == 0)
@@ -167,6 +170,11 @@ public sealed record StatementLayout(
             {
                 problems.Add($"Layout '{Id}' reads direction from markers but has neither marker.");
             }
+        }
+
+        if (StatesNotDone is { Count: > 0 } && string.IsNullOrEmpty(Roles.State))
+        {
+            problems.Add($"Layout '{Id}' lists StatesNotDone but names no State column.");
         }
 
         if (!string.IsNullOrEmpty(DecimalSeparator) && DecimalSeparator is not ("." or ","))

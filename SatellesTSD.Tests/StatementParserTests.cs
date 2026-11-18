@@ -1,4 +1,5 @@
 using SatellesTSD.Core.Import;
+using SatellesTSD.Core.Matching;
 
 namespace SatellesTSD.Tests;
 
@@ -474,6 +475,55 @@ public class StatementParserTests
         var lhv = Catalog.Find("lhv-et-short")!;
         var lhvSheet = Tables.Sheet(lhv.Headers.ToArray(), Tables.Row("EE49", "", "2026-10-31T22:30:00Z", "", "Mari Maasikas", "D", "-1"));
         Assert.Equal(new DateOnly(2026, 11, 1), StatementParser.Parse(lhvSheet, StatementParser.Detect(lhvSheet, Catalog).Match!).Rows[0].Date);
+    }
+
+    [Fact]
+    public void A_card_export_row_whose_state_says_the_money_did_not_move_is_read_and_listed_but_is_no_payment()
+    {
+        var source1 = Catalog.Find("source1")!;
+        Assert.Empty(source1.Problems());
+        var stateAt = source1.ColumnOf(source1.Roles.State) - 1;
+        Assert.True(stateAt >= 0);
+        string[] Row(string id, string state, string completed, string amount)
+        {
+            var row = new string[source1.Headers.Count];
+            Array.Fill(row, "");
+            row[1] = completed;
+            row[2] = id;
+            row[stateAt] = state;
+            row[5] = "Mari Maasikas";
+            row[11] = "EUR";
+            row[12] = amount.TrimStart('-');
+            row[13] = "EUR";
+            row[14] = amount;
+            row[21] = "LT601234567890123456";
+            return row;
+        }
+
+        // the salary sent back by the bank, and sent again; a declined one with no completion date; a state this build
+        // does not know stays a payment, never dropped unseen
+        var sheet = Tables.Sheet(source1.Headers.ToArray(),
+            Row("ID-1", "REVERTED", "2026-10-05 08:00:00", "-905.92"),
+            Row("ID-2", "COMPLETED", "2026-10-07 08:00:00", "-905.92"),
+            Row("ID-3", "declined", "", "-905.92"),
+            Row("ID-4", "SOMETHING_NEW", "2026-10-09 08:00:00", "-10.00"));
+        var parsed = StatementParser.Parse(sheet, StatementParser.Detect(sheet, Catalog).Match!);
+        Assert.Equal([SkipReason.NotDone, null, SkipReason.NotDone, null], parsed.Rows.Select(r => r.SkipReason));
+        Assert.Equal(["ID-2", "ID-4"], parsed.Payments.Select(r => r.TransactionId));
+        var reverted = parsed.Rows[0];
+        Assert.Equal(("Mari Maasikas", -905.92m, new DateOnly(2026, 10, 5), "ID-1"), (reverted.Counterparty, reverted.Amount, reverted.Date, reverted.TransactionId)); // read like any row
+        Assert.DoesNotContain(parsed.Problems, p => p.RowNo == 4); // the declined row's missing date is no problem of a payment
+
+        // the run leaves it out of the review and says so for the month's row only
+        var source = new MatchSource(parsed.DisplayName, source1.Id, source1.Kind, parsed.Rows, Guid.NewGuid());
+        var register = new TorEntry(1, "1", "48712219406", "MARI", "MAASIKAS", "EE", new DateOnly(2024, 1, 1), null, "1", "Tööleping", "2", "Kehtiv", null, null, null, null, [], null);
+        var result = new PeriodMatcher(MatchCatalog.Default).Run(2026, 10, MatchPerson.FromTor([register], 2026, 10), [source]);
+        Assert.Equal([3, 5], result.Hits.Where(h => h.PersonKey is not null).Select(h => h.Row.RowNo)); // the salary sent again, not the one sent back
+        Assert.DoesNotContain(result.Hits, h => h.Row.RowNo is 2 or 4);
+        Assert.Equal([2], result.Problems.Where(p => p.Code == MatchProblem.NotDone).Select(p => p.RowNo!.Value));
+
+        // a layout naming not-done states without a State column is refused
+        Assert.Contains((source1 with { Roles = source1.Roles with { State = null } }).Problems(), p => p.Contains("StatesNotDone", StringComparison.Ordinal));
     }
 
     [Fact]

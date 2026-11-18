@@ -40,6 +40,10 @@ public static class SkipReason
     public const string NoName = "NoName";
     /// <summary>A copy of the header row inside the data (exports pasted together).</summary>
     public const string Header = "Header";
+    /// <summary>A row whose state says the money never moved (<see cref="StatementLayout.StatesNotDone"/>: a card export's
+    /// reverted, declined, failed or pending transaction). Read like a row without a counterparty, left out of the
+    /// review and never a payment; the run names it (decision 179).</summary>
+    public const string NotDone = "NotDone";
 }
 
 /// <summary>One row of a statement sheet as the file said it: the parsed payment fields next to every cell as
@@ -289,6 +293,7 @@ public static class StatementParser
         var codeCol = layout.ColumnOf(roles.CounterpartyCode);
         var txCol = layout.ColumnOf(roles.TransactionId);
         var referenceCol = layout.ColumnOf(roles.Reference);
+        var stateCol = layout.ColumnOf(roles.State);
         var zone = string.IsNullOrEmpty(layout.TimeZone) ? null : DateText.Zone(layout.TimeZone);
 
         var rows = new List<StatementRow>();
@@ -329,6 +334,10 @@ public static class StatementParser
             }
 
             var counterparty = Text(sheet.At(rowNo, nameCol));
+            // a row whose state says the money never moved (a card export's reverted, declined, failed or pending row) is
+            // read and listed like a row without a counterparty, never a payment (decision 179)
+            var notDone = stateCol > 0 && Text(sheet.At(rowNo, stateCol)) is { } state && layout.StatesNotDone is { } notDoneStates
+                && notDoneStates.Any(s => string.Equals(s.Trim(), state, StringComparison.OrdinalIgnoreCase));
             var dateCell = sheet.At(rowNo, dateCol);
             var amountCell = sheet.At(rowNo, amountCol);
             var dcText = Text(sheet.At(rowNo, dcCol));
@@ -339,7 +348,7 @@ public static class StatementParser
 
             // a row without a counterparty (a fee, a card payment, a balance) is read like any other — the accountant
             // sees every transaction — but is never a payment row, and what cannot be read of it is no problem of the sheet
-            var named = counterparty is not null;
+            var named = counterparty is not null && !notDone;
             var problem = new List<string>();
             // a layout in another zone must not lose a time to the bare-date fallback: the hour decides the day
             var dateTime = DateText.Parse(dateCell, layout.DateFormats, dateOnlyFallback: zone is null);
@@ -384,8 +393,10 @@ public static class StatementParser
             var currency = Text(sheet.At(rowNo, currencyCol)) ?? (layout.AmountHasCurrency ? AmountText.CurrencyOf(amountText) : null);
             if (!named)
             {
-                rows.Add(Skipped(rowNo, SkipReason.NoName, cells) with
+                rows.Add(Skipped(rowNo, notDone ? SkipReason.NotDone : SkipReason.NoName, cells) with
                 {
+                    Counterparty = counterparty,
+                    CounterpartyCode = notDone ? IdText.Code(sheet.At(rowNo, codeCol)) : null, // its fingerprint the payment's would have
                     Date = dateTime is null ? null : DateOnly.FromDateTime(dateTime.Value),
                     DateText = dateText,
                     Account = account,

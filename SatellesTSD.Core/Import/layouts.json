@@ -209,10 +209,10 @@
     ],
     "Roles": {
       "Account": "International account number", "Date": "Date completed (UTC)", "Counterparty": "Description", "Amount": "Amount", "Description": "Reference",
-      "Currency": "Payment currency", "TransactionId": "ID"
+      "Currency": "Payment currency", "TransactionId": "ID", "State": "State"
     },
-    "Direction": "Sign", "TimeZone": "UTC",
-    "Notes": "Workbook CONFIG row 24/49: a card / e-money export (Revolut shape). No direction column: the workbook counted every row as both debit and credit; here the amount's sign decides. The amount is 'Amount', in the account's 'Payment currency': signed (money out below zero), where 'Orig amount' is always positive and in the card payment's own currency. Times are UTC and are moved to Estonian time."
+    "Direction": "Sign", "TimeZone": "UTC", "StatesNotDone": [ "PENDING", "REVERTED", "DECLINED", "FAILED" ],
+    "Notes": "Workbook CONFIG row 24/49: a card / e-money export (Revolut shape). No direction column: the workbook counted every row as both debit and credit; here the amount's sign decides. The amount is 'Amount', in the account's 'Payment currency': signed (money out below zero), where 'Orig amount' is always positive and in the card payment's own currency. Times are UTC and are moved to Estonian time. A row whose State is PENDING, REVERTED, DECLINED or FAILED moved no money: listed in the file, never a payment (decision 179)."
   },
   {
     "Id": "customtable1",

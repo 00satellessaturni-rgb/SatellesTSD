@@ -217,6 +217,14 @@ public sealed class PeriodMatcher
                     case SkipReason.Header:
                         problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{row.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: row.RowNo));
                         continue;
+                    case SkipReason.NotDone:
+                        // said only for a row of the month: an export spans months, and another month's is no business of this one
+                        if (InMonth(row, year, month))
+                        {
+                            problems.Add(new MatchProblem(MatchProblem.NotDone, $"{source.Name} [{row.RowNo}]: {row.Counterparty} {row.Amount?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} — the transaction's state says the money did not move (reverted, declined, failed or pending); left out, not a payment.", Source: source.Name, RowNo: row.RowNo));
+                        }
+
+                        continue;
                     case SkipReason.Blank:
                     case SkipReason.NoName:
                         hits.Add(new MatchHit(source.Name, row, null, "", "", false, CategoryVerdict.None, "", InMonth(row, year, month), false, []));

@@ -35,7 +35,7 @@ public sealed record MatchSource(string Name, string LayoutId, LayoutKind Kind, 
 /// <summary>One person of the register as the run sees them: one per personal code (the workbook painted a second
 /// row of the same code yellow and skipped it; here every row is kept), with the employment that covers the month.</summary>
 /// <param name="Entries">The TÖR rows of the person, in register order.</param>
-/// <param name="ActiveEntry">The entry covering the month — a valid one (kande olek 2) before a suspended or ended one, the latest start first; null when none covers it.</param>
+/// <param name="ActiveEntry">The entry covering the month — one in force in the month by its dates (<see cref="TorEntry.InForceIn"/>) before one that is not, then a valid one (kande olek 2) before a suspended or ended one, the latest start first; null when none covers it.</param>
 /// <param name="Order">The person's place in the register (0-based), which orders the report.</param>
 public sealed record MatchPerson(SearchPerson Person, IReadOnlyList<TorEntry> Entries, TorEntry? ActiveEntry, int Order)
 {
@@ -47,7 +47,8 @@ public sealed record MatchPerson(SearchPerson Person, IReadOnlyList<TorEntry> En
     /// <summary>The entry covering the day, by the month's rule (a valid one first, then the latest start); null when none does.</summary>
     public TorEntry? EntryOn(DateOnly day) => Entries
         .Where(e => (e.StartDate is null || e.StartDate <= day) && (e.EndDate is null || e.EndDate >= day))
-        .OrderBy(e => e.StateId == TorStates.Valid ? 0 : 1)
+        .OrderBy(e => e.InForceOn(day) ? 0 : 1) // in force on the day by its dates, whatever the export's state now (decision 181)
+        .ThenBy(e => e.StateId == TorStates.Valid ? 0 : 1)
         .ThenByDescending(e => e.StartDate ?? DateOnly.MinValue)
         .FirstOrDefault();
 
@@ -84,7 +85,8 @@ public sealed record MatchPerson(SearchPerson Person, IReadOnlyList<TorEntry> En
             var list = byKey[key];
             var first = list[0];
             var active = list.Where(e => e.Overlaps(year, month))
-                .OrderBy(e => e.StateId == TorStates.Valid ? 0 : 1)
+                .OrderBy(e => e.InForceIn(year, month) ? 0 : 1) // in force in the month by its dates (decision 181)
+                .ThenBy(e => e.StateId == TorStates.Valid ? 0 : 1)
                 .ThenByDescending(e => e.StartDate ?? DateOnly.MinValue)
                 .FirstOrDefault();
             persons.Add(new MatchPerson(SearchPerson.Of(first.PersonalCode, first.LastName, first.FirstName), list, active, persons.Count));
@@ -116,6 +118,8 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     public const string NoName = "NO_NAME";
     /// <summary>A pasted header row inside a statement was left out.</summary>
     public const string HeaderRow = "HEADER_ROW";
+    /// <summary>A statement row whose state says the money never moved (a card export's reverted, declined, failed or pending transaction) was left out (decision 179).</summary>
+    public const string NotDone = "NOT_DONE";
     /// <summary>A hit whose amount could not be read counts as nothing.</summary>
     public const string BadAmount = "BAD_AMOUNT";
     /// <summary>A payment row whose fingerprint (and the bank's transaction id, when it has one) already stood in an
@@ -144,6 +148,8 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     /// <summary>A card export stored before 0.16.0 keeps its old reading — every amount as money in, in the payment's own
     /// currency — so its payouts are left out as money in (decision 141): said, with the way to read it again (decision 171).</summary>
     public const string OldReading = "OLD_READING";
+    /// <summary>A statement sheet was read before its layout read the transaction's state: a row that moved no money may stand as a payment until the file is read again (decision 179).</summary>
+    public const string StateUnread = "STATE_UNREAD";
 
     /// <summary>Rows of a statement below its last payee row were not listed (the workbook's cut, decision 29): counted and said (140).</summary>
     public const string RowsBelowLastPayee = "ROWS_BELOW_LAST_PAYEE";

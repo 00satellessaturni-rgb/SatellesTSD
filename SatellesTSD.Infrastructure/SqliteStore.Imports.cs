@@ -231,7 +231,13 @@ public sealed partial class SqliteStore
                 var hash = row.Row.RowHash.Length > 0 ? row.Row.RowHash : StatementParser.HashOf(row.Row);
                 var ordinal = seen.GetValueOrDefault(hash);
                 seen[hash] = ordinal + 1;
-                keys[row.Id] = (sheet.SheetIndex, hash, ordinal);
+                if (row.Row.SkipReason != SkipReason.NotDone)
+                {
+                    // a row that moved no money takes no decision (decision 179), yet it keeps its place among the rows of its
+                    // fingerprint: a reverted payout and its resend of one day and amount are told apart by their order, as
+                    // the reading before the state was read numbered them
+                    keys[row.Id] = (sheet.SheetIndex, hash, ordinal);
+                }
             }
         }
 
@@ -242,7 +248,7 @@ public sealed partial class SqliteStore
     /// number in it. <paramref name="oldCardReadingOnly"/>: only the sheets the card export's reading of before 0.16.0 read.</summary>
     private Dictionary<Guid, (int Sheet, int RowNo)> RowPlaces(Guid fileId, bool oldCardReadingOnly) =>
         Sheets(fileId).Where(s => s.Kind == SheetKind.Statement && (!oldCardReadingOnly || s.Layout?.IsOldCardReading() == true))
-            .SelectMany(s => StatementRows(s.Id).Where(r => r.Row.SkipReason is not (SkipReason.Blank or SkipReason.Header)).Select(r => (r.Id, Place: (s.SheetIndex, r.Row.RowNo))))
+            .SelectMany(s => StatementRows(s.Id).Where(r => r.Row.SkipReason is not (SkipReason.Blank or SkipReason.Header or SkipReason.NotDone)).Select(r => (r.Id, Place: (s.SheetIndex, r.Row.RowNo))))
             .ToDictionary(r => r.Id, r => r.Place);
 
     /// <summary>The amount of every statement row of a file (none where the row has none).</summary>
@@ -362,7 +368,7 @@ public sealed partial class SqliteStore
     public IReadOnlyList<ImportFile> PeriodImports(Guid periodId) =>
         Query(ImportFileSelect + " JOIN period_import p ON p.file_id = import_file.id WHERE p.period_id = $period ORDER BY p.rowid", ReadImportFile, ("$period", G(periodId)));
 
-    public void RemoveImport(Guid fileId)
+    public void RemoveImport(Guid fileId, Guid? unlinkedFrom = null)
     {
         using var tx = Tx();
         var declared = Scalar<long>(
@@ -386,14 +392,22 @@ public sealed partial class SqliteStore
             throw new InvalidOperationException($"{drafts} draft line(s) point at this file's rows; they go before the file does.");
         }
 
-        // a totals line names no row, yet the rows it adds up are this file's when a period on the server lists the file
+        // a totals line names no row, yet the rows it adds up are this file's when a period on the server lists the file —
+        // or listed it until a moment ago: "Eemalda fail" takes the file out of the month first, in the same transaction
         var totals = Scalar<long>(
             """
             SELECT COUNT(*) FROM payment p
-              JOIN period_import pi ON pi.period_id = p.period_id
-            WHERE pi.file_id = $file AND p.source_ref LIKE 'totals:%' AND p.status IN ('Sent', 'Accepted', 'NeedsChange', 'Review')
+            WHERE p.source_ref LIKE 'totals:%' AND p.status IN ('Sent', 'Accepted', 'NeedsChange', 'Review')
+              AND (p.period_id IN (SELECT period_id FROM period_import WHERE file_id = $file) OR p.period_id = $unlinked)
             """,
-            ("$file", G(fileId)));
+            ("$file", G(fileId)), ("$unlinked", unlinkedFrom is { } from ? G(from) : ""));
+        // a file no month lists ("Eemalda perioodist" took it out of the month long before): the lines are looked for by
+        // the payments they name ("LHV pank *1234 [12]"), and a name of one of its rows is enough (decision 177)
+        if (unlinkedFrom is null && PeriodImportsOf(fileId) == 0)
+        {
+            totals = Math.Max(totals, OnServerTotalsNaming(fileId));
+        }
+
         if (totals > 0)
         {
             throw new InvalidOperationException($"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.");
@@ -429,6 +443,90 @@ public sealed partial class SqliteStore
         }
 
         tx.Commit();
+    }
+
+    /// <summary>The company's totals lines on the server (every version) whose source names a row of the file dated in the
+    /// line's month — "sheet [row]", "sheet #k [row]" for the k-th sheet of an equal name, a part's "… osa N" too.</summary>
+    private int OnServerTotalsNaming(Guid fileId)
+    {
+        if (Scalar<string?>("SELECT company_id FROM import_file WHERE id = $file", ("$file", G(fileId))) is not { } company)
+        {
+            return 0;
+        }
+
+        // the file's rows of each month, by its sheets' names: a run names a sheet by its display name, and the k-th sheet
+        // of an equal name "name #k" (MatchSource.Order)
+        var rows = Sheets(fileId).Where(s => s.Kind == SheetKind.Statement)
+            .SelectMany(s => StatementRows(s.Id).Where(r => r.Row.Date is not null).Select(r => (Month: (r.Row.Date!.Value.Year, r.Row.Date!.Value.Month), Name: s.DisplayName, r.Row.RowNo)))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            return 0;
+        }
+
+        // every version on the server, not only the one standing: a draft M or T over an accepted line hides it from Payments
+        var lines = Query(
+            """
+            SELECT p.id, p.period_id, pe.year, pe.month, p.source_ref FROM payment p JOIN period pe ON pe.id = p.period_id
+            WHERE pe.company_id = $company AND p.source_ref LIKE 'totals:%' AND p.status IN ('Sent', 'Accepted', 'NeedsChange', 'Review')
+            """,
+            r => (Id: r.GetString(0), Period: Guid.Parse(r.GetString(1)), Month: (r.GetInt32(2), r.GetInt32(3)), Named: TotalsNames(r.GetString(4))),
+            ("$company", company));
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var period in lines.GroupBy(l => (l.Period, l.Month)))
+        {
+            var mine = rows.Where(r => r.Month == period.Key.Month).ToList();
+            if (mine.Count == 0)
+            {
+                continue;
+            }
+
+            // by the name alone: once no month lists the file, nothing tells it from another export of its account whose
+            // rows bear the same names, so a name is enough to keep it (decision 177)
+            var tokens = period.SelectMany(l => (l.Named ?? []).Select(TotalsToken).Where(t => t is not null).Select(t => (Line: l.Id, Token: t!.Value))).ToList();
+            foreach (var name in mine.Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var rowNos = mine.Where(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)).Select(r => r.RowNo).ToHashSet();
+                found.UnionWith(tokens.Where(t => string.Equals(t.Token.Base, name, StringComparison.OrdinalIgnoreCase) && rowNos.Contains(t.Token.RowNo)).Select(t => t.Line));
+            }
+        }
+
+        return found.Count;
+    }
+
+    /// <summary>How many periods list the file.</summary>
+    private long PeriodImportsOf(Guid fileId) =>
+        Scalar<long>("SELECT COUNT(*) FROM period_import WHERE file_id = $file", ("$file", G(fileId)));
+
+    /// <summary>The payments a totals line's source names ("totals:10:LHV pank *1234 [12]; Kassa [3] osa 1"); null for any other source.</summary>
+    private static string[]? TotalsNames(string? sourceRef)
+    {
+        if (sourceRef is null || !sourceRef.StartsWith("totals:", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var rest = sourceRef["totals:".Length..];
+        var colon = rest.IndexOf(':', StringComparison.Ordinal);
+        return colon <= 0 ? null : rest[(colon + 1)..].Split("; ");
+    }
+
+    /// <summary>One payment a totals line names, "LHV pank *1234 #2 [7] osa 1": the source as the run named it ("LHV pank
+    /// *1234 #2"), the sheet's display name under it ("LHV pank *1234") and the row; null for what is no row (a hand line).</summary>
+    private static (string Source, string Base, int RowNo)? TotalsToken(string token)
+    {
+        var part = token.LastIndexOf(" osa ", StringComparison.Ordinal);
+        var text = part > 0 && token[(part + 5)..].All(char.IsDigit) ? token[..part] : token;
+        var open = text.LastIndexOf(" [", StringComparison.Ordinal);
+        if (open <= 0 || !text.EndsWith(']') || !int.TryParse(text.AsSpan(open + 2, text.Length - open - 3), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var rowNo))
+        {
+            return null;
+        }
+
+        var source = text[..open];
+        var hash = source.LastIndexOf(" #", StringComparison.Ordinal);
+        var name = hash > 0 && source.Length > hash + 2 && source[(hash + 2)..].All(char.IsDigit) ? source[..hash] : source;
+        return (source, name, rowNo);
     }
 
     public IReadOnlyList<StatementLayout> Layouts() =>

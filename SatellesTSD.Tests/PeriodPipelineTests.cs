@@ -292,6 +292,50 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void A_card_export_read_before_its_state_was_read_is_named_and_a_re_read_leaves_the_resends_decision_on_the_resend()
+    {
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var card = LayoutCatalog.Default.Find("source1")!;
+            var headers = card.Headers.ToList();
+            object?[] Row(string id, string state) => headers.Select(h => (object?)(h == card.Roles.Date ? new DateTime(2026, 10, 5, 10, 0, 0) : h == card.Roles.Counterparty ? "Mari Maasikas"
+                : h == card.Roles.Amount ? -905.92d : h == "Orig amount" ? 905.92d : h == card.Roles.Currency ? "EUR" : h == card.Roles.TransactionId ? id : h == card.Roles.State ? state : null)).ToArray();
+
+            // the salary sent back by the bank and sent again: one day, one amount, one fingerprint, told apart by the state alone
+            var bytes = Tables.Xlsx("Kaart", headers.ToArray<object?>(), Row("ID-1", "REVERTED"), Row("ID-2", "COMPLETED"));
+            var before = card with { Roles = card.Roles with { State = null }, StatesNotDone = null };
+            var then = new PeriodPipeline(store, new Importer(LayoutCatalog.Default.WithOverrides([before]), new ExcelTableReader()));
+            then.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook());
+            var file = then.ImportFile(period.Id, "kaart.xlsx", bytes).File!;
+            then.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            var said = Assert.Single(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread);
+            Assert.Contains("row(s) 2 moved no money", said.Message, StringComparison.Ordinal); // the reverted row, named; the resend not
+            Assert.Contains("Loe uuesti", said.Message, StringComparison.Ordinal);
+
+            var rows = store.StatementRows(store.Sheets(file.Id).Single().Id).OrderBy(r => r.Row.RowNo).ToList();
+            Assert.Equal(rows[0].Row.RowHash, rows[1].Row.RowHash);
+            store.SaveReviewLine(ReviewLine.ForRow(period.Id, rows[0].Id) with { Declare = false, Note = "tagasi saadetud" });
+            store.SaveReviewLine(ReviewLine.ForRow(period.Id, rows[1].Id) with { Note = "uuesti" });
+            Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread); // taken out by hand: nothing left to say
+
+            // read again: the reverted row is no payment and takes no decision; the resend keeps its own, not the reverted row's
+            var now = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var reread = now.RereadFile(period.Id, file.Id);
+            Assert.True(reread.Succeeded, reread.Error);
+            Assert.Equal((1, 1), (reread.Carried, reread.Dropped));
+            var newRows = store.StatementRows(store.Sheets(reread.File!.Id).Single().Id).OrderBy(r => r.Row.RowNo).ToList();
+            Assert.Equal([SkipReason.NotDone, null], newRows.Select(r => r.Row.SkipReason));
+            var line = Assert.Single(store.ReviewLines(period.Id));
+            Assert.Equal((newRows[1].Id, "uuesti", (bool?)null), (line.RowId, line.Note, line.Declare));
+            now.RunMatch(period.Id);
+            Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread);
+            Assert.Contains(store.LoadMatchResult(period.Id)!.Problems, p => p.Code == MatchProblem.NotDone && p.RowNo == newRows[0].Row.RowNo);
+        }
+    }
+
+    [Fact]
     public void A_card_export_kept_in_its_reading_of_before_0_16_is_named_until_it_is_read_again()
     {
         var (store, _, period) = Setup();
@@ -388,6 +432,64 @@ public class PeriodPipelineTests
 
             pipeline.RemoveFile(period.Id, reread.File!.Id, clearRun: true);
             Assert.Empty(store.Payments(period.Id));
+        }
+    }
+
+    [Fact]
+    public void A_file_whose_rows_add_up_totals_lines_on_the_server_stays_in_the_store_once_taken_out_of_the_month()
+    {
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            // the register and the account's export of the month's first half, then its second half: two sheets of one
+            // name, the second named "LHV pank *1757 #2" by the run
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            byte[] Export(DateTime day, double amount, string id) => Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(),
+                ["EE497700771001131757", 1, day, "EE12", "Mari Maasikas", "D", amount, null, id, "palk", "EUR", double.Parse(ReviewFixtures.MariCode, System.Globalization.CultureInfo.InvariantCulture)]);
+            var file = pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            var second = pipeline.ImportFile(period.Id, "lhv-2.xlsx", Export(new DateTime(2026, 10, 20), -100d, "2026102000000009")).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026);
+            declarer.Build(period.Id, DeclarationMode.TotalsPerType);
+            var lines = store.Payments(period.Id);
+            Assert.All(lines, l => Assert.True(PeriodDeclarer.IsTotals(l)));
+            Assert.Contains(lines, l => l.SourceRef!.Contains("LHV pank *1757 #2 [2]", StringComparison.Ordinal));
+            store.AddSubmission(period.Id, "tsd.xml", "uid-1", lines.Select(l => l.Id).ToList(), DateTime.UtcNow); // on the server; the month is a Draft again, as after "Ava parandamiseks"
+
+            // a draft M over the line on the server: what stands for the line is the draft, the line on the server is beneath it
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { FundedPensionMember = true, PensionRate = 0.02m });
+            declarer.Build(period.Id, DeclarationMode.TotalsPerType);
+            Assert.Contains(store.Payments(period.Id), p => p.Action == LineAction.M && p.Status == PaymentStatus.Draft);
+
+            // November's export, overlapping October and read for November, taken out of November: it goes, though its rows
+            // of October bear the names October's lines carry — the month it is taken out of has no line on the server
+            var november = store.GetOrCreatePeriod(company.Id, 2026, 11);
+            var later = pipeline.ImportFile(november.Id, "lhv-hiljem.xlsx", Export(new DateTime(2026, 10, 25), -50d, "2026102500000010")).File!;
+            pipeline.RemoveFile(november.Id, later.Id);
+            Assert.Equal(2, store.Imports(company.Id).Count);
+
+            // "Eemalda fail" on either half: unlinked first, in the same step, the month still counts as listing it — the
+            // other half, still listed and of the same name, stands in for nothing
+            Assert.Contains("add up this file's rows", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, second.Id, clearRun: true)).Message);
+            Assert.Contains("add up this file's rows", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, file.Id, clearRun: true)).Message);
+            Assert.Equal(2, store.PeriodImports(period.Id).Count); // the whole step undone
+
+            // taken out of the month's files first, then out of the store: refused the same, for either half
+            store.ClearMatchRun(period.Id);
+            pipeline.UnlinkFile(period.Id, second.Id);
+            Assert.Contains("add up this file's rows", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, second.Id)).Message);
+            pipeline.UnlinkFile(period.Id, file.Id);
+            Assert.Contains("add up this file's rows", Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, file.Id)).Message);
+            Assert.Equal(2, store.Imports(company.Id).Count);
+
+            // a file no month lists is known by the rows the lines name, and a name is enough: another export of the same
+            // rows, read for no month, cannot be told from the month's own and is kept too
+            var again = Export(new DateTime(2026, 10, 20), -100d, "2026102000000011");
+            var copy = store.AddImport(company.Id, ReviewFixtures.Importer.Read("lhv-koopia.xlsx", again), again);
+            Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(period.Id, copy.Id));
         }
     }
 

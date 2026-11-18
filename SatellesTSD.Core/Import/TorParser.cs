@@ -110,6 +110,41 @@ public sealed record TorEntry(
         return (StartDate is null || StartDate <= last) && (EndDate is null || EndDate >= first);
     }
 
+    /// <summary>Whether the employment was in force on the day, by its dates rather than by the state the export was
+    /// taken in (an export is a snapshot, usually downloaded after the month): a valid row on any day it covers; an
+    /// ended row on the days up to its end date (none when it names no end); a paused row on the days outside its
+    /// pause (none when it does not say since when) — decision 181.</summary>
+    public bool InForceOn(DateOnly day)
+    {
+        if ((StartDate is { } start && day < start) || (EndDate is { } end && day > end))
+        {
+            return false;
+        }
+
+        return StateId switch
+        {
+            TorStates.Valid => true,
+            TorStates.Ended => EndDate is not null,
+            TorStates.Paused => PauseStart is { } from && (day < from || (PauseEnd is { } to && day > to)),
+            _ => false,
+        };
+    }
+
+    /// <summary>Whether the employment was in force on some day of the month (<see cref="InForceOn"/>).</summary>
+    public bool InForceIn(int year, int month)
+    {
+        var first = new DateOnly(year, month, 1);
+        for (var day = first; day.Month == month; day = day.AddDays(1))
+        {
+            if (InForceOn(day))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public bool Equals(TorEntry? other) =>
         other is not null && RowNo == other.RowNo && TorId == other.TorId && PersonalCode == other.PersonalCode && FirstName == other.FirstName && LastName == other.LastName
         && Country == other.Country && StartDate == other.StartDate && EndDate == other.EndDate && TypeId == other.TypeId && Type == other.Type && StateId == other.StateId

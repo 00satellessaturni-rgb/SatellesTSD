@@ -46,19 +46,8 @@ static class Program
         SettingsPathOverride = settingsPath;
         StorePathOverride = storePath;
         settingsPath ??= AppSettings.DefaultPath;
-        var crashLog = Path.Combine(Path.GetDirectoryName(settingsPath) ?? ".", "viga.log");
-        void WriteCrash(object? failure)
-        {
-            // what the program could not handle is written down, so the owner can send it along
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-                File.AppendAllText(crashLog, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {failure}{Environment.NewLine}{Environment.NewLine}");
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-            }
-        }
+        _crashLog = Path.Combine(Path.GetDirectoryName(settingsPath) ?? ".", "viga.log");
+        var crashLog = _crashLog;
 
         // a failure before the window stands (the start-up, a worker thread) is written down too, rather than dying mute at every start
         AppDomain.CurrentDomain.UnhandledException += (_, e) => WriteCrash(e.ExceptionObject);
@@ -85,5 +74,39 @@ static class Program
         }
 
         Application.Run(new MainForm(settingsPath, AppSettings.Load(settingsPath), storePath));
+    }
+
+    private static string? _crashLog;
+
+    /// <summary>What the program could not handle, written down beside the settings (viga.log), so the owner can send it along.</summary>
+    private static void WriteCrash(object? failure)
+    {
+        if (_crashLog is not { } crashLog)
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
+            File.AppendAllText(crashLog, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {failure}{Environment.NewLine}{Environment.NewLine}");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>Started by an update and unable to go on (the store handed on does not open): the failure is written
+    /// down and the copy ends at once, so the copy that waits puts itself back and opens the store again (decision 178).
+    /// Does nothing when no update waits for this copy.</summary>
+    public static void EndFailedStart(object failure)
+    {
+        if (ReadySignal is null)
+        {
+            return;
+        }
+
+        WriteCrash(failure);
+        Environment.Exit(Updater.FailedExitCode);
     }
 }
