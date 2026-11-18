@@ -281,7 +281,10 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var drafts = lines.Where(p => p.Status == PaymentStatus.Draft).ToList();
         if (drafts.Count > 0)
         {
-            throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) were never sent: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them or build again first.");
+            throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) were never sent: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them or build again first.")
+            {
+                DraftLines = drafts.Select(p => p.LineNumber).ToList(),
+            };
         }
 
         // the one question names everything the force would pass: the lines still open, and the keys whose every version
@@ -301,7 +304,11 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
                 parts.Add($"{refused.Count} line(s) were refused by MTA and are not on the server: {string.Join(", ", refused.Select(p => p.LineNumber))} (reopen the period and build again to resend what the review still declares)");
             }
 
-            throw new DeclareException(LinesPending, string.Join("; ", parts) + "; or confirm anyway.");
+            throw new DeclareException(LinesPending, string.Join("; ", parts) + "; or confirm anyway.")
+            {
+                OpenLines = open.Select(p => p.LineNumber).ToList(),
+                RefusedLines = refused.Select(p => p.LineNumber).ToList(),
+            };
         }
 
         _store.SetPeriodState(periodId, PeriodState.Confirmed, _clock.GetUtcNow().UtcDateTime);

@@ -72,7 +72,10 @@ public sealed class PeriodMatcher
         var duplicates = new Dictionary<(string Source, int RowNo), string>();
         var originals = new Dictionary<string, List<(string Reference, string? Id)>>(StringComparer.Ordinal);
         static bool Trusted(string? id) => !string.IsNullOrWhiteSpace(id) && !(id.Length >= 16 && id.All(char.IsDigit));
-        static bool Compatible(string? a, string? b) => !Trusted(a) || !Trusted(b) || string.Equals(a!.Trim(), b!.Trim(), StringComparison.Ordinal);
+        // an all-digit id is compared without its leading zeros: Excel holds it as a number in a hand-made copy, so
+        // "0123456789" comes back as "123456789" — the fingerprint already reads the payee code so (decision 193)
+        static string Canonical(string id) => id.Trim() is var t && t.Length > 0 && t.All(char.IsDigit) ? t.TrimStart('0') : t;
+        static bool Compatible(string? a, string? b) => !Trusted(a) || !Trusted(b) || string.Equals(Canonical(a!), Canonical(b!), StringComparison.Ordinal);
         foreach (var source in sources)
         {
             var own = new List<(string Hash, string Reference, string? Id)>();

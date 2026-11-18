@@ -51,6 +51,9 @@ public sealed class RereadOutcome
 
     public string? Error { get; init; }
 
+    /// <summary>The refusal behind <see cref="Error"/>, when there was one: its code words it in Estonian (decision 183).</summary>
+    public Exception? Refusal { get; init; }
+
     public bool Succeeded => File is not null && Error is null;
 }
 
@@ -257,7 +260,9 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         var listing = periods.Where(p => _store.PeriodImports(p.Id).Any(f => f.Id == fileId)).ToList();
         if (listing.Where(p => p.State != PeriodState.Draft).ToList() is { Count: > 0 } locked)
         {
-            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = $"The file is among the files of {string.Join(", ", locked.Select(MonthOf))}, past Draft (exported or declared): its reading stays as their record and is not read again." };
+            var months = string.Join(", ", locked.Select(MonthOf));
+            var refusal = ImportRefusal.Of(ImportRefusal.MonthsPastDraft, $"The file is among the files of {months}, past Draft (exported or declared): its reading stays as their record and is not read again.", locked.Count, months);
+            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = refusal.Message, Refusal = refusal };
         }
 
         ImportReplacement? replaced = null;
@@ -279,7 +284,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         }
         catch (Exception e) when (e is ImportException or InvalidOperationException or ArgumentException or KeyNotFoundException)
         {
-            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = e.Message };
+            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = e.Message, Refusal = e };
         }
 
         return new RereadOutcome { FileName = file.FileName, File = replaced!.File, Messages = messages, Carried = replaced.Carried, Dropped = replaced.Dropped, DraftsDeleted = draftsDeleted, RunsCleared = cleared };
@@ -298,12 +303,12 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         var others = periods.Where(p => p.Id != periodId && _store.PeriodImports(p.Id).Any(f => f.Id == fileId)).ToList();
         if (others.Where(p => p.State != PeriodState.Draft).ToList() is { Count: > 0 } locked)
         {
-            throw new InvalidOperationException($"The file is among the files of {string.Join(", ", locked.Select(MonthOf))}, past Draft (exported or declared): it stays as their record and cannot be taken out.");
+            throw ImportRefusal.Of(ImportRefusal.MonthsPastDraft, $"The file is among the files of {string.Join(", ", locked.Select(MonthOf))}, past Draft (exported or declared): it stays as their record and cannot be taken out.", locked.Count, string.Join(", ", locked.Select(MonthOf)));
         }
 
         if (others.Count > 0)
         {
-            throw new InvalidOperationException($"{others.Count} other Draft period(s) list this file ({string.Join(", ", others.Select(MonthOf))}); take it out of their files first.");
+            throw ImportRefusal.Of(ImportRefusal.OtherMonths, $"{others.Count} other Draft period(s) list this file ({string.Join(", ", others.Select(MonthOf))}); take it out of their files first.", others.Count, string.Join(", ", others.Select(MonthOf)));
         }
 
         var listedHere = _store.PeriodImports(periodId).Any(f => f.Id == fileId);
@@ -327,16 +332,21 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     /// <summary>The Draft payments built from the file's rows, in every Draft month of the company (a month that no longer
     /// lists the file may still hold them): deleted, the number told. The next build makes them again.</summary>
     /// <param name="listing">The months whose run read the file. A line of the totals cut adds up a person's rows of the
-    /// month and names none of them, so in these months every Draft totals line goes with the file's rows (decision 170).</param>
+    /// month and names none of them, so in these months every Draft totals line goes with the file's rows (decision 170);
+    /// the minimum's zero line stands on the month's register, so it goes with a file that holds a register (decision 192).</param>
     private int DeleteDraftsFrom(Guid fileId, IReadOnlyList<Period> periods, IReadOnlyCollection<Guid> listing)
     {
-        var rows = _store.Sheets(fileId).SelectMany(s => _store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+        var sheets = _store.Sheets(fileId);
+        var rows = sheets.SelectMany(s => _store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+        var holdsRegister = sheets.Any(s => s.Kind == SheetKind.Tor);
         var deleted = 0;
         foreach (var month in periods.Where(p => p.State == PeriodState.Draft))
         {
             var totals = rows.Count > 0 && listing.Contains(month.Id);
+            var minimum = holdsRegister && listing.Contains(month.Id);
             foreach (var draft in _store.Payments(month.Id).Where(l => l.Status == PaymentStatus.Draft
-                         && (l.SourceRowId is { } row ? rows.Contains(row) : totals && Declare.PeriodDeclarer.IsTotals(l))))
+                         && (l.SourceRowId is { } row ? rows.Contains(row)
+                             : (totals && Declare.PeriodDeclarer.IsTotals(l)) || (minimum && l.SourceRef == Declare.PeriodDeclarer.MinimumSource))))
             {
                 _store.DeleteDraft(draft.Id);
                 deleted++;
@@ -426,11 +436,18 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         _store.ClearMatchRun(periodId);
     }
 
-    /// <summary>Forgets that the period's run used a file (the run must be cleared first; the store refuses otherwise).</summary>
+    /// <summary>Forgets that the period's run used a file (the run must be cleared first; the store refuses otherwise). The
+    /// month's Draft lines built from the file's rows go with it, and so do its Draft totals lines, which add up rows of the
+    /// files the run read: the export takes every draft, and a month that lists no file is not stale (decision 192).</summary>
     public void UnlinkFile(Guid periodId, Guid fileId)
     {
-        RequireDraft(FindPeriod(periodId));
-        _store.UnlinkImport(periodId, fileId);
+        var period = FindPeriod(periodId);
+        RequireDraft(period);
+        _store.InTransaction(() =>
+        {
+            _store.UnlinkImport(periodId, fileId);
+            DeleteDraftsFrom(fileId, [period], [periodId]);
+        });
     }
 
     /// <summary>The lookups for the period's persons, reported one by one as they finish. Only for a Draft: a locked month's

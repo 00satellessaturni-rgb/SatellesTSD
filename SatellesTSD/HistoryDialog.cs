@@ -100,7 +100,7 @@ public sealed class HistoryDialog : Form
             var feedback = _services.Store.Feedback(version.Id).LastOrDefault();
             // a version refused over its own green, yellow or red report by a later version's black _5 (decision 93): the row says so (one refused by hand, without a report, is left as it is)
             var rejectedBy = version.Status == PaymentStatus.Rejected && feedback is not null && feedback.Severity != Core.Feedback.Severity.Black
-                ? Versions.FirstOrDefault(v => v.Version > version.Version && _services.Store.Feedback(v.Id).Any(f => f.Severity == Core.Feedback.Severity.Black && f.Messages.Any(m => m.Code == Core.Feedback.FeedbackReport.RuleChangeOnUnknownKey)))
+                ? Versions.FirstOrDefault(v => v.Version > version.Version && _services.Store.Feedback(v.Id).Any(f => f.Severity == Core.Feedback.Severity.Black && Core.Feedback.FeedbackReport.SaysKeyUnknown(f.Messages.Select(m => m.Code))))
                 : null;
             var index = _grid.Rows.Add(
                 version.Version.ToString(CultureInfo.InvariantCulture),

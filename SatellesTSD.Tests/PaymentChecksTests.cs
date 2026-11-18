@@ -131,4 +131,28 @@ public class PaymentChecksTests
         Assert.Empty(PaymentChecks.Check(PaymentTypes.Get("50"), posted with { A1Country = null, WorkCountry = null }, 100m, Rates)); // A1 ignored on rent
         Assert.Empty(PaymentChecks.Check(Salary, PayeeTaxFacts.ResidentEmployee(), 0m, Rates)); // a zero line on type 10
     }
+
+    [Fact]
+    public void A_treaty_rate_below_zero_above_the_types_own_or_not_a_whole_percent_is_refused_where_it_is_used()
+    {
+        // decision 195: nothing else stops a slip on the card from giving a negative income tax, or a rate the file rounds
+        var type = PaymentTypes.All.First(t => t.TreatyRateAllowed && t.Payee == Residency.NonResident && t.IncomeTaxRate is > 0m);
+        var own = type.IncomeTaxRate!.Value;
+        var facts = new PayeeTaxFacts(Residency.NonResident);
+        string[] Codes(decimal? rate) => PaymentChecks.Check(type, facts with { TreatyIncomeTaxRate = rate }, 1000m, Rates).Select(r => r.Code).ToArray();
+
+        Assert.Equal([PaymentChecks.TreatyRateInvalid], Codes(-0.05m));
+        Assert.Equal([PaymentChecks.TreatyRateInvalid], Codes(own + 0.01m));
+        Assert.Equal([PaymentChecks.TreatyRateInvalid], Codes(0.125m)); // the file would carry 0.13 beside a tax at 12.5 %
+        Assert.Contains("12.5", PaymentChecks.Check(type, facts with { TreatyIncomeTaxRate = 0.125m }, 1000m, Rates)[0].Message.Replace(',', '.'));
+        Assert.Empty(Codes(0m));
+        Assert.Empty(Codes(0.10m));
+        Assert.Empty(Codes(own));
+        Assert.Empty(Codes(null));
+
+        // a rate the line does not use refuses nothing: a resident's, or a type without the treaty rate
+        Assert.Empty(PaymentChecks.Check(PaymentTypes.Get("10"), new PayeeTaxFacts(Residency.Resident, FundedPensionMember: false) with { TreatyIncomeTaxRate = -0.05m }, 1000m, Rates));
+        var noTreaty = PaymentTypes.All.First(t => !t.TreatyRateAllowed && t.Payee == Residency.NonResident && t.IncomeTaxRate is > 0m && !t.FundedPension);
+        Assert.DoesNotContain(PaymentChecks.Check(noTreaty, facts with { TreatyIncomeTaxRate = -0.05m }, 1000m, Rates), r => r.Code == PaymentChecks.TreatyRateInvalid);
+    }
 }

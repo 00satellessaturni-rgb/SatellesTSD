@@ -259,6 +259,7 @@ public class PeriodPipelineTests
             var refused = pipeline.RereadFile(period.Id, dropped.File.Id);
             Assert.False(refused.Succeeded);
             Assert.Contains("2026-11", refused.Error);
+            Assert.Equal((ImportRefusal.MonthsPastDraft, "2026-11"), (ImportRefusal.CodeOf(refused.Refusal!), ImportRefusal.SubjectOf(refused.Refusal!))); // worded in Estonian by its code (decision 183)
         }
     }
 
@@ -647,6 +648,92 @@ public class PeriodPipelineTests
             var outcome = new PeriodPipeline(store, ReviewFixtures.Importer).ImportFile(period.Id, "peidetud.xlsx", bytes);
             Assert.True(outcome.Succeeded, outcome.Error);
             Assert.Contains(outcome.Messages, m => m.StartsWith("sheet 'LHV'", StringComparison.Ordinal) && m.Contains("hidden", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void Unlinking_a_file_takes_the_months_drafts_built_from_it_so_the_export_never_writes_them()
+    {
+        // decision 192: with every file unlinked the month is not stale, and the export takes every draft
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var file = pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026);
+
+            // a row's line
+            declarer.Build(period.Id);
+            Assert.Contains(store.Payments(period.Id), l => l.SourceRowId is not null && l.Status == PaymentStatus.Draft);
+            pipeline.ClearRun(period.Id);
+            pipeline.UnlinkFile(period.Id, file.Id);
+            Assert.Empty(store.Payments(period.Id));
+
+            store.LinkImport(period.Id, file.Id);
+            pipeline.RunMatch(period.Id);
+            workspace.SetDeclare(workspace.Load(period.Id).Persons[0].Payments.Single(), false);
+            declarer.Build(period.Id);
+            Assert.Contains(store.Payments(period.Id), l => l.SourceRef == PeriodDeclarer.MinimumSource);
+            pipeline.ClearRun(period.Id);
+            pipeline.UnlinkFile(period.Id, file.Id); // the register's file: the zero line stood on it
+            Assert.Empty(store.Payments(period.Id));
+
+            // the totals cut: its lines name no row, they go with the file the run read
+            store.LinkImport(period.Id, file.Id);
+            pipeline.RunMatch(period.Id);
+            workspace.SetDeclare(workspace.Load(period.Id).Persons[0].Payments.Single(), true);
+            declarer.Build(period.Id, DeclarationMode.TotalsPerType);
+            Assert.Contains(store.Payments(period.Id), PeriodDeclarer.IsTotals);
+            pipeline.ClearRun(period.Id);
+            pipeline.UnlinkFile(period.Id, file.Id);
+            Assert.Empty(store.Payments(period.Id));
+            Assert.Single(store.Imports(company.Id)); // the file itself stays in the store
+        }
+    }
+
+    [Fact]
+    public void A_file_whose_every_line_was_refused_black_is_read_again_and_taken_out_and_the_refused_versions_keep_their_history()
+    {
+        // decision 184: a key whose every version was refused black never reached the server and holds nothing
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var file = pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            pipeline.RunMatch(period.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(period.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            var declarer = new PeriodDeclarer(store, TaxRates.Year2026);
+            declarer.Build(period.Id);
+            var line = Assert.Single(store.Payments(period.Id));
+            store.AddSubmission(period.Id, "tsd.xml", "uid-1", [line.Id], DateTime.UtcNow);
+
+            // awaiting MTA: the line holds the file
+            var declared = pipeline.RereadFile(period.Id, file.Id);
+            Assert.Contains("declared line(s)", declared.Error);
+            Assert.Equal(ImportRefusal.Declared, ImportRefusal.CodeOf(declared.Refusal!)); // the store's code reaches the window (decision 183)
+            store.ResolveLine(line.Id, onServer: false); // refused black
+
+            var reread = pipeline.RereadFile(period.Id, file.Id);
+            Assert.Null(reread.Error);
+            var refused = Assert.Single(store.History(period.Id, line.Section, line.LineNumber));
+            Assert.Equal(PaymentStatus.Rejected, refused.Status);
+            var newRows = store.Sheets(reread.File!.Id).SelectMany(s => store.StatementRows(s.Id)).Select(r => r.Id).ToHashSet();
+            Assert.Contains(refused.SourceRowId!.Value, newRows); // the refused version follows its row
+
+            // the row declared again: under the very key refused, an R again
+            pipeline.RunMatch(period.Id);
+            declarer.Build(period.Id);
+            Assert.Contains(store.History(period.Id, line.Section, line.LineNumber), v => v.Status == PaymentStatus.Draft && v.Action == LineAction.R);
+
+            // taken out of the store: the drafts go, the refused version lets go of the row and stays
+            pipeline.RemoveFile(period.Id, reread.File.Id, clearRun: true);
+            Assert.Empty(store.Imports(company.Id));
+            var kept = Assert.Single(store.History(period.Id, line.Section, line.LineNumber));
+            Assert.Equal((PaymentStatus.Rejected, (Guid?)null), (kept.Status, kept.SourceRowId));
         }
     }
 }

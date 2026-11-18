@@ -318,6 +318,9 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             current = current with
             {
                 BasicExemptionApplied = !exemptionOff && current.BasicExemptionApplied,
+                // the person's own monthly figure goes with the application: a figure without one refuses every payment
+                // (EXEMPTION_WITHOUT_APPLICATION), and ticking the application again would give the exemption back (decision 186)
+                BasicExemptionMonthly = exemptionOff ? null : current.BasicExemptionMonthly,
                 Residency = isResident ? Residency.Resident : Residency.NonResident,
                 ResidencyCheckedOn = CheckedOn(residencyRecord!), // the day the answer was given, also when an answer of the month is reused
                 ResidencySource = LookupSource.Emta,
@@ -379,7 +382,13 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     }
 
     /// <summary>The day a register's answer was given: the record's own stamp, so a reused answer keeps its day rather than today's.</summary>
-    private static DateOnly CheckedOn(LookupRecord record) => DateOnly.FromDateTime(record.CheckedAt);
+    /// <summary>The day a check was made, by the local (Estonian) calendar: the store keeps the time in UTC, so a check made
+    /// between local midnight and 02:00 (03:00 in summer) is still of the local day (decision 189).</summary>
+    private DateOnly CheckedOn(LookupRecord record) => DateOnly.FromDateTime(Local(record.CheckedAt));
+
+    /// <summary>A stored UTC time in the clock's local time zone.</summary>
+    private DateTime Local(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), _clock.LocalTimeZone);
 
     private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, bool handBack, List<string> steps, List<string> problems, List<LookupDisagreement> disagreements)
     {
@@ -430,7 +439,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             // a pension answer that cannot tell the day's membership is no answer for the day: asked again, as a failed one is (decision 162)
             && !(kind == LookupKind.Pension && JsonSerializer.Deserialize<PensionFinding>(recorded.FindingJson!, Json) is { } known && known.MembershipUnknownOn(controlDate)))
         {
-            steps.Add($"{kind.ToString().ToLowerInvariant()} answer of {recorded.CheckedAt:dd.MM.yyyy HH:mm} reused");
+            steps.Add($"{kind.ToString().ToLowerInvariant()} answer of {Local(recorded.CheckedAt):dd.MM.yyyy HH:mm} reused");
             return recorded;
         }
 
@@ -463,7 +472,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         _lastRequest = _clock.GetUtcNow().UtcDateTime;
     }
 
-    private DateOnly Today() => DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
+    private DateOnly Today() => DateOnly.FromDateTime(Local(_clock.GetUtcNow().UtcDateTime));
 
     /// <summary>The person as the store has them now: a lookup changes only its own fields of a fresh row.</summary>
     private Person Fresh(Person person) => _store.Persons(person.CompanyId).FirstOrDefault(p => p.Id == person.Id) ?? person;

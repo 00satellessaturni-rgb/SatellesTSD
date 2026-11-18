@@ -331,8 +331,16 @@ public sealed record FeedbackReport(ProcessingResult Result, string ResultRaw, I
     /// <summary>KR_XBRL_VALJAMAKSED_4: an R on a key that already exists — the payment is on the server, so the fix is an M.</summary>
     public const string RuleNewOnExistingKey = "KR_XBRL_VALJAMAKSED_4";
 
-    /// <summary>KR_XBRL_VALJAMAKSED_5: an M or T on a key the server does not know — nothing is there, so send an R.</summary>
+    /// <summary>KR_XBRL_VALJAMAKSED_5: an M on a key the server does not know — nothing is there, so send an R.</summary>
     public const string RuleChangeOnUnknownKey = "KR_XBRL_VALJAMAKSED_5";
+
+    /// <summary>KR_XBRL_VALJAMAKSED_6: a T on a key under which no live payment stands — the rule _5 is for an M; for a T it
+    /// proves the same: nothing is on the server under the key (decision 196).</summary>
+    public const string RuleCancelOnUnknownKey = "KR_XBRL_VALJAMAKSED_6";
+
+    /// <summary>Whether MTA's rules say the key holds nothing on the server (_5 for an M, _6 for a T).</summary>
+    public static bool SaysKeyUnknown(IEnumerable<string> ruleCodes) =>
+        ruleCodes.Any(c => c is RuleChangeOnUnknownKey or RuleCancelOnUnknownKey);
 
     /// <summary>KR_VM_05: wrong payment type or wrong data section; a wrong section cannot be fixed with an M.</summary>
     public const string RuleWrongTypeOrSection = "KR_VM_05";

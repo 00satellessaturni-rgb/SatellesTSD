@@ -272,4 +272,27 @@ public class NameSearchTests
         Assert.Equal(("Maasikas", "Mari"), (SearchPerson.Of(" ", " Maasikas ", "Mari ").LastName, SearchPerson.Of(" ", " Maasikas ", "Mari ").FirstName));
         Assert.Equal("Maasikas Mari", SearchPerson.Of(null, "Maasikas", "Mari").FullName);
     }
+
+    [Fact]
+    public void A_hyphenated_register_name_is_found_in_the_banks_spaced_spelling_through_a_mask()
+    {
+        // decision 194, the other way round from 143: the hyphen tried as a space, a mask, so the uniqueness check runs
+        Assert.Contains("MARI LIIS", NameSearch.Masks("MARI-LIIS"));
+        Assert.Contains("MARI*LIIS", NameSearch.Masks("MARI-LIIS"));
+        Assert.Equal(["*B", "A*"], NameSearch.Masks("AB")); // nothing more for a name without a hyphen
+
+        var first = Find(Person("TAMM", "MARI-LIIS"), "MARI LIIS TAMM");
+        Assert.Equal([0], first.Hits);
+        Assert.True(first.MaskUsed);
+        Assert.Equal("MARI LIIS", first.FirstMask);
+        Assert.Equal([0], Find(Person("TAMM", "MARI-LIIS"), "Tamm Mari Liis").Hits);
+        Assert.Equal([0], Find(Person("TAMM", "MARI-LIIS"), "Mari-Liis Tamm").Hits); // the register's own spelling, at the exact level
+
+        var last = Find(Person("TAMM-KASK", "MARI"), "Mari Tamm Kask");
+        Assert.Equal([0], last.Hits);
+        Assert.Equal(("TAMM KASK", true), (last.LastMask, last.MaskUsed));
+
+        // the words apart are not that name
+        Assert.Empty(Find(Person("TAMM-KASK", "MARI"), "Tamm Mari Kask").Hits);
+    }
 }

@@ -1679,4 +1679,115 @@ public class DeclareTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void A_refused_payment_whose_key_was_refused_black_holds_nothing_so_the_zero_line_is_built()
+    {
+        // decision 200: the salary's R refused black (nothing on the server), then the payment refused by the review
+        using var box = Ready(minimum: true, salary: 300m);
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: false);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Lines, l => l.Change == LineChange.Kept); // a key that holds nothing stands for nothing
+        var zero = Assert.Single(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+        Assert.Equal((LineAction.R, PaymentStatus.Draft), (zero.Action, zero.Status));
+    }
+
+    [Fact]
+    public void No_zero_line_is_built_for_a_person_whose_residency_was_never_checked_and_one_drafted_goes()
+    {
+        // decision 191: the zero line's code follows the residency, so an unchecked one refuses it as it refuses the pay
+        using var box = Ready(minimum: true);
+        var mariId = box.Mari.Id;
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+        box.Store.UpdatePerson(box.Mari with { ResidencyCheckedOn = null });
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == mariId);
+        Assert.Equal((LineChange.Deleted, ReviewChecks.ResidencyNotChecked), (mari.Lines.Single().Change, mari.Lines.Single().Note));
+        Assert.Contains(mari.Problems, p => p.StartsWith($"{ReviewChecks.ResidencyNotChecked}:", StringComparison.Ordinal) && p.Contains("zero line", StringComparison.Ordinal));
+        Assert.Empty(box.Lines);
+        Assert.Empty(box.Declarer.Build(box.Period.Id).Persons.Single(p => p.PersonId == mariId).Lines); // nothing stands, nothing to say a second time
+    }
+
+    [Fact]
+    public void A_change_built_back_to_the_figures_on_the_server_drops_its_M_draft_and_the_line_is_kept()
+    {
+        // decision 198: an M that changes nothing would force a correction file for a month that did not change
+        using var box = Ready();
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.Reopen(box.Period.Id);
+        var accepted = box.Lines.Single();
+
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id).Count(LineChange.Changed));
+        Assert.Equal((LineAction.M, PaymentStatus.Draft), (box.Lines.Single().Action, box.Lines.Single().Status));
+
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = false, PensionRate = null });
+        var back = box.Declarer.Build(box.Period.Id);
+        Assert.Equal((1, 0), (back.Count(LineChange.Kept), back.Count(LineChange.Replaced)));
+        var standing = box.Lines.Single();
+        Assert.Equal((accepted.Id, PaymentStatus.Accepted), (standing.Id, standing.Status));
+        Assert.DoesNotContain(box.Store.History(box.Period.Id, accepted.Section, accepted.LineNumber), v => v.Status == PaymentStatus.Draft);
+    }
+
+    [Fact]
+    public void Under_the_totals_cut_a_refused_payment_holds_the_type_whose_line_adds_it_up_after_its_type_moved()
+    {
+        // decision 199: the hand salary, added up in the type-10 line on the server, is moved to a type the review refuses;
+        // the type-10 line stands as it is, not lowered by an M, and the bank salary is listed as held
+        using var box = Ready();
+        var day = box.Salary.Date!.Value;
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, day, 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Workspace.SetDeclare(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), true);
+        box.Workspace.TotalsPerType = true;
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var totals = Assert.Single(box.Lines);
+        Assert.True(PeriodDeclarer.IsTotals(totals));
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(totals.Id, onServer: true);
+        box.Submitter.Reopen(box.Period.Id);
+
+        box.Workspace.SetTypeCode(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), "999");
+        var held = Assert.Single(box.Workspace.Load(box.Period.Id).Persons[0].Undeclared, u => u.Reason == Undeclared.Held);
+        Assert.Equal(box.Salary.RowId, held.Payment.RowId);
+        var report = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((1, 0, 0), (report.Count(LineChange.Kept), report.Count(LineChange.Changed), report.Count(LineChange.Cancelled)));
+        var standing = box.Lines.Single();
+        Assert.Equal((totals.Id, PaymentStatus.Accepted), (standing.Id, standing.Status));
+    }
+
+    [Fact]
+    public void Under_the_totals_cut_a_draft_alone_holds_no_type_and_two_builds_give_the_same_line()
+    {
+        // decision 199: a totals line only drafted, never on the server, holds nothing when a payment it added up is moved
+        // to a refused type: the type is drafted anew without it, the same at the next build
+        using var box = Ready();
+        var day = box.Salary.Date!.Value;
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, day, 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Workspace.SetDeclare(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), true);
+        box.Workspace.TotalsPerType = true;
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var before = Assert.Single(box.Lines);
+
+        box.Workspace.SetTypeCode(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), "999");
+        Assert.DoesNotContain(box.Workspace.Load(box.Period.Id).Persons[0].Undeclared, u => u.Reason == Undeclared.Held);
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var first = Assert.Single(box.Lines);
+        Assert.Equal((PeriodDeclarer.TotalsOf(before.SourceRef)!.Value.TypeCode, PaymentStatus.Draft), (PeriodDeclarer.TotalsOf(first.SourceRef)!.Value.TypeCode, first.Status));
+        Assert.True(first.Line.Amount < before.Line.Amount);
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var second = Assert.Single(box.Lines);
+        Assert.Equal((first.Line.Amount, first.SourceRef), (second.Line.Amount, second.SourceRef));
+    }
 }

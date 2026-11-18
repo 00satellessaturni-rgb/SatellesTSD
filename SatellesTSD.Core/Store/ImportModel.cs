@@ -123,3 +123,45 @@ public interface IImportStore : IDisposable
 
     void DeleteLayout(string layoutId);
 }
+
+/// <summary>A refusal to take a file out, read it again or unlink it, by code, carried in the exception's Data so the window
+/// words it in Estonian itself (decision 183); the exception stays an <see cref="InvalidOperationException"/> with the
+/// English text for the log.</summary>
+public static class ImportRefusal
+{
+    /// <summary>Lines on the server (or awaiting MTA) came from the file's rows.</summary>
+    public const string Declared = "FILE_DECLARED";
+
+    /// <summary>Draft lines point at the file's rows.</summary>
+    public const string Drafts = "FILE_DRAFTS";
+
+    /// <summary>Totals lines on the server add up the file's rows.</summary>
+    public const string Totals = "FILE_TOTALS";
+
+    /// <summary>A month past Draft lists the file among the files of its run.</summary>
+    public const string MonthsPastDraft = "FILE_MONTHS_PAST_DRAFT";
+
+    /// <summary>A match run took the file.</summary>
+    public const string Runs = "FILE_RUNS";
+
+    /// <summary>Review decisions point at the file's rows.</summary>
+    public const string Decisions = "FILE_DECISIONS";
+
+    /// <summary>Other Draft months list the file.</summary>
+    public const string OtherMonths = "FILE_OTHER_MONTHS";
+
+    public static InvalidOperationException Of(string code, string message, long count = 0, string? subject = null)
+    {
+        var refusal = new InvalidOperationException(message);
+        refusal.Data["Code"] = code;
+        refusal.Data["Count"] = count;
+        refusal.Data["Subject"] = subject;
+        return refusal;
+    }
+
+    public static string? CodeOf(Exception e) => e?.Data["Code"] as string;
+
+    public static long CountOf(Exception e) => e?.Data["Count"] is long n ? n : 0;
+
+    public static string? SubjectOf(Exception e) => e?.Data["Subject"] as string;
+}

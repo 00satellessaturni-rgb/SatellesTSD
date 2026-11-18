@@ -546,8 +546,9 @@ public sealed class FilesDialog : Form
             }
             else
             {
-                _log($"{UiText.Reread}: {file.FileName}: {outcome.Error}");
-                Tell(outcome.Error ?? "", UiText.Reread);
+                var shown = (outcome.Refusal is { } refusal ? UiText.Worded(refusal) : null) ?? outcome.Error ?? ""; // in Estonian when its code is known (decision 183)
+                _log($"{UiText.Reread}: {file.FileName}: {shown}");
+                Tell(shown, UiText.Reread);
             }
         }
         catch (Exception e)
@@ -611,7 +612,7 @@ public sealed class FilesDialog : Form
                     {
                         change(file, false); // the run goes only with a file it took: never in another file's transaction
                     }
-                    catch (InvalidOperationException e) when (e.Message.Contains("match run", StringComparison.Ordinal))
+                    catch (InvalidOperationException e) when (ImportRefusal.CodeOf(e) == ImportRefusal.Runs || e.Message.Contains("match run", StringComparison.Ordinal))
                     {
                         clearRun ??= Ask(UiText.UnlinkClearsRun, title); // asked once for all
                         if (clearRun != true)
@@ -626,8 +627,8 @@ public sealed class FilesDialog : Form
                 }
                 catch (Exception e)
                 {
-                    refused.Add($"{file.FileName}: {e.Message}");
-                    _log($"{title}: {file.FileName}: {e.Message}");
+                    refused.Add($"{file.FileName}: {UiText.Worded(e) ?? e.Message}"); // in Estonian where the window words it (decision 183)
+                    _log($"{title}: {file.FileName}: {UiText.Worded(e) ?? e.Message}");
                 }
             }
         }

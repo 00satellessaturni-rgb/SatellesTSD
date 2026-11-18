@@ -341,14 +341,24 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     refusedTypes.Add(refusedType);
                 }
 
+                if (mode == DeclarationMode.TotalsPerType)
+                {
+                    // the type whose standing totals line adds the payment up is held as well, whatever type the payment
+                    // has now (moved to another, or none): that line stands as it is until the payment is put right or
+                    // taken out of the declaration (decision 79, amended by decision 199)
+                    refusedTypes.UnionWith(TypesAddingUp(person.Id, payment.Reference, bySource));
+                }
+
                 if (bySource.TryGetValue(source, out var stale) && stale.Status == PaymentStatus.Draft)
                 {
                     _store.DeleteDraft(stale.Id);
                     lines.Add(new BuiltLine { Key = stale.LineNumber, Section = stale.Section, Action = stale.Action, Change = LineChange.Deleted, Source = payment.Reference, Note = Refused });
                     NotePool(HistoryStanding(stale), keptPools);
                 }
-                else if (bySource.TryGetValue(source, out var kept))
+                else if (bySource.TryGetValue(source, out var kept) && kept.OnServer)
                 {
+                    // only a line on the server stands for the refused payment: a key refused black holds nothing, so it
+                    // neither counts as kept nor carries the month's minimum (decision 200)
                     lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = payment.Reference, Note = Refused });
                     keptMinimum |= CarriesMinimum(kept);
                     NotePool(kept, keptPools);
@@ -382,7 +392,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                         lines.Add(new BuiltLine { Key = stale.LineNumber, Section = stale.Section, Action = stale.Action, Change = LineChange.Deleted, Source = stale.SourceRef ?? "", Note = Refused });
                         NotePool(HistoryStanding(stale), keptPools);
                     }
-                    else if (bySource.TryGetValue(source, out var kept))
+                    else if (bySource.TryGetValue(source, out var kept) && kept.OnServer)
                     {
                         lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = kept.SourceRef ?? "", Note = Refused });
                         keptMinimum |= CarriesMinimum(kept);
@@ -436,11 +446,34 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             && CarriesMinimumFor(zeroType, person, period.Year)) // the person's A1 case applied: a foreign A1 carries no Estonian social tax, so no minimum and no zero line
         {
             var zeroSource = MinimumKey(person.Id);
-            monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
-            references[zeroSource] = (MinimumSource, null, null);
-            problems.Add(InForce(carrier)
-                ? $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
-                : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
+            if (person.ResidencyCheckedOn is null)
+            {
+                // the zero line never passes the review's checks, and its code follows the residency: one never checked
+                // refuses it as it refuses every other line of the person (decision 191). A draft under it goes, a line
+                // on the server stands, nothing is cancelled.
+                problems.Add($"{ReviewChecks.ResidencyNotChecked}: the minimum's zero line (type {zeroCode}) is not built: the person's residency has not been checked — by the register or by hand; a draft standing under it is withdrawn, a line on the server stands.");
+                claimed.Add(zeroSource);
+                if (bySource.TryGetValue(zeroSource, out var held))
+                {
+                    if (held.Status == PaymentStatus.Draft)
+                    {
+                        _store.DeleteDraft(held.Id);
+                        lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Deleted, Source = MinimumSource, Note = ReviewChecks.ResidencyNotChecked });
+                    }
+                    else if (held.OnServer)
+                    {
+                        lines.Add(new BuiltLine { Key = held.LineNumber, Section = held.Section, Action = held.Action, Change = LineChange.Kept, Source = MinimumSource, Note = ReviewChecks.ResidencyNotChecked });
+                    }
+                }
+            }
+            else
+            {
+                monthPayments.Add(MonthPayment.Zero(zeroSource, zeroType, lastDay));
+                references[zeroSource] = (MinimumSource, null, null);
+                problems.Add(InForce(carrier)
+                    ? $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
+                    : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.");
+            }
         }
 
         if (include && !InForce(entry))
@@ -671,7 +704,16 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             {
                 // the action follows what stands beneath the draft now, not what it was drafted as: an M over a copy
                 // the server refused since (settled from the history view) must go out as an R
-                var action = HistoryStanding(existing) is { OnServer: true } ? LineAction.M : LineAction.R;
+                var beneath = HistoryStanding(existing);
+                var action = beneath is { OnServer: true } ? LineAction.M : LineAction.R;
+                if (action == LineAction.M && beneath!.Action != LineAction.T && SameLine(Draft(existing.LineNumber, action, null).Line, beneath.Line))
+                {
+                    // the review is back to the figures on the server: an M would change nothing, so the draft goes and
+                    // the line beneath stands (decision 198)
+                    _store.DeleteDraft(existing.Id);
+                    return new BuiltLine { Key = existing.LineNumber, Section = section, Action = beneath.Action, Change = LineChange.Kept, Source = reference };
+                }
+
                 if (action == existing.Action)
                 {
                     _store.ReplaceDraft(existing.Id, Draft(existing.LineNumber, action, null));
@@ -837,6 +879,29 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     }
 
     private static string TotalsKey(Guid personId, string typeCode) => $"{TotalsSource}:{personId:N}:{typeCode}";
+
+    /// <summary>The types of a person whose totals line on the server adds up the payment — the stored line or, beneath a
+    /// draft, the version on the server — named by the payment's reference in its source text. A draft alone, or a line
+    /// refused black, holds nothing: nothing of it stands at MTA, and the build would otherwise drop the draft at one run and
+    /// draft it anew at the next.</summary>
+    private IEnumerable<string> TypesAddingUp(Guid personId, string reference, Dictionary<string, StoredPayment> bySource)
+    {
+        var prefix = $"{TotalsSource}:{personId:N}:";
+        foreach (var (key, line) in bySource)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var standing = line.Status == PaymentStatus.Draft ? HistoryStanding(line) : line;
+            if (standing is { OnServer: true } s && s.Action != LineAction.T && TotalsOf(s.SourceRef) is { } totals
+                && totals.References.Split("; ").Contains(reference, StringComparer.Ordinal))
+            {
+                yield return key[prefix.Length..];
+            }
+        }
+    }
 
     private static string SourceOf(ReviewPayment payment) =>
         payment.RowId is { } row && !payment.IsPart ? "row:" + row.ToString("N") : "line:" + payment.LineId!.Value.ToString("N");

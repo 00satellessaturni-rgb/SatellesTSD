@@ -133,6 +133,10 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
 
     /// <summary>The payee row's personal code belongs to another person of the company than the one bound to the payee's names: the code is not taken, the cards want a look.</summary>
     public const string PayeeCodeElsewhere = "PAYEE_CODE_ELSEWHERE";
+
+    /// <summary>A register person beside a store person of the same names under another personal code, missing from the
+    /// month's register: perhaps a code the register corrected; the cards want a look (decision 197).</summary>
+    public const string NamesakeOtherCode = "NAMESAKE_OTHER_CODE";
     /// <summary>The accountant's decision on a row a later file turned into a copy was moved to the original row.</summary>
     public const string DecisionMoved = "DECISION_MOVED";
     /// <summary>The accountant's decision sits on a row that is a copy, and could not be moved (the month is past Draft, or the original has its own).</summary>

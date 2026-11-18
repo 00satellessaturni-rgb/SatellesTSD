@@ -119,7 +119,17 @@ public sealed class PersonPanel : UserControl
         // (decision 173)
         _residency.SelectedIndexChanged += (_, _) => ExemptionOffForNonResident();
         _confirmResidency.CheckedChanged += (_, _) => { if (_confirmResidency.Checked) { ExemptionOffForNonResident(); } };
-        _exemptionApplied.CheckedChanged += (_, _) => _exemptionTakenOff = false; // the box touched: the accountant's own word from here
+        _exemptionApplied.CheckedChanged += (_, _) =>
+        {
+            // ticked again by hand after a non-resident pick took it off (an EEA resident keeps it, decision 144): the
+            // person's own figure comes back with it, else the save would drop it for the full allowance (decision 186)
+            if (_exemptionTakenOff && _exemptionApplied.Checked && _exemptionMonthly.Text.Length == 0)
+            {
+                _exemptionMonthly.Text = _exemptionTextTakenOff;
+            }
+
+            _exemptionTakenOff = false; // the box touched: the accountant's own word from here
+        };
         _save.Click += (_, _) => Save();
         _revert.Click += (_, _) => Present(_person, _editable);
         _lookUp.Click += (_, _) => { if (_person is not null) { LookUpRequested?.Invoke(_person); } };
@@ -176,6 +186,7 @@ public sealed class PersonPanel : UserControl
 
     /// <summary>The tick was taken off by the residency picked, not by the accountant: picking "resident" again puts it back.</summary>
     private bool _exemptionTakenOff;
+    private string _exemptionTextTakenOff = "";
 
     private void ExemptionOffForNonResident()
     {
@@ -187,6 +198,10 @@ public sealed class PersonPanel : UserControl
         if (_residency.SelectedIndex == 1 && _exemptionApplied.Checked)
         {
             _exemptionApplied.Checked = false;
+            // the person's own figure goes with the application (a figure without one refuses every payment, decision 186);
+            // kept here so that resident picked again gives it back
+            _exemptionTextTakenOff = _exemptionMonthly.Text;
+            _exemptionMonthly.Text = "";
             _exemptionTakenOff = true; // after the box's own handler, which reads a change of the box as the accountant's
         }
         else if (_residency.SelectedIndex == 0 && _exemptionTakenOff && !_exemptionApplied.Checked)
@@ -194,6 +209,11 @@ public sealed class PersonPanel : UserControl
             // non-resident picked by mistake (or passed with the wheel or the arrow keys) and resident picked again: a
             // resident does not lose the application over it
             _exemptionApplied.Checked = true;
+            if (_exemptionMonthly.Text.Length == 0)
+            {
+                _exemptionMonthly.Text = _exemptionTextTakenOff;
+            }
+
             _exemptionTakenOff = false;
         }
     }
@@ -237,7 +257,7 @@ public sealed class PersonPanel : UserControl
         _a1Country.Text = person?.A1Country ?? "";
         _workCountry.Text = person?.WorkCountry ?? "";
         _treatyRate.Text = person?.TreatyIncomeTaxRate is { } rate ? (rate * 100).ToString("0.####", CultureInfo.CurrentCulture) : "";
-        _torType.SelectedIndex = Math.Max(0, Choice.IndexOf(TorTypeChoices, person?.TorEmploymentTypeId));
+        FillTorTypes(person?.TorEmploymentTypeId);
         _typeFromCard.Checked = person?.TypeFromCard ?? false;
         _notes.Text = person?.Notes ?? "";
         foreach (Control control in _table.Controls)
@@ -318,6 +338,22 @@ public sealed class PersonPanel : UserControl
         {
             IsDirty = true;
         }
+    }
+
+    /// <summary>The TÖR types the card offers, and a stored one the list does not know (any type of the register outside
+    /// the app's own): shown and selected, so an untouched combo gives it back on a save (decision 188).</summary>
+    private void FillTorTypes(string? stored)
+    {
+        _torType.Items.Clear();
+        _torType.Items.AddRange(TorTypeChoices);
+        var index = Choice.IndexOf(TorTypeChoices, stored);
+        if (index < 0 && !string.IsNullOrEmpty(stored))
+        {
+            _torType.Items.Add(new Choice(stored, stored));
+            index = _torType.Items.Count - 1;
+        }
+
+        _torType.SelectedIndex = Math.Max(0, index);
     }
 
     /// <summary>The three rates of the law, and the stored one when it is another (never lost on a save).</summary>

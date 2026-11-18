@@ -1123,9 +1123,15 @@ public sealed class MainForm : Form
             _services.Submitter.MarkConfirmed(_view.Period.Id);
             Log(UiText.MarkConfirmed);
         }
+        catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending && e.DraftLines.Count > 0)
+        {
+            // drafts never sent: a force would not pass them, so no question — said, in Estonian (decision 183)
+            Log($"{UiText.Problem}: {UiText.ConfirmRefused(e)}");
+            Warn(UiText.ConfirmRefused(e), UiText.MarkConfirmed);
+        }
         catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
         {
-            if (AskYesNo(e.Message + Environment.NewLine + Environment.NewLine + UiText.ConfirmForce, UiText.MarkConfirmed))
+            if (AskYesNo(UiText.ConfirmRefused(e) + Environment.NewLine + Environment.NewLine + UiText.ConfirmForce, UiText.MarkConfirmed))
             {
                 try
                 {
@@ -1802,6 +1808,14 @@ public sealed class MainForm : Form
                 Fail(e);
             }
         }
+        else if (_services is not null && SelectedCompany is null && SelectedPeriod is { } chosen
+            && (_settings.LastYear != chosen.Year || _settings.LastMonth != chosen.Month))
+        {
+            // a month picked while no company is shown is the month a company picked next opens at (decision 185)
+            _settings.LastYear = chosen.Year;
+            _settings.LastMonth = chosen.Month;
+            SaveSettings();
+        }
 
         FillPersons(keepPerson, keepUnmatched);
         PresentDeclaration();
@@ -2321,10 +2335,12 @@ public sealed class MainForm : Form
             Fail(e);
         }
 
-        // the grid is rebuilt once its own event is over, never from inside it
+        // the grid is rebuilt once its own event is over, never from inside it — onto the person and the payment selected
+        // when it runs: a note committed by a click elsewhere (another person, another payment) commits before the click
+        // moves the selection, and the reload must not undo the click (decision 187)
         var keepPerson = SelectedPerson?.PersonId;
         var key = PaymentKey.Of(payment);
-        BeginInvoke(() => ReloadView(keepPerson, key));
+        BeginInvoke(() => ReloadView(SelectedPerson is { } now ? now.PersonId : keepPerson, KeyOf(SelectedPayment) ?? key));
     }
 
     /// <summary>Whether the payment's amount is typed on: a hand line's; a row's when its amount was read and it is no copy
@@ -3246,14 +3262,16 @@ public sealed class MainForm : Form
 
     private void Fail(Exception e)
     {
-        Log($"{UiText.Problem}: {e.Message}");
+        // a refusal the window words itself is said in Estonian (decision 183); the log keeps the Core's text beside it
+        var worded = UiText.Worded(e);
+        Log($"{UiText.Problem}: {worded ?? e.Message}{(worded is null ? "" : $" ({e.Message})")}");
         if (Failing is { } take)
         {
             take(e);
             return;
         }
 
-        MessageBox.Show(this, e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        MessageBox.Show(this, worded ?? e.Message, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private readonly (string? StorePath, string? Company, int? Year, int? Month) _remembered; // as the settings had them at the start

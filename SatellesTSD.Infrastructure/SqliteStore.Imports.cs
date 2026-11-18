@@ -105,24 +105,24 @@ public sealed partial class SqliteStore
 
         // the guards of a removal: what stands on the server, or was drafted, or was searched, from the old reading
         var declared = Scalar<long>(
-            """
+            $"""
             SELECT COUNT(*) FROM payment p
               JOIN statement_row r ON r.id = p.source_row_id
               JOIN import_sheet s ON s.id = r.sheet_id
-            WHERE s.file_id = $file AND p.status <> $draft
+            WHERE s.file_id = $file AND p.status <> $draft AND {KeyHolds}
             """,
             ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
         if (declared > 0)
         {
-            throw new InvalidOperationException($"{declared} declared line(s) came from this file; it stays as their source.");
+            throw ImportRefusal.Of(ImportRefusal.Declared, $"{declared} declared line(s) came from this file; it stays as their source.", declared);
         }
 
         var drafts = Scalar<long>(
-            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file",
-            ("$file", G(fileId)));
+            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file AND p.status = $draft",
+            ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
         if (drafts > 0)
         {
-            throw new InvalidOperationException($"{drafts} draft line(s) point at this file's rows; they go before the file is read again.");
+            throw ImportRefusal.Of(ImportRefusal.Drafts, $"{drafts} draft line(s) point at this file's rows; they go before the file is read again.", drafts);
         }
 
         var totals = Scalar<long>(
@@ -134,7 +134,7 @@ public sealed partial class SqliteStore
             ("$file", G(fileId)));
         if (totals > 0)
         {
-            throw new InvalidOperationException($"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.");
+            throw ImportRefusal.Of(ImportRefusal.Totals, $"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.", totals);
         }
 
         var sentPeriods = Scalar<long>(
@@ -142,13 +142,13 @@ public sealed partial class SqliteStore
             ("$file", G(fileId)), ("$draft", PeriodState.Draft.ToString()));
         if (sentPeriods > 0)
         {
-            throw new InvalidOperationException($"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.");
+            throw ImportRefusal.Of(ImportRefusal.MonthsPastDraft, $"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.", sentPeriods);
         }
 
         var runs = RunsUsing(fileId);
         if (runs > 0)
         {
-            throw new InvalidOperationException($"{runs} match run(s) took this file; clear them first.");
+            throw ImportRefusal.Of(ImportRefusal.Runs, $"{runs} match run(s) took this file; clear them first.", runs);
         }
 
         // the old rows by sheet and fingerprint (the n-th row of a fingerprint within the sheet), and the decisions on them
@@ -198,6 +198,17 @@ public sealed partial class SqliteStore
                 Exec("DELETE FROM review_line WHERE id = $id", ("$id", G(lineId)));
                 dropped++;
             }
+        }
+
+        // the versions of keys that hold nothing on the server (every version refused black, or the key cancelled) keep
+        // their row when it is read again, and let go of it when it is not: they are history, never a line (decision 184)
+        foreach (var (paymentId, rowId) in DeadPaymentsOn(fileId))
+        {
+            var target = Guid.Empty;
+            var follows = oldPlaces.TryGetValue(rowId, out var place)
+                ? newPlaces.TryGetValue(place, out target)
+                : oldKeys.TryGetValue(rowId, out var key) && newRows.TryGetValue(key, out target);
+            Exec("UPDATE payment SET source_row_id = $row WHERE id = $id", ("$row", follows ? G(target) : null), ("$id", G(paymentId)));
         }
 
         // the old reading goes
@@ -351,7 +362,7 @@ public sealed partial class SqliteStore
 
         if (RunsUsing(fileId, periodId) > 0)
         {
-            throw new InvalidOperationException("The period's match run took this file; clear the run (or run again without the file) first.");
+            throw ImportRefusal.Of(ImportRefusal.Runs, "The period's match run took this file; clear the run (or run again without the file) first.", 1);
         }
 
         // the period's decisions about this file's rows go with the link: they were about rows the period no longer reads
@@ -368,28 +379,45 @@ public sealed partial class SqliteStore
     public IReadOnlyList<ImportFile> PeriodImports(Guid periodId) =>
         Query(ImportFileSelect + " JOIN period_import p ON p.file_id = import_file.id WHERE p.period_id = $period ORDER BY p.rowid", ReadImportFile, ("$period", G(periodId)));
 
+    /// <summary>A payment's key holds something: a version on the server or awaiting MTA (not refused black, not a draft),
+    /// and no accepted cancellation — the store's row rule's shape (RequireRowFree). A key whose every version was refused
+    /// black never reached the server and holds nothing (decision 184).</summary>
+    private const string KeyHolds =
+        "(NOT EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.action = 'T' AND d.status = 'Cancelled')"
+        + " AND EXISTS (SELECT 1 FROM payment d WHERE d.period_id = p.period_id AND d.section = p.section AND d.line_number = p.line_number AND d.status NOT IN ('Rejected', 'Draft')))";
+
+    /// <summary>The versions on the file's rows whose keys hold nothing (the guards let no other version through).</summary>
+    private List<(Guid PaymentId, Guid RowId)> DeadPaymentsOn(Guid fileId) => Query(
+        """
+        SELECT p.id, p.source_row_id FROM payment p
+          JOIN statement_row r ON r.id = p.source_row_id
+          JOIN import_sheet s ON s.id = r.sheet_id
+        WHERE s.file_id = $file AND p.status <> $draft
+        """,
+        r => (Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1))), ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString())).ToList();
+
     public void RemoveImport(Guid fileId, Guid? unlinkedFrom = null)
     {
         using var tx = Tx();
         var declared = Scalar<long>(
-            """
+            $"""
             SELECT COUNT(*) FROM payment p
               JOIN statement_row r ON r.id = p.source_row_id
               JOIN import_sheet s ON s.id = r.sheet_id
-            WHERE s.file_id = $file AND p.status <> $draft
+            WHERE s.file_id = $file AND p.status <> $draft AND {KeyHolds}
             """,
             ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
         if (declared > 0)
         {
-            throw new InvalidOperationException($"{declared} declared line(s) came from this file; it stays as their source.");
+            throw ImportRefusal.Of(ImportRefusal.Declared, $"{declared} declared line(s) came from this file; it stays as their source.", declared);
         }
 
         var drafts = Scalar<long>(
-            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file",
-            ("$file", G(fileId)));
+            "SELECT COUNT(*) FROM payment p JOIN statement_row r ON r.id = p.source_row_id JOIN import_sheet s ON s.id = r.sheet_id WHERE s.file_id = $file AND p.status = $draft",
+            ("$file", G(fileId)), ("$draft", PaymentStatus.Draft.ToString()));
         if (drafts > 0)
         {
-            throw new InvalidOperationException($"{drafts} draft line(s) point at this file's rows; they go before the file does.");
+            throw ImportRefusal.Of(ImportRefusal.Drafts, $"{drafts} draft line(s) point at this file's rows; they go before the file does.", drafts);
         }
 
         // a totals line names no row, yet the rows it adds up are this file's when a period on the server lists the file —
@@ -410,7 +438,7 @@ public sealed partial class SqliteStore
 
         if (totals > 0)
         {
-            throw new InvalidOperationException($"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.");
+            throw ImportRefusal.Of(ImportRefusal.Totals, $"{totals} declared line(s) on the server add up this file's rows among others; it stays as their source.", totals);
         }
 
         var sentPeriods = Scalar<long>(
@@ -418,19 +446,25 @@ public sealed partial class SqliteStore
             ("$file", G(fileId)), ("$draft", PeriodState.Draft.ToString()));
         if (sentPeriods > 0)
         {
-            throw new InvalidOperationException($"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.");
+            throw ImportRefusal.Of(ImportRefusal.MonthsPastDraft, $"{sentPeriods} period(s) past Draft list this file among the files of their run; it stays as their record.", sentPeriods);
         }
 
         var runs = RunsUsing(fileId);
         if (runs > 0)
         {
-            throw new InvalidOperationException($"{runs} match run(s) took this file; clear them (or run again without the file) first.");
+            throw ImportRefusal.Of(ImportRefusal.Runs, $"{runs} match run(s) took this file; clear them (or run again without the file) first.", runs);
         }
 
         var decisions = DecisionsOn(fileId);
         if (decisions > 0)
         {
-            throw new InvalidOperationException($"{decisions} review decision(s) point at this file's rows; unlink the file from its periods first.");
+            throw ImportRefusal.Of(ImportRefusal.Decisions, $"{decisions} review decision(s) point at this file's rows; unlink the file from its periods first.", decisions);
+        }
+
+        // the versions of keys that hold nothing on the server let go of the rows going now (decision 184)
+        foreach (var (paymentId, _) in DeadPaymentsOn(fileId))
+        {
+            Exec("UPDATE payment SET source_row_id = NULL WHERE id = $id", ("$id", G(paymentId)));
         }
 
         Exec("DELETE FROM period_import WHERE file_id = $file", ("$file", G(fileId)));

@@ -562,6 +562,28 @@ public class SqliteStoreTests
     }
 
     [Fact]
+    public void A_black_T_with_no_live_payment_under_the_key_takes_back_the_accepted_version_so_nothing_counts_or_is_cancelled_again()
+    {
+        // decision 196: KR_XBRL_VALJAMAKSED_6 is the T's rule as _5 is the M's — the key holds nothing on the server
+        var (store, _, period, person) = Setup();
+        using (store)
+        {
+            var r = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
+            var file1 = store.AddSubmission(period.Id, "f1.xml", "u1", [r.Id], DateTime.UtcNow);
+            store.RecordFeedback(file1.Id, Clean("EE0201001", r.LineNumber, 1)); // accepted, then cancelled by hand in e-MTA, say
+            var t = store.AddPayment(StoredPayment.New(period.Id, person.Id, Section.EE0201001, PaymentLine.Cancellation(r.LineNumber, 0), null, null));
+            var file2 = store.AddSubmission(period.Id, "f2.xml", "u2", [t.Id], DateTime.UtcNow);
+
+            store.RecordFeedback(file2.Id, Coloured("EE0201001", r.LineNumber, "ERROR_BLACK", FeedbackReport.RuleCancelOnUnknownKey));
+
+            Assert.Equal([PaymentStatus.Rejected, PaymentStatus.Rejected], store.History(period.Id, Section.EE0201001, r.LineNumber).Select(v => v.Status));
+            Assert.DoesNotContain(store.Payments(period.Id), p => p.OnServer);
+            Assert.True(FeedbackReport.SaysKeyUnknown([FeedbackReport.RuleCancelOnUnknownKey]));
+            Assert.False(FeedbackReport.SaysKeyUnknown([FeedbackReport.RuleNewOnExistingKey]));
+        }
+    }
+
+    [Fact]
     public void An_upgrade_that_fails_half_way_leaves_the_store_at_the_version_it_was()
     {
         var path = Path.Combine(Path.GetTempPath(), $"satellestsd-{Guid.NewGuid():N}.db");

@@ -138,12 +138,18 @@ public sealed class NameSearch(MatchCatalog catalog)
 
     /// <summary>The masks of a name in the order the search tries them: for a name of several words, the one-word masks
     /// first (the space masked: the glued or hyphenated spelling, which the workbook could find), then the spaced ones
-    /// (a letter masked, the words still apart); a one-word name's masks stay in the workbook's order.</summary>
+    /// (a letter masked, the words still apart); a one-word name's masks stay in the workbook's order, its hyphen tried as
+    /// a space (decision 194) last of all.</summary>
     public static IEnumerable<string> MasksInOrder(string name) => Masks(name).OrderBy(m => Words(m).Length > 1 ? 1 : 0);
 
     /// <summary>The masks of a name in the workbook's order: one letter at a time replaced by "*", from the first;
     /// a name shorter than two characters has none. In a name of several words the space is masked like a letter, so
-    /// a glued or hyphenated spelling ("BenAli", "Ben-Ali") is found through "BEN*ALI" — as the workbook found it.</summary>
+    /// a glued or hyphenated spelling ("BenAli", "Ben-Ali") is found through "BEN*ALI" — as the workbook found it. The
+    /// other way round, past the workbook (decision 194): a hyphen in the name is also tried as a space (listed here after
+    /// its own mask; <see cref="MasksInOrder"/> tries it after every one-word mask), so a hyphenated name ("MARI-LIIS",
+    /// "TAMM-KASK") is found in the bank's spaced spelling ("Mari Liis Tamm") as a name of two words — a mask, so the
+    /// uniqueness check still runs. As the workbook's own levels, it is not reached when a one-word level found the last
+    /// name with no first name beside it: the workbook's search ends there, and so does this one.</summary>
     public static IReadOnlyList<string> Masks(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -156,6 +162,10 @@ public sealed class NameSearch(MatchCatalog catalog)
         for (var pos = 0; pos < name.Length; pos++)
         {
             masks.Add(name[..pos] + "*" + name[(pos + 1)..]);
+            if (name[pos] == '-' && pos > 0 && pos < name.Length - 1 && name[pos - 1] != ' ' && name[pos + 1] != ' ')
+            {
+                masks.Add(name[..pos] + " " + name[(pos + 1)..]);
+            }
         }
 
         return masks;

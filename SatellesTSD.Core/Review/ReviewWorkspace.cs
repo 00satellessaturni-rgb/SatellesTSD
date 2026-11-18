@@ -127,6 +127,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var payeeKnown = storePersons.ToList();
         var payeesChanged = false;
         var standing = _store.Payments(periodId); // the lines built: a month past Draft gives a payee only to a row they were built from
+        var totalsLines = TotalsPerType ? TotalsLinesOf(standing) : [];
         var personProblems = new Dictionary<Guid, List<MatchProblem>>(); // what the review itself says of a person, beside the run's problems
         // what the search said of the register as a whole (another employer's rows left out) is shown with the rows nobody
         // matched, so it is seen whenever the month is opened, not only in the search's log
@@ -142,6 +143,19 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var twinRows = new HashSet<Guid>(); // rent rows whose payee has a hand line of the amount this month: not declared by default
         var twinHandLines = new HashSet<Guid>(); // the hand lines already paired with a row
         List<MatchProblem> ProblemsOf(Guid id) => personProblems.TryGetValue(id, out var list) ? list : personProblems[id] = [];
+        // a register person beside a store person of the same names under another personal code whom this month's register
+        // does not list: the register may have corrected the code, and the card made anew carries the defaults, not the
+        // accountant's earlier word on the other card — said, never merged (decision 197)
+        var inRun = personsByKey.Values.Select(p => p.Id).ToHashSet();
+        foreach (var person in personsByKey.Values.Where(p => p.PersonalCode is not null).DistinctBy(p => p.Id))
+        {
+            if (storePersons.FirstOrDefault(o => !inRun.Contains(o.Id) && o.PersonalCode is { } other && other != person.PersonalCode && o.RegisterKey is not null
+                    && SearchPerson.NameKey(o.LastName, o.FirstName) == SearchPerson.NameKey(person.LastName, person.FirstName)) is { } namesake)
+            {
+                ProblemsOf(person.Id).Add(new MatchProblem(MatchProblem.NamesakeOtherCode, $"A person of the same names with another personal code ({namesake.PersonalCode}) is in the store and not in this month's register: if the register corrected the code, this card carries the defaults, not that card's choices (the exemption, the A1 case, Deklareerimine) — compare the two cards."));
+            }
+        }
+
         var byPerson = new Dictionary<Guid, List<ReviewPayment>>();
         var unmatched = new List<ReviewPayment>();
         var leftOut = 0;
@@ -370,13 +384,13 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     continue; // two register rows bound to one store person show once
                 }
 
-                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).Concat(ProblemsOf(person.Id)).ToList(), catalog, false, TotalsPerType));
+                persons.Add(Make(registerPerson.Key, person, registerPerson, Take(person.Id), run.Problems.Where(p => p.PersonKey == registerPerson.Key).Concat(ProblemsOf(person.Id)).ToList(), catalog, false, TotalsPerType, totalsLines));
             }
         }
 
         foreach (var id in byPerson.Keys.OrderBy(id => byId[id].LastName, StringComparer.OrdinalIgnoreCase).ThenBy(id => byId[id].FirstName, StringComparer.OrdinalIgnoreCase).ToList())
         {
-            persons.Add(Make(null, byId[id], null, Take(id), ProblemsOf(id), catalog, false, TotalsPerType));
+            persons.Add(Make(null, byId[id], null, Take(id), ProblemsOf(id), catalog, false, TotalsPerType, totalsLines));
         }
 
         // a person the card declares as if employed ("kaasa") whom the month's register does not list and who has no payment:
@@ -388,11 +402,11 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 .OrderBy(p => p.LastName, StringComparer.OrdinalIgnoreCase).ThenBy(p => p.FirstName, StringComparer.OrdinalIgnoreCase))
             {
                 var said = new MatchProblem(MatchProblem.IncludedWithoutRow, "Declared as if employed on the card (kaasa), but the month's register lists no row for the person and no payment was found: nothing is built this month. Set the card's Deklareerimine to \"reeglite järgi\" if the employment has ended.");
-                persons.Add(Make(null, included, null, [], [said, .. ProblemsOf(included.Id)], catalog, false, TotalsPerType));
+                persons.Add(Make(null, included, null, [], [said, .. ProblemsOf(included.Id)], catalog, false, TotalsPerType, totalsLines));
             }
         }
 
-        persons.Add(Make(null, null, null, unmatched, unmatchedProblems, catalog, true, TotalsPerType));
+        persons.Add(Make(null, null, null, unmatched, unmatchedProblems, catalog, true, TotalsPerType, totalsLines));
 
         var sources = run?.Sources.Select(s => s.Name).ToList() ?? [];
         if (lines.Any(l => l.IsByHand))
@@ -501,7 +515,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             // untick on the row ends the word; one hand line pairs with one row
             if (pairTwin && overlay?.Declare is null
                 && lines.FirstOrDefault(l => l.IsByHand && !twinHandLines.Contains(l.Id) && l.PersonId == payee.Id && l.Amount == hit.Amount && l.Declare != false
-                    && (l.Category is not null || l.TypeCode is not null) && l.Date is { } day && day.Year == period.Year && day.Month == period.Month) is { } twin)
+                    && l.Date is { } day && day.Year == period.Year && day.Month == period.Month && HandLineDeclares(l, payee)) is { } twin)
             {
                 twinHandLines.Add(twin.Id);
                 twinRows.Add(rowId);
@@ -509,6 +523,15 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             }
 
             return payee;
+        }
+
+        // a hand line declares something when it has a type — its own or its category's for the person, as FromHandLine
+        // gives it — and is ticked, or not unticked while its default declares it (decision 190)
+        bool HandLineDeclares(ReviewLine line, Person person)
+        {
+            var torType = ReviewDefaults.EmploymentTypeFor(run is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, person, line.Date);
+            var typeCode = line.TypeCode ?? ReviewDefaults.TypeCodeFor(line.Category is null ? null : catalog.Find(line.Category), torType, person.Residency);
+            return typeCode is not null && (line.Declare ?? true);
         }
     }
 
@@ -696,7 +719,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var changed = new List<Person>();
         foreach (var person in NonResidentsWithExemption(view))
         {
-            var off = person with { BasicExemptionApplied = false };
+            var off = person with { BasicExemptionApplied = false, BasicExemptionMonthly = null }; // the own figure goes with the application (decision 186)
             _store.UpdatePerson(off);
             changed.Add(off);
         }
@@ -746,7 +769,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var mrr = PickText(edited.MrrCode, basis?.MrrCode, fresh.MrrCode);
         if (!string.Equals(mrr, Clean(fresh.MrrCode), StringComparison.Ordinal) && Xbrl.MrrCodes.Problem(mrr) is { } mrrProblem)
         {
-            throw new ReviewException(MrrInvalid, mrrProblem);
+            throw new ReviewException(MrrInvalid, mrrProblem, subject: mrr);
         }
 
         // the registers answered for the code as it was: a corrected code drops what they said (residency, pension, the
@@ -924,7 +947,47 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         };
     }
 
-    private static ReviewPerson Make(string? key, Person? person, MatchPerson? register, List<ReviewPayment> payments, IReadOnlyList<MatchProblem> problems, MatchCatalog catalog, bool isUnmatched, bool totalsPerType)
+    /// <summary>The totals lines standing for each person (a draft's and, beneath it, the line it stands on), as their type
+    /// and the payments' references they add up: under the totals cut a refused payment holds the type whose line adds
+    /// it up, whatever type it has now — the build holds the same (decision 199).</summary>
+    private Dictionary<Guid, List<(string TypeCode, string[] References)>> TotalsLinesOf(IReadOnlyList<StoredPayment> standing)
+    {
+        var byPerson = new Dictionary<Guid, List<(string, string[])>>();
+        foreach (var line in standing.Where(s => s.PersonId is not null && Declare.PeriodDeclarer.IsTotals(s)))
+        {
+            var versions = new List<StoredPayment>();
+            if (line.Status != PaymentStatus.Draft)
+            {
+                versions.Add(line);
+            }
+            else
+            {
+                var history = _store.History(line.PeriodId, line.Section, line.LineNumber).Where(v => v.Id != line.Id).ToList();
+                if ((history.LastOrDefault(v => v.Status != PaymentStatus.Rejected) ?? history.LastOrDefault()) is { } beneath)
+                {
+                    versions.Add(beneath);
+                }
+            }
+
+            // only a version on the server holds a type, as the build's own rule (a draft alone or a line refused black holds nothing)
+            foreach (var version in versions.Where(v => v.OnServer && v.Action != LineAction.T))
+            {
+                if (Declare.PeriodDeclarer.TotalsOf(version.SourceRef) is { } totals)
+                {
+                    if (!byPerson.TryGetValue(line.PersonId!.Value, out var list))
+                    {
+                        byPerson[line.PersonId!.Value] = list = [];
+                    }
+
+                    list.Add((totals.TypeCode, totals.References.Split("; ")));
+                }
+            }
+        }
+
+        return byPerson;
+    }
+
+    private static ReviewPerson Make(string? key, Person? person, MatchPerson? register, List<ReviewPayment> payments, IReadOnlyList<MatchProblem> problems, MatchCatalog catalog, bool isUnmatched, bool totalsPerType, Dictionary<Guid, List<(string TypeCode, string[] References)>> totalsLines)
     {
         var sums = new Dictionary<string, decimal>(StringComparer.Ordinal);
         foreach (var payment in payments)
@@ -947,7 +1010,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             SalaryTotal = Math.Round(rounded.Values.Sum(), 2, MidpointRounding.ToEven),
             Payments = payments,
             Problems = problems,
-            Undeclared = UndeclaredOf(person, payments, catalog, isUnmatched, totalsPerType),
+            Undeclared = UndeclaredOf(person, payments, catalog, isUnmatched, totalsPerType, person is not null && totalsLines.TryGetValue(person.Id, out var lines) ? lines : []),
         };
     }
 
@@ -959,7 +1022,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// 79): the type's other ticked payments are listed as held. A row in another currency is listed but is no error: it
     /// is declared in euros on a line added by hand (decision 87). On the rows nobody matched only a payment ticked to be
     /// declared counts: nobody carries it.</summary>
-    private static List<Undeclared> UndeclaredOf(Person? person, List<ReviewPayment> payments, MatchCatalog catalog, bool isUnmatched, bool totalsPerType)
+    private static List<Undeclared> UndeclaredOf(Person? person, List<ReviewPayment> payments, MatchCatalog catalog, bool isUnmatched, bool totalsPerType, List<(string TypeCode, string[] References)> totalsLines)
     {
         var list = new List<Undeclared>();
         foreach (var payment in payments)
@@ -1005,7 +1068,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
         if (totalsPerType && person?.Declaration != DeclarationChoice.Exclude)
         {
-            var held = list.Where(u => u.Reason == Undeclared.Refused && u.Payment.TypeCode is not null).Select(u => u.Payment.TypeCode!).ToHashSet(StringComparer.Ordinal);
+            var refusedPayments = list.Where(u => u.Reason == Undeclared.Refused).Select(u => u.Payment).ToList();
+            var held = refusedPayments.Where(p => p.TypeCode is not null).Select(p => p.TypeCode!).ToHashSet(StringComparer.Ordinal);
+            held.UnionWith(totalsLines.Where(t => refusedPayments.Any(p => t.References.Contains(p.Reference, StringComparer.Ordinal))).Select(t => t.TypeCode));
             foreach (var payment in payments.Where(p => p.Declare && p.Checks.Count == 0 && p.TypeCode is { } type && held.Contains(type)))
             {
                 list.Add(new Undeclared(payment, Undeclared.Held, [Undeclared.TypeHeld], false));
@@ -1068,12 +1133,12 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
         if (!PersonalCode.LooksValid(code))
         {
-            throw new ReviewException(CodeInvalid, $"'{code}' is not an Estonian personal code; a foreign person is named by the MTA non-resident code instead.");
+            throw new ReviewException(CodeInvalid, $"'{code}' is not an Estonian personal code; a foreign person is named by the MTA non-resident code instead.", subject: code);
         }
 
         if (_store.FindPerson(companyId, code) is { } other && other.Id != self)
         {
-            throw new ReviewException(PersonExists, $"Another person of the company has the personal code {code}.");
+            throw new ReviewException(PersonExists, $"Another person of the company has the personal code {code}.", subject: code);
         }
 
         return code;

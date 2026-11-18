@@ -74,6 +74,9 @@ if (-not $ReleaseFolder) {
     if (-not $m.Success) { Write-Host 'NOT PUBLISHED: DefaultReleaseFolder not found in Updater.cs.' -ForegroundColor Red; exit 1 }
     $ReleaseFolder = $m.Groups[1].Value
 }
+# every path absolute from here on, against the PowerShell location: [IO.File], ZipFile and the zip's entry names would
+# otherwise read a relative path against the process's own current directory, or cut a FullName at the wrong length
+$ReleaseFolder = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReleaseFolder)
 $manifest = Join-Path $ReleaseFolder 'latest.txt'
 $previousManifest = Join-Path $ReleaseFolder 'latest.previous.txt'
 
@@ -196,6 +199,7 @@ if (-not $LocalOnly -and -not $dirty) { Refuse-AnnouncedVersion $ReleaseFolder $
 
 # --- where to --------------------------------------------------------------------------------
 if (-not $OutputFolder) { $OutputFolder = Join-Path $repo 'release' }
+$OutputFolder = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputFolder) # a relative -OutputFolder too
 if (-not (Test-Path -LiteralPath $OutputFolder -PathType Container)) { New-Item -ItemType Directory -Path $OutputFolder | Out-Null }
 $name = "SatellesTSD-v$version"
 if ($dirty) { $name = "$name-dirty" }
@@ -253,6 +257,13 @@ try {
     }
 } finally {
     $archive.Dispose()
+}
+# the program must be where every copy looks for it: '<name>/SatellesTSD.exe' in the zip (Updater.Unpack)
+$check = [IO.Compression.ZipFile]::OpenRead($zip)
+try {
+    if (-not ($check.Entries | Where-Object { $_.FullName -eq "$name/SatellesTSD.exe" })) { Refuse "the zip has no $name/SatellesTSD.exe entry; every copy would refuse it." }
+} finally {
+    $check.Dispose()
 }
 $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "  $env:USERNAME  published $version$(if ($dirty) { ' (dirty tree)' })  $hash  commit $commit`r`n"
 [IO.File]::AppendAllText((Join-Path $OutputFolder 'publish.log'), $line, $utf8)

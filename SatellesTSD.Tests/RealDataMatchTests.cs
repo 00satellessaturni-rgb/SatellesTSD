@@ -16,7 +16,9 @@ public class RealDataMatchTests
     /// <param name="Allowed">Rows the workbook left unmatched that the app gives a person it found elsewhere (decision 27).</param>
     /// <param name="SpacedNames">Rows the workbook left unmatched that the app gives a person whose name holds a space (decision 143: the
     /// workbook could never find the bank's spaced spelling of a two-word name).</param>
-    private sealed record Comparison(string Company, int Rows, int Same, IReadOnlyList<string> Different, IReadOnlyList<string> OnlyInReport, IReadOnlyList<string> Allowed, IReadOnlyList<string> SumDifferences, IReadOnlyList<string> SpacedNames);
+    /// <param name="HyphenNames">Rows the workbook left unmatched that the app gives a person whose register name holds a hyphen,
+    /// found through the hyphen tried as a space (decision 194: the bank's spaced spelling of a hyphenated name).</param>
+    private sealed record Comparison(string Company, int Rows, int Same, IReadOnlyList<string> Different, IReadOnlyList<string> OnlyInReport, IReadOnlyList<string> Allowed, IReadOnlyList<string> SumDifferences, IReadOnlyList<string> SpacedNames, IReadOnlyList<string> HyphenNames);
 
     [Fact]
     public void Every_report_of_the_workbook_is_reproduced_row_for_row()
@@ -46,7 +48,10 @@ public class RealDataMatchTests
         var spaced = comparisons.Sum(c => c.SpacedNames.Count);
         Assert.True(spaced * 1000 <= rows * 5, $"{spaced} rows found for spaced names in {rows} rows is more than the known few");
         Assert.True(comparisons.Count(c => c.SpacedNames.Count > 0) <= 1, $"spaced names found in several companies: {string.Join("; ", comparisons.Where(c => c.SpacedNames.Count > 0).Select(c => $"{c.Company}: {string.Join(", ", c.SpacedNames)}"))}");
-        Assert.True(comparisons.Sum(c => c.Same) + allowed + spaced == rows);
+        // decision 194: the rows of persons with a hyphen in a name, found in the bank's spaced spelling, which the workbook could never find
+        var hyphenated = comparisons.Sum(c => c.HyphenNames.Count);
+        Assert.True(hyphenated * 1000 <= rows * 5, $"{hyphenated} rows found for hyphenated names in {rows} rows is more than the known few");
+        Assert.True(comparisons.Sum(c => c.Same) + allowed + spaced + hyphenated == rows);
     }
 
     private static Comparison Compare(string folder)
@@ -109,7 +114,12 @@ public class RealDataMatchTests
         var different = new List<string>();
         var allowed = new List<string>();
         var spacedNames = new List<string>();
+        var hyphenNames = new List<string>();
         var onlyInReport = new List<string>();
+        // the hit came through a hyphen of the person's register name tried as a space (decision 194)
+        bool ThroughHyphen(MatchHit hit) => hit.PersonKey is { } key && persons.First(p => p.Key == key).Person is var found
+            && ((found.LastName.Contains('-') && hit.LastMask.Contains(' ') && !hit.LastMask.Contains('*'))
+                || (found.FirstName.Contains('-') && hit.FirstMask.Contains(' ') && !hit.FirstMask.Contains('*')));
         var personsTheReportFound = expected.Values.SelectMany(l => l).Select(e => e.Code).Where(c => c.Length > 0).ToHashSet(StringComparer.Ordinal);
         foreach (var (reference, exp) in expected)
         {
@@ -131,6 +141,11 @@ public class RealDataMatchTests
                 // decision 27: the workbook took only the rows spelt like the first row it found for a person; the app takes every row that
                 // qualifies at that level — so a row the workbook left unmatched may go to a person the workbook itself found elsewhere
                 allowed.Add(reference);
+            }
+            else if (exp.Count == 1 && act.Count == 1 && exp[0].Code.Length == 0 && (exp[0].Text.Length == 0 || exp[0].Text == "[TÖR-väline palgad]")
+                     && act[0].Code.Length > 0 && ThroughHyphen(act[0].Hit))
+            {
+                hyphenNames.Add(reference);
             }
             else if (exp.Count == 1 && act.Count == 1 && exp[0].Code.Length == 0 && (exp[0].Text.Length == 0 || exp[0].Text == "[TÖR-väline palgad]")
                      && act[0].Code.Length > 0 && (act[0].Hit.LastMask.Contains(' ') || act[0].Hit.FirstMask.Contains(' ')))
@@ -169,7 +184,7 @@ public class RealDataMatchTests
         }
 
         var sumDifferences = new List<string>();
-        var allowedSet = allowed.Concat(spacedNames).ToHashSet(StringComparer.Ordinal);
+        var allowedSet = allowed.Concat(spacedNames).Concat(hyphenNames).ToHashSet(StringComparer.Ordinal);
         foreach (var ((code, source), exp) in reportSums)
         {
             var person = persons.FirstOrDefault(p => p.Person.PersonalCode == code);
@@ -181,7 +196,7 @@ public class RealDataMatchTests
             }
         }
 
-        return new Comparison(company, expected.Count, same, different, onlyInReport, allowed, sumDifferences, spacedNames);
+        return new Comparison(company, expected.Count, same, different, onlyInReport, allowed, sumDifferences, spacedNames, hyphenNames);
     }
 
     /// <summary>The report's month: the Kontroll-kp column, else the commonest month of the hits.</summary>

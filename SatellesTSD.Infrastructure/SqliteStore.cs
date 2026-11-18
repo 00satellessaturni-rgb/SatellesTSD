@@ -700,9 +700,10 @@ public sealed partial class SqliteStore : IStore
                 SetStatus(payment.Id, status);
             }
 
-            if (wasPending && outcome.Severity == Severity.Black && codes.Contains(FeedbackReport.RuleChangeOnUnknownKey))
+            if (wasPending && outcome.Severity == Severity.Black && FeedbackReport.SaysKeyUnknown(codes))
             {
-                // "M or T on an unknown key": the key is not on the server, whatever an earlier pending version presumed —
+                // "M on an unknown key" (_5), "T with no live payment under the key" (_6, decision 196): the key is not on the
+                // server, whatever an earlier pending version presumed —
                 // or an earlier version settled as on the server (by the accountant's word, or a report read onto the wrong
                 // file): MTA has just said the key is not there, so the next build sends an R under it again. A Cancelled
                 // version (a dead key) and any later version stand as they are.

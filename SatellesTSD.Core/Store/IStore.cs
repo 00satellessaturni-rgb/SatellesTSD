@@ -128,7 +128,7 @@ public static class LineKeyRules
             case LineAction.R when onServer:
                 throw new LineKeyException(KeyExists, "The key is already on the server; a new R would be refused (KR_XBRL_VALJAMAKSED_4) — send an M.");
             case LineAction.M or LineAction.T when !onServer:
-                throw new LineKeyException(KeyUnknown, "The key is not on the server; an M or T would be refused (KR_XBRL_VALJAMAKSED_5) — send an R.");
+                throw new LineKeyException(KeyUnknown, "The key is not on the server; an M or T would be refused (KR_XBRL_VALJAMAKSED_5 for an M, _6 for a T) — send an R.");
         }
     }
 }

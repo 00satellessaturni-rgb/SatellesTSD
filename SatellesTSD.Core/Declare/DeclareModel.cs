@@ -9,6 +9,15 @@ namespace SatellesTSD.Core.Declare;
 public sealed class DeclareException(string code, string message) : InvalidOperationException(message)
 {
     public string Code { get; } = code;
+
+    /// <summary>The keys a confirmation found open (awaiting MTA or needing a change), for the window's own wording.</summary>
+    public IReadOnlyList<string> OpenLines { get; init; } = [];
+
+    /// <summary>The keys a confirmation found refused by MTA and not on the server.</summary>
+    public IReadOnlyList<string> RefusedLines { get; init; } = [];
+
+    /// <summary>The keys a confirmation found drafted and never sent: a force does not pass them.</summary>
+    public IReadOnlyList<string> DraftLines { get; init; } = [];
 }
 
 /// <summary>How the period's lines are cut: one per payment (what the review shows), or one per person and payment

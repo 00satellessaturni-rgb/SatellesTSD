@@ -58,9 +58,12 @@ public sealed record ReviewLine(
 
 /// <summary>A review refusal with a stable code the window can key on, and the figure its own words need (an amount
 /// refusal's limit), if any.</summary>
-public sealed class ReviewException(string code, string message, decimal? figure = null) : InvalidOperationException(message)
+public sealed class ReviewException(string code, string message, decimal? figure = null, string? subject = null) : InvalidOperationException(message)
 {
     public string Code { get; } = code;
 
     public decimal? Figure { get; } = figure;
+
+    /// <summary>What the refusal is about, as typed (a personal code, an MTA code), for the window's own wording.</summary>
+    public string? Subject { get; } = subject;
 }

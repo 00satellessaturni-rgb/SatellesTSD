@@ -46,7 +46,7 @@ public class ReviewWorkspaceTests
             Assert.True(shown.Count >= 2);
             Assert.All(shown, p => Assert.True(p.BasicExemptionApplied)); // an employee of the register: ticked by default
             var abroad = shown[^1];
-            store.UpdatePerson(abroad with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta });
+            store.UpdatePerson(abroad with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta, BasicExemptionMonthly = 300m });
             // a non-resident of the company the month does not show: not this month's to change
             var elsewhere = store.AddPerson(Person.New(company.Id, "Peeter", "Pihl", "39001010008", Residency.NonResident) with { BasicExemptionApplied = true });
 
@@ -55,7 +55,7 @@ public class ReviewWorkspaceTests
 
             Assert.Equal([abroad.Id], changed.Select(p => p.Id));
             var after = store.Persons(company.Id).ToDictionary(p => p.Id);
-            Assert.Equal((false, Residency.NonResident, LookupSource.Emta), (after[abroad.Id].BasicExemptionApplied, after[abroad.Id].Residency, after[abroad.Id].ResidencySource)); // nothing else touched
+            Assert.Equal((false, Residency.NonResident, LookupSource.Emta, (decimal?)null), (after[abroad.Id].BasicExemptionApplied, after[abroad.Id].Residency, after[abroad.Id].ResidencySource, after[abroad.Id].BasicExemptionMonthly)); // nothing else touched; the own figure goes with the application (decision 186)
             Assert.All(shown.Where(p => p.Id != abroad.Id), p => Assert.True(after[p.Id].BasicExemptionApplied)); // the residents keep it
             Assert.True(after[elsewhere.Id].BasicExemptionApplied);
             Assert.Empty(workspace.ClearExemptionOfNonResidents(period.Id)); // nothing left to do
@@ -1079,6 +1079,28 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void A_register_person_beside_a_namesake_under_another_code_whom_the_month_does_not_list_is_said_not_merged()
+    {
+        // decision 197: the register may have corrected the code; the new card carries the defaults, not the old one's choices
+        var (store, company, period, workspace) = Run();
+        using (store)
+        {
+            var mari = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.PersonalCode == ReviewFixtures.MariCode).Person!;
+            Assert.DoesNotContain(workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.Id).Problems, p => p.Code == MatchProblem.NamesakeOtherCode);
+
+            // a person of the same names added by hand, never bound to a register row: no word
+            var byHand = store.AddPerson(Person.New(company.Id, mari.FirstName, mari.LastName, "49001010006"));
+            Assert.DoesNotContain(workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.Id).Problems, p => p.Code == MatchProblem.NamesakeOtherCode);
+
+            // one an earlier month's register made under another code: said on the person the month lists, nothing merged
+            store.UpdatePerson(byHand with { RegisterKey = "49001010006", BasicExemptionApplied = false });
+            var said = Assert.Single(workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.Id).Problems, p => p.Code == MatchProblem.NamesakeOtherCode);
+            Assert.Contains("49001010006", said.Message, StringComparison.Ordinal);
+            Assert.Equal(2, store.Persons(company.Id).Count(p => p.LastName == mari.LastName && p.FirstName == mari.FirstName));
+        }
+    }
+
+    [Fact]
     public void A_hand_line_of_the_rents_amount_for_the_payee_leaves_the_row_undeclared_by_default_and_says_so()
     {
         var (store, _, period, workspace) = RunWithRenter(renterCode: RenterCode);
@@ -1102,6 +1124,14 @@ public class ReviewWorkspaceTests
             // a hand line that declares nothing is no twin
             workspace.SetDeclare(row, null);
             workspace.UpdateHandLine(hand with { Declare = false });
+            Assert.DoesNotContain(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId).Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            // a hand line of a codeless category declares nothing either, unticked or not: no twin (decision 190)
+            workspace.UpdateHandLine(hand with { Declare = null, Category = "Kommunaalkulud" });
+            var codeless = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId);
+            Assert.True(codeless.Payments.Single(p => !p.IsByHand).DefaultDeclare);
+            Assert.DoesNotContain(codeless.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+            workspace.UpdateHandLine(hand with { Declare = true, Category = "Kommunaalkulud" });
             Assert.DoesNotContain(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId).Problems, p => p.Code == MatchProblem.PayeeHandLine);
 
             // a hand line of another amount is no twin

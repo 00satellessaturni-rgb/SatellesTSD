@@ -387,4 +387,24 @@ public class PeriodMatcherTests
         Assert.All(EmploymentTypes.All.Where(t => t.ResidentCode is not null), t => Core.Tax.PaymentTypes.Get(t.ResidentCode!));
         Assert.All(EmploymentTypes.All.Where(t => t.NonResidentCode is not null), t => Core.Tax.PaymentTypes.Get(t.NonResidentCode!));
     }
+
+    [Fact]
+    public void A_bank_id_whose_leading_zero_Excel_dropped_still_makes_the_hand_made_copy_a_duplicate()
+    {
+        // decision 193: the CSV's "0123456789" is "123456789" in the Excel copy; the fingerprint already reads past it
+        var csv = new MatchSource("LHV pank *1757", "lhv-et-short", LayoutKind.Bank,
+            [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "0123456789" }]);
+        var excel = new MatchSource("LHV pank *1757 #2", "lhv-et-short", LayoutKind.Bank,
+            [Row(2, "2026-10-05", "Mari Maasikas", -905.92m, "Palk") with { RowHash = "h-salary", TransactionId = "123456789" }]);
+        var result = Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [csv, excel]);
+        Assert.Equal(["LHV pank *1757 #2 [2]"], result.Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)).Select(h => h.Reference));
+        Assert.Equal(905.92m, result.SalaryTotal("48712219406"));
+
+        // ids that differ beyond a leading zero still tell two payments apart, and so does a letter-bearing id
+        var other = excel with { Rows = [excel.Rows[0] with { TransactionId = "123456780" }] };
+        Assert.Empty(Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [csv, other]).Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)));
+        var lettered = new MatchSource("A", "lhv-et-short", LayoutKind.Bank, [csv.Rows[0] with { TransactionId = "0A12" }]);
+        var letteredCopy = new MatchSource("B", "lhv-et-short", LayoutKind.Bank, [csv.Rows[0] with { TransactionId = "A12" }]);
+        Assert.Empty(Matcher.Run(2026, 10, MatchPerson.FromTor(Register, 2026, 10), [lettered, letteredCopy]).Hits.Where(h => h.Flags.Contains(MatchProblem.DuplicateRow)));
+    }
 }

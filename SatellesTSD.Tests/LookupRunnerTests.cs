@@ -609,8 +609,8 @@ public class LookupRunnerTests
         using (store)
         {
             // as the register's employees are made: the application ticked, the residency not yet checked
-            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with { BasicExemptionApplied = true });
-            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406") with { BasicExemptionApplied = true });
+            store.AddPerson(Person.New(company.Id, "Jaan", "Tamm", "38810140309") with { BasicExemptionApplied = true, BasicExemptionMonthly = 300m }); // a figure of his own
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406") with { BasicExemptionApplied = true, BasicExemptionMonthly = 300m });
             var residency = new FakeResidency
             {
                 Answers =
@@ -625,10 +625,10 @@ public class LookupRunnerTests
             var report = await runner.RunAsync(period.Id);
 
             var jaan = store.FindPerson(company.Id, "38810140309")!;
-            Assert.Equal((Residency.NonResident, false), (jaan.Residency, jaan.BasicExemptionApplied));
+            Assert.Equal((Residency.NonResident, false, null), (jaan.Residency, jaan.BasicExemptionApplied, jaan.BasicExemptionMonthly)); // the figure goes with the application (decision 186)
             Assert.Contains("basic exemption application taken off: a non-resident", report.Persons.Single(p => p.PersonId == jaan.Id).Steps);
             var mari = store.FindPerson(company.Id, "48712219406")!;
-            Assert.Equal((Residency.Resident, true), (mari.Residency, mari.BasicExemptionApplied)); // a resident keeps it
+            Assert.Equal((Residency.Resident, true, 300m), (mari.Residency, mari.BasicExemptionApplied, mari.BasicExemptionMonthly)); // a resident keeps it
             Assert.DoesNotContain(report.Persons.Single(p => p.PersonId == mari.Id).Steps, s => s.Contains("exemption", StringComparison.Ordinal));
 
             // ticked again by the accountant on the non-resident: their word, which a later check with the same answer leaves alone
@@ -946,5 +946,35 @@ public class LookupRunnerTests
             var person = store.FindPerson(company.Id, "48712219406")!;
             Assert.Equal((given, given), (person.ResidencyCheckedOn, person.PensionCheckedOn));
         }
+    }
+
+    [Fact]
+    public async Task A_checks_day_is_the_local_calendars_so_one_after_local_midnight_is_of_that_day()
+    {
+        // decision 189: the store keeps the time in UTC; 22:40 UTC on 31.10 is 00:40 on 01.11 at UTC+2
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var zone = TimeZoneInfo.CreateCustomTimeZone("test+2", TimeSpan.FromHours(2), "test+2", "test+2");
+            var clock = new ZonedClock(new DateTime(2026, 11, 1, 10, 0, 0), zone);
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            await Runner(store, residency, pension, clock: clock).RunAsync(period.Id);
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at", ("$at", "2026-10-31T22:40:00.000Z"));
+
+            var again = await Runner(store, residency, pension, clock: clock).RunAsync(period.Id);
+
+            var person = store.FindPerson(company.Id, "48712219406")!;
+            Assert.Equal((new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1)), (person.ResidencyCheckedOn, person.PensionCheckedOn));
+            Assert.Contains(again.Persons.Single().Steps, s => s.Contains("01.11.2026 00:40 reused", StringComparison.Ordinal));
+        }
+    }
+
+    private sealed class ZonedClock(DateTime at, TimeZoneInfo zone) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(at, DateTimeKind.Utc), TimeSpan.Zero);
+
+        public override TimeZoneInfo LocalTimeZone => zone;
     }
 }

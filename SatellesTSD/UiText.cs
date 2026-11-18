@@ -449,9 +449,65 @@ internal static class UiText
         _ => $"Tagasi võetud faili ei saanud ümber nimetada ({file.Path}: {file.Error}); kustuta see käsitsi või ära seda e-MTA-sse laadi.",
     };
     public const string ConfirmForce = "Mõni rida ootab veel vastust, vajab parandust või lükati e-MTA-s tagasi (pole serveris). Märkida periood siiski kinnitatuks?";
+
+    /// <summary>The confirmation's refusal in the window's own words (decision 183): drafts never sent stop it (a force does
+    /// not pass them); lines open or refused are named, and the question follows.</summary>
+    public static string ConfirmRefused(Core.Declare.DeclareException refusal)
+    {
+        if (refusal.DraftLines.Count > 0)
+        {
+            return $"Saatmata mustandread: {string.Join(", ", refusal.DraftLines)}. Eksportige need või vajutage uuesti „Koosta read“, siis märkige periood kinnitatuks.";
+        }
+
+        var parts = new List<string>();
+        if (refusal.OpenLines.Count > 0)
+        {
+            parts.Add($"Vastust ootavad või parandust vajavad read: {string.Join(", ", refusal.OpenLines)}.");
+        }
+
+        if (refusal.RefusedLines.Count > 0)
+        {
+            parts.Add($"e-MTA tagasi lükatud read (pole serveris): {string.Join(", ", refusal.RefusedLines)}. Mida ülevaade veel deklareerib, saadab uuesti „Ava parandamiseks“ ja „Koosta read“.");
+        }
+
+        return string.Join(Environment.NewLine, parts);
+    }
+
+    /// <summary>A refusal of the person card's save (or of a person added) in Estonian, by its code; null for any other.</summary>
+    public static string? CardRefused(ReviewException refusal) => refusal.Code switch
+    {
+        ReviewWorkspace.PersonExists => $"Ettevõtte teisel isikul on juba isikukood {refusal.Subject}.",
+        ReviewWorkspace.CodeInvalid => $"„{refusal.Subject}“ ei ole Eesti isikukood (üksteist numbrit, päris sünnikuupäevaga); välismaalane nimetatakse MTA mitteresidendi koodiga.",
+        ReviewWorkspace.NameMissing => "Isikul peab olema eesnimi ja perekonnanimi.",
+        ReviewWorkspace.MrrInvalid => $"„{refusal.Subject}“ ei ole MTA mitteresidendi kood: selles on ainult ladina tähed A–Z ja numbrid, ilma tühikute ja muude märkideta.",
+        ReviewWorkspace.PeriodNotDraft => "Kuu ei ole enam mustand – seda ei saa muuta.",
+        _ => null,
+    };
+
+    /// <summary>A refusal to take a file out, read it again or unlink it, in Estonian by its code; null for any other.</summary>
+    public static string? FileRefused(Exception refusal)
+    {
+        var count = ImportRefusal.CountOf(refusal);
+        var subject = ImportRefusal.SubjectOf(refusal);
+        return ImportRefusal.CodeOf(refusal) switch
+        {
+            ImportRefusal.Declared => $"Selle faili ridadest on deklareeritud {count} rida (serveris või ootab vastust); fail jääb nende allikaks.",
+            ImportRefusal.Drafts => $"{count} mustandrida viitab selle faili ridadele; vajutage enne uuesti „Koosta read“.",
+            ImportRefusal.Totals => $"Serveris olevad {count} kokkuvõtterida liidavad selle faili ridu; fail jääb nende allikaks.",
+            ImportRefusal.MonthsPastDraft when subject is not null => $"Fail on kuu(de) {subject} failide hulgas, mis on juba eksporditud või deklareeritud; see jääb nende dokumendiks.",
+            ImportRefusal.MonthsPastDraft => $"{count} juba eksporditud või deklareeritud kuu failide hulgas on see fail; see jääb nende dokumendiks.",
+            ImportRefusal.Runs => "Otsingu tulemus kasutab seda faili; kustutage enne otsingu tulemus (või otsige uuesti ilma selle failita).",
+            ImportRefusal.Decisions => $"{count} ülevaate otsust viitab selle faili ridadele; eemaldage fail enne selle perioodide failide hulgast.",
+            ImportRefusal.OtherMonths => $"Faili loetlevad ka teised mustandkuud ({subject}); eemaldage see enne nende failide hulgast.",
+            _ => null,
+        };
+    }
+
+    /// <summary>A refusal the window words itself (the card's save, a file's removal), or null: the exception's own text then.</summary>
+    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : FileRefused(refusal);
     public const string CutChangedSinceBuild = "Deklaratsiooni lõige on pärast „Koosta read“ muudetud (Seaded): mustandid on teises lõikes. Eksportida need siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string RunStaleReport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: aruanne ei sisalda kõiki makseid. Koostada aruanne siiski?";
-    public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 (võti ei ole serveris)";
+    public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 või _6 (võti ei ole serveris)";
     public const string ReviewChangedSinceBuild ="Ülevaatus on pärast „Koosta read“ muutunud ja read ei kajasta seda. Eksportida siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string ReviewNotChecked = "Ei saanud kontrollida, kas read vastavad ülevaatusele.";
     public const string ReopenConfirm = "Avada periood parandamiseks? Ülevaatus muutub taas muudetavaks; järgmine eksport kannab muudatused (M) ja tühistused (T) võtmetele, mida e-MTA juba teab. e-MTA-s tuleb deklaratsioon samuti muudatusteks avada. (Kui faili ei laaditudki üles, kasuta „Tühista eksport“.)";

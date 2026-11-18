@@ -7,8 +7,8 @@ public sealed record Refusal(string Code, string Message);
 
 /// <summary>The checks the engine, the allocator, the zero-line helper and the line factory enforce by throwing, as a
 /// list a review grid can show per payment. Each refusal mirrors one of those throws; with no refusal, every one of
-/// them computes for the facts given. One refusal mirrors no throw: <see cref="ExemptionNotEea"/>, which MTA would
-/// refuse and the engine cannot see.</summary>
+/// them computes for the facts given. Two refusals mirror no throw: <see cref="ExemptionNotEea"/>, which MTA would
+/// refuse and the engine cannot see, and <see cref="TreatyRateInvalid"/>, a rate the file cannot carry or no treaty gives.</summary>
 public static class PaymentChecks
 {
     public const string RatesExceedOne = "RATES_EXCEED_ONE";
@@ -23,6 +23,11 @@ public static class PaymentChecks
     public const string ExemptionAboveLegal = "EXEMPTION_ABOVE_LEGAL";
     public const string ExemptionSubCent = "EXEMPTION_SUB_CENT";
     public const string MinimumShareInvalid = "MINIMUM_SHARE_INVALID";
+
+    /// <summary>A treaty income-tax rate the line would use that is below 0, above the type's own rate (a treaty never asks
+    /// for more), or not a whole percent — the file carries the rate in hundredths (taxPercentageRate, decimals 2), so a
+    /// rate of 12.5 % would be written as 13 % beside a tax computed at 12.5 %. Mirrors no throw (decision 195).</summary>
+    public const string TreatyRateInvalid = "TREATY_RATE_INVALID";
 
     /// <summary>A non-resident's exemption beside a residence country entered on the card that is outside the EEA: the
     /// card contradicts itself, and MTA refuses the exemption (KR_MVT_06). An empty country refuses nothing — it is
@@ -114,6 +119,12 @@ public static class PaymentChecks
             && EffectiveFlags.Of(type, facts).ExemptionKind != ExemptionKind.None)
         {
             refusals.Add(new Refusal(ExemptionNotEea, $"The basic exemption is applied, but the country of tax residence on the card ({facts.ResidenceCountry.Trim().ToUpperInvariant()}) is outside the EEA; a non-resident gets the exemption only as an EEA resident with a residency certificate (MTA refuses it, KR_MVT_06). Untick the exemption or correct the country."));
+        }
+
+        if (facts.Residency == Residency.NonResident && type.TreatyRateAllowed && type.IncomeTaxRate is { } ownRate
+            && facts.TreatyIncomeTaxRate is { } treaty && (treaty < 0m || treaty > ownRate || treaty * 100m != Math.Round(treaty * 100m)))
+        {
+            refusals.Add(new Refusal(TreatyRateInvalid, $"The treaty income-tax rate on the card ({treaty * 100m:0.####} %) must be a whole percent between 0 and the type's own {ownRate * 100m:0.##} %."));
         }
 
         if (facts.SocialTaxMinimumShare <= 0m || facts.SocialTaxMinimumShare > 1m)
