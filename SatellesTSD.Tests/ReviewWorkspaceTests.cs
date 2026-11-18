@@ -1035,6 +1035,12 @@ public class ReviewWorkspaceTests
             workspace.SetDeclare(credit, true);
             var ticked = workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.PersonId).Payments.Single(p => p.Payee == "KATI KASK");
             Assert.Contains(ticked.Checks, c => c.Code == ReviewChecks.MoneyIn); // refused when ticked all the same
+
+            // a type forced by hand on money in gives no notice: the row is refused, not declared under another type
+            workspace.SetTypeCode(ticked, "16");
+            var forced = workspace.Load(period.Id).Persons.Single(p => p.PersonId == mari.PersonId).Payments.Single(p => p.Payee == "KATI KASK");
+            Assert.Equal(("16", true), (forced.TypeCode, forced.Declare));
+            Assert.Empty(forced.Notices);
         }
     }
 
@@ -1408,5 +1414,101 @@ public class ReviewWorkspaceTests
         Assert.Null(PayeePersons.NamesOf("ООО Ромашка"));
         Assert.Null(PayeePersons.NamesOf("Tallinna Linnavalitsus"));
         Assert.Equal(("Kati", "Kask"), PayeePersons.NamesOf("KATI KASK"));
+    }
+
+    [Fact]
+    public void The_outside_tor_problem_adds_up_the_euros_alone_as_the_deklareerimata_sum_does()
+    {
+        // the review of the leftovers: a payment in another currency is counted, its figure is not added to the euros
+        var (store, company, period, _) = ReviewFixtures.Setup(outsider: "Kalle Kask", outsiderCurrency: "USD");
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            var row = workspace.Load(period.Id).Persons.SelectMany(p => p.Payments).Single(p => p.Payee == "Kalle Kask");
+            var kalle = workspace.AddPerson(company.Id, "Kalle", "Kask", null, null);
+            workspace.SetPerson(row, kalle.Id);
+            var said = Assert.Single(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kalle.Id).Problems, p => p.Code == MatchProblem.OutsideTorSalary);
+            Assert.Contains("1 salary-pattern payment(s) (0.00 EUR)", said.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void A_salary_pattern_payment_to_a_person_outside_the_register_is_refused_as_outside_tor_and_said_of_the_person()
+    {
+        foreach (var noRegister in new[] { false, true })
+        {
+            var (store, company, period, _) = ReviewFixtures.Setup(outsider: "Kalle Kask", noRegister: noRegister);
+            using (store)
+            {
+                new MatchRunner(store).Run(period.Id);
+                var workspace = Workspace(store);
+                ReviewPayment Row(ReviewView v) => v.Persons.SelectMany(p => p.Payments).Single(p => p.Payee == "Kalle Kask");
+
+                // nobody's row: the refusal names it, the pseudo-person carries no person-level problem
+                var view = workspace.Load(period.Id);
+                var row = Row(view);
+                Assert.Null(row.PersonId);
+                Assert.Equal((ReviewDefaults.OutsideTorCategory, (string?)null, false), (row.Category, row.TypeCode, row.Declare));
+                Assert.Contains(row.Blockers, b => b.Code == ReviewChecks.OutsideTor);
+                Assert.DoesNotContain(view.Unmatched.Problems, p => p.Code == MatchProblem.OutsideTorSalary);
+
+                // given to a store person the register does not list
+                var kalle = workspace.AddPerson(company.Id, "Kalle", "Kask", null, null);
+                workspace.SetPerson(row, kalle.Id);
+                view = workspace.Load(period.Id);
+                row = Row(view);
+                Assert.Equal((kalle.Id, ReviewDefaults.OutsideTorCategory, (string?)null, false), (row.PersonId, row.Category, row.TypeCode, row.Declare));
+                Assert.Empty(row.Checks); // not ticked: the refusal stands among the blockers only
+                var refusal = Assert.Single(row.Blockers, b => b.Code == ReviewChecks.OutsideTor);
+                Assert.DoesNotContain(row.Blockers, b => b.Code == ReviewChecks.NoType);
+                Assert.Equal(noRegister ? OutsideTorReason.NoRegister : OutsideTorReason.NotListed, row.OutsideTor);
+                Assert.Contains(noRegister ? "without a TÖR file" : "does not list", refusal.Message, StringComparison.Ordinal);
+
+                // the person-level problem with the sum; the Deklareerimata list leaves the row out (decision 100 kept)
+                var shown = Assert.Single(view.Persons, p => p.PersonId == kalle.Id);
+                var said = Assert.Single(shown.Problems, p => p.Code == MatchProblem.OutsideTorSalary);
+                Assert.Contains("1 salary-pattern payment(s) (500.00 EUR)", said.Message, StringComparison.Ordinal);
+                Assert.Empty(shown.Undeclared);
+
+                // ticked by hand: refused as OUTSIDE_TOR, as before refused as NO_TYPE
+                workspace.SetDeclare(row, true);
+                row = Row(workspace.Load(period.Id));
+                Assert.Contains(row.Checks, c => c.Code == ReviewChecks.OutsideTor);
+                workspace.SetDeclare(row, false);
+
+                // a type set by hand ends it
+                workspace.SetTypeCode(Row(workspace.Load(period.Id)), "10");
+                row = Row(workspace.Load(period.Id));
+                Assert.Equal("10", row.TypeCode);
+                Assert.DoesNotContain(row.Blockers, b => b.Code == ReviewChecks.OutsideTor);
+                Assert.Null(row.OutsideTor);
+                Assert.DoesNotContain(Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kalle.Id).Problems, p => p.Code == MatchProblem.OutsideTorSalary);
+                workspace.SetTypeCode(row, null);
+
+                // so does the category Palgad: the card's type gives the code, nothing is refused as outside TÖR
+                store.UpdatePerson(store.Persons(company.Id).Single(p => p.Id == kalle.Id) with { TorEmploymentTypeId = "1" });
+                workspace.SetCategory(Row(workspace.Load(period.Id)), "Palgad");
+                row = Row(workspace.Load(period.Id));
+                Assert.Equal(("Palgad", "10"), (row.Category, row.TypeCode));
+                Assert.DoesNotContain(row.Blockers, b => b.Code is ReviewChecks.OutsideTor or ReviewChecks.NoType);
+            }
+        }
+    }
+
+    [Fact]
+    public void A_register_person_given_the_outside_tor_category_by_hand_keeps_no_type()
+    {
+        // the register lists the person: the refusal stays NO_TYPE, the outside-TÖR words are for the unlisted only
+        var (store, _, period, workspace) = Run();
+        using (store)
+        {
+            workspace.SetCategory(Salary(workspace.Load(period.Id)), ReviewDefaults.OutsideTorCategory);
+            var salary = Salary(workspace.Load(period.Id));
+            Assert.Null(salary.TypeCode);
+            Assert.Contains(salary.Blockers, b => b.Code == ReviewChecks.NoType);
+            Assert.DoesNotContain(salary.Blockers, b => b.Code == ReviewChecks.OutsideTor);
+            Assert.DoesNotContain(workspace.Load(period.Id).Persons[0].Problems, p => p.Code == MatchProblem.OutsideTorSalary);
+        }
     }
 }

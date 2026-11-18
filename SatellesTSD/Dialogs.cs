@@ -590,9 +590,9 @@ public sealed class FilesDialog : Form
         try
         {
             var outcome = _services.Pipeline.RereadFile(_periodId, file.Id);
-            foreach (var message in outcome.Messages)
+            foreach (var note in outcome.Notes)
             {
-                _log($"{UiText.Reread}: {file.FileName}: {message}");
+                _log($"{UiText.Reread}: {file.FileName}: {UiText.SheetNoteLine(note)}");
             }
 
             if (outcome.Succeeded)
@@ -601,14 +601,15 @@ public sealed class FilesDialog : Form
             }
             else
             {
-                var shown = (outcome.Refusal is { } refusal ? UiText.Worded(refusal) : null) ?? outcome.Error ?? ""; // in Estonian when its code is known (decision 183)
-                _log($"{UiText.Reread}: {file.FileName}: {shown}");
+                var worded = outcome.Refusal is { } refusal ? UiText.Worded(refusal) : null; // in Estonian when its code is known (decision 183)
+                var shown = worded ?? outcome.Error ?? "";
+                _log($"{UiText.Reread}: {UiText.ImportRefusedLine(file.FileName, worded, outcome.Error)}"); // the Core's English kept after it (decision 229)
                 Tell(shown, UiText.Reread);
             }
         }
         catch (Exception e)
         {
-            Tell(e.Message, UiText.Problem);
+            Tell(UiText.Worded(e) ?? e.Message, UiText.Problem); // a month past Draft, a file gone: in Estonian by its code
         }
 
         Fill();
@@ -707,13 +708,13 @@ public sealed class FilesDialog : Form
         var linked = _services.Store.PeriodImports(_periodId);
         foreach (var file in linked)
         {
-            _list.Items.Add(new ListViewItem([file.FileName, file.Kind.ToString(), file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file });
+            _list.Items.Add(new ListViewItem([file.FileName, UiText.ImportKindText(file.Kind), file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file });
         }
 
         // the company's files no period lists any more, after the period's own: the one place they can be taken out of the store
         foreach (var file in _services.Pipeline.UnlistedFiles(_companyId))
         {
-            _list.Items.Add(new ListViewItem([file.FileName, $"{file.Kind} ({UiText.Unlisted})", file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file, ForeColor = SystemColors.GrayText });
+            _list.Items.Add(new ListViewItem([file.FileName, $"{UiText.ImportKindText(file.Kind)} ({UiText.Unlisted})", file.ImportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture)]) { Tag = file, ForeColor = SystemColors.GrayText });
         }
 
         _list.EndUpdate();

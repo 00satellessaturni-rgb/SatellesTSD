@@ -13,7 +13,7 @@ public sealed record MonthPayment(string Key, PaymentType Type, decimal Amount, 
         ArgumentNullException.ThrowIfNull(type);
         if (!type.ZeroAllowed)
         {
-            throw new InvalidOperationException($"Payment type {type.Code} does not allow an amount of 0.");
+            throw TaxRefusal.Of(PaymentChecks.ZeroNotAllowed, $"Payment type {type.Code} does not allow an amount of 0.", type.Code);
         }
 
         return new MonthPayment(key, type, 0m, AmountIsNet: false, date);
@@ -69,17 +69,17 @@ public sealed class MonthAllocator
         {
             if (!payee.BasicExemptionApplied)
             {
-                throw new InvalidOperationException("An exemption amount is given, but the person has not applied for the exemption at this payer; drop one of the two.");
+                throw TaxRefusal.Of(PaymentChecks.ExemptionWithoutApplication, "An exemption amount is given, but the person has not applied for the exemption at this payer; drop one of the two.");
             }
 
             if (applied < 0m || applied > legal)
             {
-                throw new InvalidOperationException($"The exemption on the application ({applied}) must be between 0 and the legal {legal} per month (KR_KOOND_02/03).");
+                throw TaxRefusal.Of(PaymentChecks.ExemptionAboveLegal, $"The exemption on the application ({applied}) must be between 0 and the legal {legal} per month (KR_KOOND_02/03).", figure: applied, other: legal);
             }
 
             if (applied != Math.Round(applied, 2))
             {
-                throw new InvalidOperationException($"The exemption on the application ({applied}) must be a whole number of cents.");
+                throw TaxRefusal.Of(PaymentChecks.ExemptionSubCent, $"The exemption on the application ({applied}) must be a whole number of cents.", figure: applied);
             }
         }
 
@@ -95,7 +95,7 @@ public sealed class MonthAllocator
 
         if (payee.SocialTaxMinimumShare <= 0m || payee.SocialTaxMinimumShare > 1m)
         {
-            throw new InvalidOperationException($"The month share of the minimum obligation ({payee.SocialTaxMinimumShare}) must be above 0 and at most 1; switch the minimum off for a whole month away.");
+            throw TaxRefusal.Of(PaymentChecks.MinimumShareInvalid, $"The month share of the minimum obligation ({payee.SocialTaxMinimumShare}) must be above 0 and at most 1; switch the minimum off for a whole month away.", figure: payee.SocialTaxMinimumShare);
         }
 
         if (payments.Count == 0)

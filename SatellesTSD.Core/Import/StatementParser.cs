@@ -15,8 +15,21 @@ public enum Direction
 }
 
 /// <summary>Something the parser could not make sense of; the row or sheet is kept, the problem travels with it.</summary>
-public sealed record ImportProblem(int? RowNo, string Code, string Message)
+/// <param name="Message">The Core's English: the record kept for support and the tests (a problem stored before the figures
+/// were kept has only this).</param>
+/// <param name="Args">The figures the window words the problem with in Estonian, by code (null when there are none, or the
+/// problem was stored before they were kept; an empty list is a case of its own): BAD_DATE the date text (empty: no date;
+/// a TÖR row: the column, then the text), BAD_AMOUNT the amount text, BAD_MARKER the marker cell and the layout's two
+/// markers, NO_CODE the first and last name, NO_NAME the personal code and "first" or "last", SEVERAL_EMPLOYERS the
+/// employers joined by ", ", EMPLOYER_MISMATCH the foreign codes joined by ", " and the company's code, NO_EMPLOYER_CODE
+/// the count of rows without one (empty: no row has one), EXTRA_COLUMNS the headers joined by ", ".</param>
+public sealed record ImportProblem(int? RowNo, string Code, string Message, IReadOnlyList<string>? Args = null)
 {
+    public bool Equals(ImportProblem? other) =>
+        other is not null && RowNo == other.RowNo && string.Equals(Code, other.Code, StringComparison.Ordinal) && string.Equals(Message, other.Message, StringComparison.Ordinal) && Seq.Equal(Args, other.Args);
+
+    public override int GetHashCode() => HashCode.Combine(RowNo, Code, Message, Seq.Hash(Args));
+
     public const string BadDate = "BAD_DATE";
     public const string BadAmount = "BAD_AMOUNT";
     public const string NoAmount = "NO_AMOUNT";
@@ -97,9 +110,25 @@ public sealed record Detection(StatementLayout Layout, int HeaderRowNo, IReadOnl
 }
 
 /// <summary>What recognising a sheet gave: the match, or the nearest layout and how the sheet differs from it.</summary>
+/// <param name="Differences">The differences in the Core's English, "row 3: column 2: 'x' is not 'y'".</param>
 public sealed record DetectionResult(Detection? Match, string? NearestLayoutId, IReadOnlyList<string> Differences)
 {
     public bool Recognised => Match is not null;
+
+    /// <summary>The same differences as figures, one for one, so the window words them in Estonian.</summary>
+    public IReadOnlyList<HeaderDifference> HeaderDifferences { get; init; } = [];
+}
+
+/// <summary>How a header row differs from a layout's: its width (<see cref="Width"/> beside <see cref="LayoutWidth"/>), or one
+/// column's header (<see cref="Found"/> where the layout has <see cref="Expected"/>).</summary>
+/// <param name="RowNo">The sheet row the header was looked for on, from 1.</param>
+/// <param name="Column">The column from 1; null for the width.</param>
+public sealed record HeaderDifference(int RowNo, string LayoutId, int? Column = null, string? Found = null, string? Expected = null, int? Width = null, int? LayoutWidth = null)
+{
+    /// <summary>The Core's English, as <see cref="DetectionResult.Differences"/> has it.</summary>
+    public string English => $"row {RowNo}: " + (Column is { } column
+        ? $"column {column}: '{Found}' is not '{Expected}'"
+        : $"{Width} header columns, '{LayoutId}' has {LayoutWidth}");
 }
 
 /// <summary>A statement sheet read through its layout.</summary>
@@ -154,7 +183,7 @@ public static class StatementParser
         string? nearestId = null;
         var nearestMatches = 0;
         var nearestDifferenceCount = int.MaxValue;
-        IReadOnlyList<string> nearestDifferences = [];
+        IReadOnlyList<HeaderDifference> nearestDifferences = [];
 
         for (var rowNo = 1; rowNo <= lastRow; rowNo++)
         {
@@ -173,7 +202,7 @@ public static class StatementParser
             var forms = headers.Select(HeaderText.Forms).ToList();
             foreach (var layout in catalog.Layouts)
             {
-                var (differences, matches) = Compare(layout, headers, forms);
+                var (differences, matches) = Compare(layout, rowNo, headers, forms);
                 if (differences.Count == 0)
                 {
                     return new DetectionResult(new Detection(layout, rowNo, headers), null, []);
@@ -185,7 +214,7 @@ public static class StatementParser
                     nearestMatches = matches;
                     nearestDifferenceCount = differences.Count;
                     nearestId = layout.Id;
-                    nearestDifferences = differences.Select(d => $"row {rowNo}: {d}").ToList();
+                    nearestDifferences = differences;
                 }
             }
         }
@@ -201,7 +230,8 @@ public static class StatementParser
             }
         }
 
-        return new DetectionResult(null, nearestMatches > 0 ? nearestId : null, nearestMatches > 0 ? nearestDifferences : []);
+        IReadOnlyList<HeaderDifference> nearest = nearestMatches > 0 ? nearestDifferences : [];
+        return new DetectionResult(null, nearestMatches > 0 ? nearestId : null, nearest.Select(d => d.English).ToList()) { HeaderDifferences = nearest };
     }
 
     /// <summary>A row that reads as a payment row of the layout: no wider than its header row, the account column
@@ -251,12 +281,12 @@ public static class StatementParser
     }
 
     /// <summary>How a header row differs from a layout's, and how many headers are in place.</summary>
-    private static (List<string> Differences, int Matches) Compare(StatementLayout layout, string[] headers, List<IReadOnlySet<string>> forms)
+    private static (List<HeaderDifference> Differences, int Matches) Compare(StatementLayout layout, int rowNo, string[] headers, List<IReadOnlySet<string>> forms)
     {
-        var differences = new List<string>();
+        var differences = new List<HeaderDifference>();
         if (layout.Headers.Count != headers.Length)
         {
-            differences.Add($"{headers.Length} header columns, '{layout.Id}' has {layout.Headers.Count}");
+            differences.Add(new HeaderDifference(rowNo, layout.Id, Width: headers.Length, LayoutWidth: layout.Headers.Count));
         }
 
         var common = Math.Min(layout.Headers.Count, headers.Length);
@@ -270,7 +300,7 @@ public static class StatementParser
             }
             else
             {
-                differences.Add($"column {i + 1}: '{headers[i]}' is not '{expected}'");
+                differences.Add(new HeaderDifference(rowNo, layout.Id, i + 1, headers[i], expected));
             }
         }
 
@@ -361,7 +391,7 @@ public static class StatementParser
             if (dateTime is null && named)
             {
                 problem.Add(dateText is null ? "no date" : $"date '{dateText}' not understood");
-                problems.Add(new ImportProblem(rowNo, ImportProblem.BadDate, dateText is null ? "The row has no date." : $"Date '{dateText}' is not understood."));
+                problems.Add(new ImportProblem(rowNo, ImportProblem.BadDate, dateText is null ? "The row has no date." : $"Date '{dateText}' is not understood.", dateText is null ? [] : [dateText]));
             }
 
             decimal? amount = amountCell.Kind switch
@@ -375,7 +405,7 @@ public static class StatementParser
                 problem.Add(amountText is null ? "no amount" : $"amount '{amountText}' not understood");
                 problems.Add(amountText is null
                     ? new ImportProblem(rowNo, ImportProblem.NoAmount, "The row has no amount.")
-                    : new ImportProblem(rowNo, ImportProblem.BadAmount, $"Amount '{amountText}' is not understood."));
+                    : new ImportProblem(rowNo, ImportProblem.BadAmount, $"Amount '{amountText}' is not understood.", [amountText]));
             }
 
             var direction = layout.Direction switch
@@ -388,7 +418,7 @@ public static class StatementParser
             {
                 // a bank's D/C column holds something else: say so (a one-marker layout such as Kassa has rows that are simply not payouts)
                 problem.Add($"direction '{dcText}' is neither '{layout.DebitMarker}' nor '{layout.CreditMarker}'");
-                problems.Add(new ImportProblem(rowNo, ImportProblem.BadMarker, $"Direction '{dcText}' is neither '{layout.DebitMarker}' nor '{layout.CreditMarker}'."));
+                problems.Add(new ImportProblem(rowNo, ImportProblem.BadMarker, $"Direction '{dcText}' is neither '{layout.DebitMarker}' nor '{layout.CreditMarker}'.", [dcText, layout.DebitMarker, layout.CreditMarker]));
             }
 
             var currency = Text(sheet.At(rowNo, currencyCol)) ?? (layout.AmountHasCurrency ? AmountText.CurrencyOf(amountText) : null);

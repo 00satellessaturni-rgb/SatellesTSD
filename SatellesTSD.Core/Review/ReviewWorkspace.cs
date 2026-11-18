@@ -118,6 +118,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
 
         var registerByPersonId = new Dictionary<Guid, MatchPerson>();
+        // whether the month was searched against a register, as the build tells it (PeriodDeclarer): a "TÖR-väline palgad"
+        // payment of no type is refused as OUTSIDE_TOR, worded by it
+        var monthHasRegister = storedRun?.TorSheetId is not null || run?.Persons.Count > 0;
         if (run is not null)
         {
             foreach (var registerPerson in run.Persons)
@@ -157,7 +160,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             if (storePersons.FirstOrDefault(o => !inRun.Contains(o.Id) && o.PersonalCode is { } other && other != person.PersonalCode && o.RegisterKey is not null
                     && SearchPerson.NameKey(o.LastName, o.FirstName) == SearchPerson.NameKey(person.LastName, person.FirstName)) is { } namesake)
             {
-                ProblemsOf(person.Id).Add(new MatchProblem(MatchProblem.NamesakeOtherCode, $"A person of the same names with another personal code ({namesake.PersonalCode}) is in the store and not in this month's register: if the register corrected the code, this card carries the defaults, not that card's choices (the exemption, the A1 case, Deklareerimine) — compare the two cards."));
+                ProblemsOf(person.Id).Add(new MatchProblem(MatchProblem.NamesakeOtherCode, $"A person of the same names with another personal code ({namesake.PersonalCode}) is in the store and not in this month's register: if the register corrected the code, this card carries the defaults, not that card's choices (the exemption, the A1 case, Deklareerimine) — compare the two cards.", Args: [namesake.PersonalCode!]));
             }
         }
 
@@ -173,7 +176,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         // the direction right (decision 171)
         foreach (var stale in run?.Sources.Where(s => s.SheetId is { } id && sheetsById.TryGetValue(id, out var sheet) && sheet.Layout?.IsOldCardReading() == true) ?? [])
         {
-            unmatchedProblems.Add(new MatchProblem(MatchProblem.OldReading, $"{stale.Name} was read by an earlier version, which took every amount of a card export as money in: its payouts are left out. Read the file again (Failid › Loe uuesti).", Source: stale.Name));
+            unmatchedProblems.Add(new MatchProblem(MatchProblem.OldReading, $"{stale.Name} was read by an earlier version, which took every amount of a card export as money in: its payouts are left out. Read the file again (Failid › Loe uuesti).", Source: stale.Name, Args: [stale.Name]));
         }
 
         // a sheet read before its layout read the transaction's state (decision 179): a reverted, declined or failed row
@@ -220,7 +223,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 unmatchedProblems.Add(new MatchProblem(MatchProblem.StateUnread,
                     $"{source.Name} was read by an earlier version, which did not read the transaction's state: row(s) {string.Join(", ", rows)} moved no money (reverted, declined, failed or pending) yet count as payments. "
                     + (locked ? "The file cannot be read again (a month past Draft lists it, or a line built from it has been on the server): take these rows out of the declaration (Deklareeri) by hand." : "Read the file again (Failid › Loe uuesti), or take these rows out of the declaration (Deklareeri) by hand."),
-                    Source: source.Name, RowNo: rows[0]));
+                    Source: source.Name, RowNo: rows[0], Subject: string.Join(", ", rows), Variant: locked ? MatchProblem.StateUnreadLocked : null));
             }
         }
 
@@ -277,7 +280,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     // parts split off a row that has since turned into a copy stay where they are: the copy is declared nowhere (a
                     // copy with a decision of its own as well is said once, below)
                     var what = period.State == PeriodState.Draft ? "split the original, and take them out with 0" : "check the original";
-                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {copy.Text[copyOf.Length..]} and carries parts split off its payment; they stay where they are — {what}.", Source: copy.Source, RowNo: copy.Row.RowNo));
+                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {copy.Text[copyOf.Length..]} and carries parts split off its payment; they stay where they are — {what}.", Source: copy.Source, RowNo: copy.Row.RowNo,
+                        Variant: MatchProblem.CopyParts, Args: [copy.Reference, copy.Text[copyOf.Length..], period.State == PeriodState.Draft ? "draft" : "pastDraft"]));
                 }
 
                 if (!copy.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) || !overlays.TryGetValue(copyRow, out var decided)
@@ -301,14 +305,15 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 else
                 {
                     var why = period.State != PeriodState.Draft ? "the month is past Draft" : split ? "it carries parts split off its payment" : "the original carries its own";
-                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {original} and carries a decision; {why}, so it stays where it is — check the original.", Source: copy.Source, RowNo: copy.Row.RowNo));
+                    unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionOnCopy, $"{copy.Reference} is a copy of {original} and carries a decision; {why}, so it stays where it is — check the original.", Source: copy.Source, RowNo: copy.Row.RowNo,
+                        Variant: period.State != PeriodState.Draft ? MatchProblem.CopyPastDraft : split ? MatchProblem.CopySplit : MatchProblem.CopyOriginalOwn, Args: [copy.Reference, original]));
                 }
             }
 
             foreach (var marked in overlays.Values.Where(l => l.Note?.StartsWith(MovedFromMark, StringComparison.Ordinal) == true))
             {
                 var mark = marked.Note![..(marked.Note.IndexOf('»') is var end and >= 0 ? end + 1 : marked.Note.Length)];
-                unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionMoved, $"{mark}: a decision made on a copy was moved to the original row; check it, then clear the mark from the note."));
+                unmatchedProblems.Add(new MatchProblem(MatchProblem.DecisionMoved, $"{mark}: a decision made on a copy was moved to the original row; check it, then clear the mark from the note.", Args: [mark]));
             }
 
             foreach (var rowId in rowOrder)
@@ -363,7 +368,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     var register = person is not null
                         ? registerByPersonId.GetValueOrDefault(person.Id)
                         : own.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
-                    Place(FromHit(period, own, rowId, decided, person, shareDefault?.Id, register, catalog, shared, candidates, assumed.Contains(own.Source), twin, amount, part, handLineTwin));
+                    Place(FromHit(period, own, rowId, decided, person, shareDefault?.Id, register, catalog, shared, candidates, assumed.Contains(own.Source), monthHasRegister, twin, amount, part, handLineTwin));
                 }
             }
         }
@@ -371,7 +376,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         foreach (var line in lines.Where(l => l.IsByHand))
         {
             var person = line.PersonId is { } pid && byId.TryGetValue(pid, out var sp) ? sp : null;
-            Place(FromHandLine(period, line, person, run is not null && person is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, catalog));
+            Place(FromHandLine(period, line, person, run is not null && person is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, catalog, monthHasRegister));
         }
 
         if (payeesChanged)
@@ -407,7 +412,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             foreach (var included in storePersons.Where(p => p.Declaration == DeclarationChoice.Include && persons.All(listed => listed.PersonId != p.Id))
                 .OrderBy(p => p.LastName, StringComparer.OrdinalIgnoreCase).ThenBy(p => p.FirstName, StringComparer.OrdinalIgnoreCase))
             {
-                var said = new MatchProblem(MatchProblem.IncludedWithoutRow, "Declared as if employed on the card (kaasa), but the month's register lists no row for the person and no payment was found: nothing is built this month. Set the card's Deklareerimine to \"reeglite järgi\" if the employment has ended.");
+                var said = new MatchProblem(MatchProblem.IncludedWithoutRow, "Declared as if employed on the card (kaasa), but the month's register lists no row for the person and no payment was found: nothing is built this month. Set the card's Deklareerimine to \"reeglite järgi\" if the employment has ended.", Args: []);
                 persons.Add(Make(null, included, null, [], [said, .. ProblemsOf(included.Id)], catalog, false, TotalsPerType, totalsLines));
             }
         }
@@ -495,7 +500,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 PayeePersons.Find(payeeKnown, counterparty, hit.Row.CounterpartyCode, out var ambiguous);
                 if (ambiguous)
                 {
-                    Once(unmatchedProblems, new MatchProblem(MatchProblem.PayeeAmbiguous, $"{hit.Reference}: two persons of the company have the payee's names; name the one on the row.", Source: hit.Source, RowNo: hit.Row.RowNo)); // once for the row, however many of its shares ask
+                    Once(unmatchedProblems, new MatchProblem(MatchProblem.PayeeAmbiguous, $"{hit.Reference}: two persons of the company have the payee's names; name the one on the row.", Source: hit.Source, RowNo: hit.Row.RowNo, Args: [hit.Reference])); // once for the row, however many of its shares ask
                 }
 
                 return null;
@@ -513,7 +518,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             if (PayeePersons.CodeOf(hit.Row.CounterpartyCode) is { } statementCode && payee.PersonalCode != statementCode
                 && payeeKnown.Any(p => p.Id != payee.Id && string.Equals(p.PersonalCode, statementCode, StringComparison.Ordinal)))
             {
-                Once(ProblemsOf(payee.Id), new MatchProblem(MatchProblem.PayeeCodeElsewhere, $"{hit.Reference}: the row's personal code belongs to another person of the company; the row is the payee's by the bound names — check the two cards.", Source: hit.Source, RowNo: hit.Row.RowNo));
+                Once(ProblemsOf(payee.Id), new MatchProblem(MatchProblem.PayeeCodeElsewhere, $"{hit.Reference}: the row's personal code belongs to another person of the company; the row is the payee's by the bound names — check the two cards.", Source: hit.Source, RowNo: hit.Row.RowNo, Args: [hit.Reference]));
             }
 
             // a line added by hand of the same amount for the payee this month, declaring something: the rent may be declared
@@ -527,7 +532,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 {
                     twinHandLines.Add(twin.Id);
                     twinRows.Add(rowId);
-                    ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeHandLine, $"{hit.Reference}: a line added by hand of the same amount stands for the person this month; the row is not declared by default (tick it when both are real).", Source: hit.Source, RowNo: hit.Row.RowNo));
+                    ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeHandLine, $"{hit.Reference}: a line added by hand of the same amount stands for the person this month; the row is not declared by default (tick it when both are real).", Source: hit.Source, RowNo: hit.Row.RowNo, Args: [hit.Reference]));
                 }
                 else
                 {
@@ -642,7 +647,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
 
         var line = parts.FirstOrDefault(l => l.Id == payment.LineId)
-            ?? throw new ReviewException(LineMissing, "The part is no longer in the store.");
+            ?? throw new ReviewException(LineMissing, "The part is no longer in the store.", variant: ReviewException.Part);
         var was = line.Amount!.Value;
         if (amount == 0m)
         {
@@ -674,7 +679,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             case AmountChangeKind.HandLine:
                 var hand = lines.FirstOrDefault(l => l.Id == payment.LineId && l.IsByHand)
-                    ?? throw new ReviewException(LineMissing, "The line added by hand is no longer in the store.");
+                    ?? throw new ReviewException(LineMissing, "The line added by hand is no longer in the store.", variant: ReviewException.HandLine);
                 _store.SaveReviewLine(hand with { Amount = amount });
                 break;
             case AmountChangeKind.SplitOff:
@@ -908,7 +913,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     /// <param name="partAmount">The share of a split row this payment is (its own share or a part's); null for a row not split.</param>
     /// <param name="part">The payment's place among the row's parts (<see cref="ReviewPayment.Part"/>).</param>
-    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false, decimal? partAmount = null, int part = 0, bool handLineTwin = false)
+    /// <param name="monthHasRegister">The month was searched against a register (words the OUTSIDE_TOR refusal).</param>
+    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool monthHasRegister, bool twin = false, decimal? partAmount = null, int part = 0, bool handLineTwin = false)
     {
         var amount = partAmount ?? hit.Amount;
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
@@ -928,7 +934,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         // a salary asked for its type stays to declare, refused until it is chosen: dropped, it would leave the month unpaid
         var defaultDeclare = (typeCode is not null || asking) && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
         var declare = overlay?.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction, asking ? pick.InForce : null);
+        var outsideTor = OutsideTorOf(category, typeCode, register, monthHasRegister);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction, asking ? pick.InForce : null, outsideTor);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -972,10 +979,20 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             HasOverride = overlay is not null,
             Checks = declare ? blockers : [],
             Blockers = blockers,
+            OutsideTor = outsideTor,
+            Notices = declare && !moneyIn ?ReviewChecks.NoticesOf(overlay?.TypeCode, defaultType, pick.TorTypeId, found is { IsSalary: true }, amount) : [],
         };
     }
 
-    private ReviewPayment FromHandLine(Period period, ReviewLine line, Person? person, MatchPerson? register, MatchCatalog catalog)
+    /// <summary>Why a payment is refused as OUTSIDE_TOR, null when it is not: a "TÖR-väline palgad" payment of no type
+    /// whose person the month's register does not list, or of a month searched with no register. The category stays
+    /// codeless and the row undeclared (decisions 10, 40, 100); only the refusal says what to do.</summary>
+    private static OutsideTorReason? OutsideTorOf(string? category, string? typeCode, MatchPerson? register, bool monthHasRegister) =>
+        typeCode is null && register is null && string.Equals(category, ReviewDefaults.OutsideTorCategory, StringComparison.Ordinal)
+            ? monthHasRegister ? OutsideTorReason.NotListed : OutsideTorReason.NoRegister
+            : null;
+
+    private ReviewPayment FromHandLine(Period period, ReviewLine line, Person? person, MatchPerson? register, MatchCatalog catalog, bool monthHasRegister)
     {
         var found = line.Category is null ? null : catalog.Find(line.Category);
         var residency = person?.Residency ?? Residency.Resident;
@@ -987,7 +1004,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var amount = line.Amount ?? 0m;
         var defaultDeclare = (typeCode is not null || asking) && inPeriod && person is not null;
         var declare = line.Declare ?? defaultDeclare;
-        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year), twoContracts: asking ? pick.InForce : null);
+        var outsideTor = OutsideTorOf(line.Category, typeCode, register, monthHasRegister);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year), twoContracts: asking ? pick.InForce : null, outsideTor: outsideTor);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -1020,6 +1038,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             HasOverride = true,
             Checks = declare ? blockers : [],
             Blockers = blockers,
+            OutsideTor = outsideTor,
+            Notices = declare ? ReviewChecks.NoticesOf(line.TypeCode, defaultType, pick.TorTypeId, found is { IsSalary: true }, amount) : [],
         };
     }
 
@@ -1075,6 +1095,22 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
 
         var rounded = sums.ToDictionary(kv => kv.Key, kv => Math.Round(kv.Value, 2, MidpointRounding.ToEven), StringComparer.Ordinal);
+        // salary-pattern money paid to the person outside the register is said of the person too (OUTSIDE_TOR_SALARY): a
+        // problem in the persons grid (yellow as any problem, plan line 322), never a figure of the Deklareerimata sum
+        // (decision 100). Its figure adds the euro amounts read, as that sum does. The rows nobody was found for have no
+        // person to say it of: their rows carry the refusal alone.
+        if (person is not null && !isUnmatched)
+        {
+            var outside = payments.Where(p => p.OutsideTor is not null && p.InPeriod && p.Direction != Direction.Credit
+                && !p.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal)).ToList();
+            if (outside.Count > 0)
+            {
+                var sum = outside.Where(p => p.AmountText is null && ReviewChecks.IsEuro(p.Currency)).Sum(p => p.Amount)
+                    .ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                problems = [.. problems, new MatchProblem(MatchProblem.OutsideTorSalary, $"{outside.Count} salary-pattern payment(s) ({sum} EUR) to a person outside TÖR are not declared: register the work in TÖR, or give the row a category or a payment type.", Args: [outside.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), sum])];
+            }
+        }
+
         return new ReviewPerson
         {
             Key = key,
@@ -1170,7 +1206,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             var existingHand = payment.LineId is { } id ? lines.FirstOrDefault(l => l.Id == id) : null;
             if (existingHand is null)
             {
-                throw new ReviewException(LineMissing, "The line added by hand is no longer in the store.");
+                throw new ReviewException(LineMissing, "The line added by hand is no longer in the store.", variant: ReviewException.HandLine);
             }
 
             return _store.SaveReviewLine(hand(existingHand));
@@ -1180,7 +1216,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         if (payment.IsPart)
         {
             var part = lines.FirstOrDefault(l => l.Id == payment.LineId && l.IsPart && l.RowId == rowId)
-                ?? throw new ReviewException(LineMissing, "The part is no longer in the store.");
+                ?? throw new ReviewException(LineMissing, "The part is no longer in the store.", variant: ReviewException.Part);
             return _store.SaveReviewLine(overlay(part)); // a part keeps its line whatever it decides: its amount is a decision
         }
 

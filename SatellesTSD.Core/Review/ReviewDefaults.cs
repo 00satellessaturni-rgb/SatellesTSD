@@ -29,6 +29,10 @@ public sealed record TypePick(string? TorTypeId, bool Ask, IReadOnlyList<string>
 
 public static class ReviewDefaults
 {
+    /// <summary>The second pass's salary-pattern category of a payee the register does not list (matching.json, the
+    /// workbook's column): codeless, never declared (plan question 10); its payment of no type is refused as OUTSIDE_TOR.</summary>
+    public const string OutsideTorCategory = "TÖR-väline palgad";
+
     /// <summary>The TÖR types of an employment contract (Tööleping): 1, and 507 by visa.</summary>
     public static readonly IReadOnlySet<string> EmploymentContractTypes = new HashSet<string>(["1", "507"], StringComparer.Ordinal);
 

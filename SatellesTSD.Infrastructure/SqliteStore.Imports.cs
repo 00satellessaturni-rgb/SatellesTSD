@@ -32,7 +32,7 @@ public sealed partial class SqliteStore
         var earlier = FindImport(companyId, sha256);
         if (earlier is not null)
         {
-            throw new ImportException($"{import.FileName} was already imported on {earlier.ImportedAt:yyyy-MM-dd HH:mm} as {earlier.FileName}.");
+            throw ReaderRefusal.Of(ReaderRefusal.AlreadyImported, $"{import.FileName} was already imported on {earlier.ImportedAt:yyyy-MM-dd HH:mm} as {earlier.FileName}.", earlier.ImportedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture), earlier.FileName);
         }
 
         var file = InsertImport(companyId, import, content, notes, sha256);
@@ -97,7 +97,7 @@ public sealed partial class SqliteStore
 
         using var tx = Tx();
         var old = Query(ImportFileSelect + " WHERE import_file.id = $id", ReadImportFile, ("$id", G(fileId))).SingleOrDefault()
-            ?? throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+            ?? throw ImportRefusal.Tag(new KeyNotFoundException($"Import {fileId} is not in the store."), ImportRefusal.NotFound);
         if (!string.Equals(old.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"{import.FileName}: the bytes are not the stored file's.", nameof(content));
@@ -341,10 +341,10 @@ public sealed partial class SqliteStore
         using var tx = Tx();
         var period = RequirePeriod(periodId);
         var file = Query(ImportFileSelect + " WHERE id = $id", ReadImportFile, ("$id", G(fileId))).SingleOrDefault()
-            ?? throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+            ?? throw ImportRefusal.Tag(new KeyNotFoundException($"Import {fileId} is not in the store."), ImportRefusal.NotFound);
         if (file.CompanyId != period.CompanyId)
         {
-            throw new InvalidOperationException("The file belongs to another company than the period.");
+            throw ImportRefusal.Of(ImportRefusal.OtherCompany, "The file belongs to another company than the period.");
         }
 
         Exec("INSERT OR IGNORE INTO period_import (period_id, file_id) VALUES ($period, $file)", ("$period", G(periodId)), ("$file", G(fileId)));
@@ -357,7 +357,7 @@ public sealed partial class SqliteStore
         var period = RequirePeriod(periodId);
         if (period.State != PeriodState.Draft)
         {
-            throw new InvalidOperationException($"The period is {period.State}; the files of its run stay as its record.");
+            throw ImportRefusal.Of(ImportRefusal.PeriodNotDraft, $"The period is {period.State}; the files of its run stay as its record.");
         }
 
         if (RunsUsing(fileId, periodId) > 0)
@@ -477,7 +477,7 @@ public sealed partial class SqliteStore
         Exec("DELETE FROM import_sheet WHERE file_id = $file", ("$file", G(fileId)));
         if (Exec("DELETE FROM import_file WHERE id = $file", ("$file", G(fileId))) == 0)
         {
-            throw new KeyNotFoundException($"Import {fileId} is not in the store.");
+            throw ImportRefusal.Tag(new KeyNotFoundException($"Import {fileId} is not in the store."), ImportRefusal.NotFound);
         }
 
         tx.Commit();

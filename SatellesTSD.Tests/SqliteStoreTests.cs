@@ -656,6 +656,8 @@ public class SqliteStoreTests
             var wrong = Assert.Throws<InvalidOperationException>(() => store.RecordFeedback(first.Id, Clean("EE0201001", b.LineNumber, 1)));
             Assert.Contains("another submission", wrong.Message);
             Assert.Contains($"{b.LineNumber} at 1, here 2", wrong.Message);
+            Assert.Equal(Core.Declare.SubmissionRefusal.PlacedElsewhere, Core.Declare.SubmissionRefusal.CodeOf(wrong));
+            Assert.Equal([$"EE0201001/{b.LineNumber}|1|2"], Core.Declare.SubmissionRefusal.ItemsOf(wrong)); // the key, the report's place, the file's
             Assert.All(new[] { a, b }, p => Assert.Equal(PaymentStatus.Sent, store.History(period.Id, Section.EE0201001, p.LineNumber)[^1].Status)); // nothing took a verdict
             Assert.Empty(store.Feedback(b.Id));
             Assert.Null(store.Submissions(period.Id).Single().Result);
@@ -692,7 +694,9 @@ public class SqliteStoreTests
             var line = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
             var file = store.AddSubmission(period.Id, "f.xml", "u", [line.Id], DateTime.UtcNow);
 
-            Assert.Throws<InvalidOperationException>(() => store.RecordFeedback(file.Id, Clean("EE0201001", "some-other-key", 1)));
+            var foreign = Assert.Throws<InvalidOperationException>(() => store.RecordFeedback(file.Id, Clean("EE0201001", "some-other-key", 1)));
+            Assert.Equal(Core.Declare.SubmissionRefusal.OtherFile, Core.Declare.SubmissionRefusal.CodeOf(foreign));
+            Assert.Equal(["EE0201001/some-other-key"], Core.Declare.SubmissionRefusal.ItemsOf(foreign));
             Assert.Equal(PaymentStatus.Sent, Assert.Single(store.Payments(period.Id)).Status);
             Assert.Null(Assert.Single(store.Submissions(period.Id)).Result);
         }
@@ -716,7 +720,8 @@ public class SqliteStoreTests
             var file2 = store.AddSubmission(period.Id, "f2.xml", "u2", [a.Id], DateTime.UtcNow);
             store.ResolveLine(a.Id, onServer: true);
             Assert.Equal(PaymentStatus.Accepted, Assert.Single(store.Payments(period.Id)).Status);
-            Assert.Throws<InvalidOperationException>(() => store.WithdrawSubmission(file2.Id)); // a resolved line means the file was uploaded
+            var answered = Assert.Throws<InvalidOperationException>(() => store.WithdrawSubmission(file2.Id)); // a resolved line means the file was uploaded
+            Assert.Equal(Core.Declare.SubmissionRefusal.WithdrawAnswered, Core.Declare.SubmissionRefusal.CodeOf(answered)); // worded by the window by it
         }
     }
 
@@ -727,7 +732,8 @@ public class SqliteStoreTests
         using (store)
         {
             var a = store.AddPayment(SalaryDraft(store, period, person, LineAction.R));
-            Assert.Throws<InvalidOperationException>(() => store.ResolveLine(a.Id, onServer: true)); // a draft is not pending
+            var draft = Assert.Throws<InvalidOperationException>(() => store.ResolveLine(a.Id, onServer: true)); // a draft is not pending
+            Assert.Equal((Core.Declare.SubmissionRefusal.NotPending, "Draft"), (Core.Declare.SubmissionRefusal.CodeOf(draft), Core.Declare.SubmissionRefusal.SubjectOf(draft)));
             var file = store.AddSubmission(period.Id, "f.xml", "u", [a.Id], DateTime.UtcNow);
 
             store.ResolveLine(a.Id, onServer: false);

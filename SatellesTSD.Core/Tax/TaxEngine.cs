@@ -83,7 +83,7 @@ public readonly record struct EffectiveFlags(
         if (type.FundedPension && !nonResident && !foreignA1)
         {
             fundedPension = payee.FundedPensionMember
-                ?? throw new InvalidOperationException($"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar status has not been checked.");
+                ?? throw TaxRefusal.Of(PaymentChecks.PensionNotChecked, $"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar status has not been checked.", type.Code);
         }
 
         decimal? incomeTaxRate = null;
@@ -129,7 +129,7 @@ public sealed class TaxEngine
         ArgumentNullException.ThrowIfNull(payee);
         if (input.Amount < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(input), "Refunds (negative amounts) are not supported.");
+            throw TaxRefusal.Mark(new ArgumentOutOfRangeException(nameof(input), "Refunds (negative amounts) are not supported."), PaymentChecks.NegativeAmount);
         }
 
         if (input.ExemptionCap < 0)
@@ -144,8 +144,8 @@ public sealed class TaxEngine
 
         if ((payee.Residency == Residency.NonResident) != (input.Type.Payee == Residency.NonResident))
         {
-            throw new InvalidOperationException(
-                $"Payment type {input.Type.Code} is for a {input.Type.Payee} payee; this payee is a {payee.Residency}.");
+            throw TaxRefusal.Of(PaymentChecks.TypePayeeMismatch,
+                $"Payment type {input.Type.Code} is for a {input.Type.Payee} payee; this payee is a {payee.Residency}.", input.Type.Code, detail: payee.Residency.ToString());
         }
 
         var flags = EffectiveFlags.Of(input.Type, payee);
@@ -160,10 +160,10 @@ public sealed class TaxEngine
         {
             // KR_KOP_03 checks TSD_KP against the person's own rate (2, 4 or 6 %); a silent default would be a RED error.
             p = payee.PensionRate
-                ?? throw new InvalidOperationException($"Payment type {input.Type.Code} withholds the funded pension, but the payee's II-pillar rate is unknown.");
+                ?? throw TaxRefusal.Of(PaymentChecks.PensionRateUnknown, $"Payment type {input.Type.Code} withholds the funded pension, but the payee's II-pillar rate is unknown.", input.Type.Code);
             if (p <= 0m || p >= 1m)
             {
-                throw new InvalidOperationException($"The II-pillar rate {p} is not a fraction between 0 and 1.");
+                throw TaxRefusal.Of(PaymentChecks.PensionRateInvalid, $"The II-pillar rate {p} is not a fraction between 0 and 1.", figure: p);
             }
         }
 

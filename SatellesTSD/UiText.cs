@@ -136,6 +136,9 @@ internal static class UiText
     public const string ExemptionMonthly = "Maksuvaba summa kuus";
     public const string ExemptionFull = "(tühi = seaduse summa)";
     public const string SocialTaxMinimum = "SM miinimumkohustus";
+
+    // the minimum box's tip: a state pension's recipient owes no minimum, and the "Vanaduspensionil" tick takes it off (decision 237)
+    public const string MinimumPensionTip = "Riikliku pensioni saaja (vanadus-, töövõimetus-, toitjakaotuspension jm) ning osalise või puuduva töövõimega isiku eest ei ole tööandjal sotsiaalmaksu miinimumkohustust (SMS § 2 lg 4 p 6). Märke „Vanaduspensionil“ lisamine võtab miinimumi maha; teiste pensionisaajate ja töövõimetute puhul eemalda märge käsitsi.";
     public const string DeclarationLabel = "Deklareerimine";
     public const string DeclarationAuto = "reeglite järgi";
     public const string DeclarationInclude = "kaasa (nagu kehtiv töötamine)";
@@ -260,8 +263,7 @@ internal static class UiText
             + "põhiosa suurendamiseks vähendage mõne osa summat või eemaldage osa summaga 0.",
         ReviewWorkspace.SplitPartTooBig when refusal.Figure is { } max => $"Makse põhiosale peab jääma vähemalt 0,01; selle osa summa võib olla kuni {max:N2}.",
         ReviewWorkspace.PeriodNotDraft => "Kuu ei ole enam mustand – summat muuta ei saa.",
-        ReviewWorkspace.LineMissing => byHand ? "Seda käsitsi lisatud rida ei ole enam andmebaasis – vaade laaditakse uuesti."
-            : "Seda osa ei ole enam andmebaasis – vaade laaditakse uuesti.",
+        ReviewWorkspace.LineMissing => byHand ? HandLineMissing : PartMissing,
         _ => null,
     };
 
@@ -300,8 +302,17 @@ internal static class UiText
     public static string LookupOne(string name) => $"Päring: {name}";
 
     /// <summary>A person's line in the log after a register check: who, the day their facts were checked for, what was done.</summary>
+    /// <remarks>Each step in Estonian by its note; the Core's English for a step without one (the notes go one for one with the steps).</remarks>
     public static string LookupLine(PersonLookupOutcome outcome) =>
-        $"{outcome.Name}{(outcome.ControlDate is { } day ? $" (seisuga {Day(day)})" : "")}: {string.Join("; ", outcome.Steps)}";
+        $"{outcome.Name}{(outcome.ControlDate is { } day ? $" (seisuga {Day(day)})" : "")}: {string.Join("; ", outcome.Steps.Select((step, i) => (outcome.StepNotes.Count == outcome.Steps.Count ? LookupStep(outcome.StepNotes[i]) : null) ?? step))}";
+
+    /// <summary>The problem lines of a person's register check, in Estonian where worded, in the Core's English else.</summary>
+    public static IEnumerable<string> LookupProblemLines(PersonLookupOutcome outcome) =>
+        outcome.Problems.Select((english, i) => LookupProblemLine(english, outcome.ProblemNotes.Count == outcome.Problems.Count ? outcome.ProblemNotes[i] : null));
+
+    /// <summary>The run's own problem lines (no run, a person without a code), as <see cref="LookupProblemLines(PersonLookupOutcome)"/>.</summary>
+    public static IEnumerable<string> LookupProblemLines(LookupRunReport report) =>
+        report.Problems.Select((english, i) => LookupProblemLine(english, report.ProblemNotes.Count == report.Problems.Count ? report.ProblemNotes[i] : null));
 
     /// <summary>The question after the card's check when a fact set by hand differs from the register's fresh answer.</summary>
     public static string HandBackQuestion(string name, IReadOnlyList<LookupDisagreement> open)
@@ -394,20 +405,80 @@ internal static class UiText
     public const string DeclareTotalsPerType = "Deklaratsioon: koond väljamakse liigi kaupa, viimase kuupäevaga";
     public const string DeclareTotalsPerTypeTip = "Märgitud: üks rida väljamakse liigi kohta, kuu viimase makse kuupäevaga. Märkimata: iga makse eraldi reana. Read muutuvad järgmisel „Koosta read“.";
     public const string DeclareModeChanged = "Deklaratsiooni read koostatakse nüüd";
-    public const string TwoContractsMenu = "Kaks lepingut korraga";
-    public const string TwoContractsMenuTip = "Mis liigi saab kategooria Palgad makse päeval, mil isikul kehtib kaks eri liiki töötamist (nt tööleping ja VÕS leping). Makse enda Väljamakse liik ja kaardi „Kaardi töötamise liik kõigile maksetele“ on alati ülimuslikud. Valik kehtib järgmisest „Koosta read“ ja simulatsioonist.";
-    public const string TwoContractsSalary = "Palgad → tööleping (1/507)";
-    public const string TwoContractsSalaryTip = "Palk saab päeval kehtiva töölepingu liigi (10, mitteresidendil 120). Sobib, kui palgad makstakse töölepingu alusel. NB: ka VÕS-tasu, mis on kategoorias Palgad, saab siis liigi 10 – kontrolli neid ridu (veerus „Kontroll“ on mõlemad TÖR liigid) ja vajadusel vali makse liik ise.";
-    public const string TwoContractsAsk = "Küsi makse liiki";
-    public const string TwoContractsAskTip = "Sellisele palgale liiki ei pakuta: makse on deklareerimiseks märgitud, kuid blokeeritud (TWO_CONTRACTS), kuni valid Väljamakse liigi või kaardi töötamise liigi kõigile maksetele. Seni ei lisata ka miinimumi nullrida. Kõige täpsem, kuid nõuab iga sellise rea juures üht valikut.";
-    public const string TwoContractsLatest = "Hiliseim algus (endine reegel)";
-    public const string TwoContractsLatestTip = "Palk saab päeval kehtiva lepingu liigi: kehtiv enne peatatut, siis hiliseima algusega (otsus 85). Kui VÕS leping algas pärast töölepingut, saab töölepingu palk liigi 17 ja töölepingule lisandub miinimumi nullrida – kasuta ainult siis, kui see on õige.";
-    public const string TwoContractsChanged = "Kaks lepingut korraga:";
+    public const string TwoContractsMenu = "Palk kahe kehtiva lepingu korral";
+    public const string TwoContractsSalary = "Palk töölepingu järgi";
+    public const string TwoContractsAsk = "Küsi liik iga makse juures";
+    public const string TwoContractsLatest = "Palk hiliseimana alanud lepingu järgi";
+    public const string TwoContractsChanged = TwoContractsMenu + ":";
     public const string TwoContractsNote = "TÖR";
+
+    /// <summary>The check column's word on an unticked "TÖR-väline palgad" row refused as OUTSIDE_TOR.</summary>
+    public const string OutsideTorNote = "TÖR-väline";
+
+    /// <summary>The check cell's tip on a "TÖR-väline palgad" row refused as OUTSIDE_TOR, ticked or not.</summary>
+    public static string OutsideTorTip(bool noRegister) => noRegister
+        ? "Palgamustriga makse isikule, keda TÖR ei loetle: kuu otsiti ilma TÖR-failita. Lisa kuu TÖR-fail ja otsi uuesti või anna reale kategooria (Palgad) või väljamakse liik. Kuni seda pole, makset ei deklareerita ja see ei ole Deklareerimata summas."
+        : "Palgamustriga makse isikule, keda kuu TÖR ei loetle: registreeri töötamine TÖR-is ja otsi uuesti või anna reale kategooria või väljamakse liik. Kuni seda pole, makset ei deklareerita ja see ei ole Deklareerimata summas.";
 
     /// <summary>The check cell's tip on a salary whose type the Seaded rule picked from two contracts in force that day.</summary>
     public static string TwoContractsPickedTip(IReadOnlyList<string> types, string? typeCode) =>
         $"Makse päeval kehtib kaks eri liiki töötamist (TÖR {string.Join(", ", types)}); liik {typeCode ?? "–"} on valitud seadete järgi (Seaded → {TwoContractsMenu}). Kontrolli, et see sobib.";
+
+    /// <summary>The taxes a payment type carries, by name, in the matrix's order (the notice TYPE_TAXES_DIFFER compares them).</summary>
+    private static List<string> TaxNames(Core.Tax.PaymentType type)
+    {
+        var names = new List<string>();
+        if (type.SocialTax)
+        {
+            names.Add("sotsiaalmaks");
+        }
+
+        if (type.SocialTaxMinimum)
+        {
+            names.Add("sotsiaalmaksu miinimum");
+        }
+
+        if (type.UnemploymentInsurance)
+        {
+            names.Add("töötuskindlustusmakse");
+        }
+
+        if (type.FundedPension)
+        {
+            names.Add("kogumispension");
+        }
+
+        if (type.IncomeTaxRate is { } rate)
+        {
+            names.Add($"tulumaks {(rate * 100m).ToString("0.##", System.Globalization.CultureInfo.GetCultureInfo("et-EE"))} %");
+        }
+
+        return names;
+    }
+
+    /// <summary>The check cell's tip, and the simulation's line, for a notice of a declared payment (shown only: it refuses
+    /// nothing and changes no figure).</summary>
+    public static string NoticeTip(Core.Review.ReviewPayment p, string code)
+    {
+        switch (code)
+        {
+            case Core.Review.ReviewChecks.TypeTaxesDiffer
+                when p.TypeCode is { } hand && p.DefaultTypeCode is { } byDefault
+                    && Core.Tax.PaymentTypes.TryGet(hand, out var handType) && Core.Tax.PaymentTypes.TryGet(byDefault, out var defaultType):
+                var handTaxes = TaxNames(handType!);
+                var defaultTaxes = TaxNames(defaultType!);
+                var dropped = string.Join(", ", defaultTaxes.Except(handTaxes));
+                var added = string.Join(", ", handTaxes.Except(defaultTaxes));
+                return $"{code}: Väljamakse liik {hand} on valitud käsitsi; TÖR-i töötamise liigi järgi oleks liik {byDefault}. Liigiga {hand} "
+                    + (dropped.Length > 0 ? $"jääb ära: {dropped}" : "ei jää ühtki maksu ära")
+                    + (added.Length > 0 ? $"; lisandub: {added}" : "")
+                    + $". Kui see on töölepingu alusel makstud palk, vali liik {byDefault} või {Default} (SMS § 2, TKindlS, KoPS). Arvutus ega deklaratsioon sellest ei muutu.";
+            case Core.Review.ReviewChecks.PayOnFreeWork:
+                return $"{code}: Palk on makstud isikule, kelle TÖR-i kanne on 501 Tasuta töötamine. Makse deklareeritakse liigiga {p.TypeCode ?? "–"} nagu palk, sotsiaalmaksu miinimumita (otsus 48). Kui tööd tehakse tasu eest, paranda töötamise liik TÖR-is (MKS § 25¹).";
+            default:
+                return code;
+        }
+    }
 
     public static string TwoContractsText(Core.Review.TwoContractsRule rule) => rule switch
     {
@@ -477,6 +548,10 @@ internal static class UiText
 
     public static string UndoReopenHasDrafts(int count) => $"Ülevaatus erineb e-MTA-s olevast: {count} rida tuleb saata parandusena. Periood jääb mustandiks; ekspordi read või muuda ülevaatus tagasi ja vajuta uuesti „{UndoReopen}“.";
 
+    /// <summary>The log's line of the same refusal: <see cref="UndoReopenHasDrafts"/> in its keyed form.</summary>
+    public static string UndoReopenDraftsLog(IReadOnlyList<string> keys) =>
+        $"Ülevaatus erineb e-MTA-s olevast: {keys.Count} rida tuleb saata parandusena ({string.Join(", ", keys)}).";
+
     public const string ResolveAccepted = "Kinnita rida käsitsi";
     public const string ResolveRejected = "Lükka rida tagasi";
     public const string Calculator = "Kalkulaator…";
@@ -529,7 +604,7 @@ internal static class UiText
     {
         if (refusal.DraftLines.Count > 0)
         {
-            return $"Saatmata mustandread: {string.Join(", ", refusal.DraftLines)}. Eksportige need või vajutage uuesti „Koosta read“, siis märkige periood kinnitatuks.";
+            return $"Saatmata mustandread: {string.Join(", ", refusal.DraftLines)}. Ekspordi need või vajuta uuesti „{BuildLines}“, siis märgi periood kinnitatuks.";
         }
 
         var parts = new List<string>();
@@ -577,23 +652,774 @@ internal static class UiText
             ImportRefusal.Runs => "Otsingu tulemus kasutab seda faili; kustutage enne otsingu tulemus (või otsige uuesti ilma selle failita).",
             ImportRefusal.Decisions => $"{count} ülevaate otsust viitab selle faili ridadele; eemaldage fail enne selle perioodide failide hulgast.",
             ImportRefusal.OtherMonths => $"Faili loetlevad ka teised mustandkuud ({subject}); eemaldage see enne nende failide hulgast.",
+            ImportRefusal.NotListed => "Fail ei ole enam selle perioodi failide hulgas; sulgege aken ja avage see uuesti.",
+            ImportRefusal.BytesMissing => $"Faili{(subject is null ? "" : $" „{subject}“")} sisu ei ole andmebaasis; faili ei saa uuesti lugeda. Importige fail uuesti.",
+            ImportRefusal.NotFound => "Faili ei ole enam andmebaasis; sulgege aken ja avage see uuesti.",
+            ImportRefusal.OtherCompany => "Fail kuulub teisele ettevõttele kui see periood.",
+            ImportRefusal.PeriodNotDraft => "Kuu ei ole enam mustand: selle failid jäävad kuu dokumendiks.",
+            ImportRefusal.PeriodNotFound => "Perioodi ei ole enam andmebaasis; valige periood uuesti.",
             _ => null,
         };
     }
 
     /// <summary>A refusal the window words itself (the card's save, a file's removal), or null: the exception's own text then.</summary>
-    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review)
-        : DeclareRefused(refusal) ?? PhrasesRefused(refusal) ?? LayoutsRefused(refusal) ?? FileRefused(refusal);
+    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) ?? ReviewRefused(review)
+        : RunRefused(refusal) ?? DeclareRefused(refusal) ?? FeedbackRefused(refusal) ?? BuildRefused(refusal) ?? ReaderRefused(refusal) ?? PhrasesRefused(refusal) ?? LayoutsRefused(refusal) ?? FileRefused(refusal);
+
+    /// <summary>A refusal of a file's reading (the reader, the employer's check, the same bytes stored already) or a reading that
+    /// recognised nothing, in Estonian by its code (decision 229, the owner's option A); null for any other. No file name: every
+    /// line it goes on starts with it. The library's own text of a damaged workbook stays in the Core's English the log keeps.</summary>
+    /// <summary>The time an earlier import was stored, which the store keeps in UTC, as the files dialog shows it: local time,
+    /// dd.MM.yyyy HH:mm (the review of the Estonian texts). A text that does not read is shown as it is.</summary>
+    private static string? LocalStamp(string? utc) =>
+        utc is not null && DateTime.TryParseExact(utc, "yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at)
+            ? at.ToLocalTime().ToString("dd.MM.yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture)
+            : utc;
+
+    public static string? ReaderRefused(Exception refusal)
+    {
+        var subject = Core.Import.ReaderRefusal.SubjectOf(refusal);
+        var detail = Core.Import.ReaderRefusal.DetailOf(refusal);
+        return Core.Import.ReaderRefusal.CodeOf(refusal) switch
+        {
+            Core.Import.ReaderRefusal.SpreadsheetXml => "Fail on Excel 2003 XML-tabel (SpreadsheetML), mida programm ei loe. Ava see Excelis ja salvesta .xlsx-failina, siis impordi uuesti.",
+            Core.Import.ReaderRefusal.WebPage => "Fail on Exceli nime all salvestatud veebileht (HTML), mitte Exceli fail. Ava see Excelis ja salvesta .xlsx-failina, siis impordi uuesti.",
+            Core.Import.ReaderRefusal.UnknownFormat => "Fail ei ole Exceli fail ega tekstifail (CSV); seda ei saa importida.",
+            Core.Import.ReaderRefusal.NoExcelReader => "Exceli faili ei saa lugeda: programmis puudub Exceli lugeja.",
+            Core.Import.ReaderRefusal.NotExcel => $"Fail ei ole Exceli töövihik{(subject is null ? "" : $" ({subject})")}.",
+            Core.Import.ReaderRefusal.ExcelUnopened => "Faili ei saanud Exceli töövihikuna avada: fail võib olla kahjustatud või parooliga kaitstud. Ava see Excelis ja salvesta uuesti .xlsx-failina.",
+            Core.Import.ReaderRefusal.SheetUnreadable => $"Faili {subject ?? "?"}. lehte ei saanud lugeda (leht võib olla kahjustatud); faili ei loetud, teised failid loetakse.",
+            Core.Import.ReaderRefusal.NothingRecognised => "Failis ei tuntud ära ühtegi lehte (ei TÖR väljavõtet ega pangaväljavõtet); midagi ei salvestatud. Põhjused on logis lehtede kaupa.",
+            Core.Import.ReaderRefusal.SeveralEmployers => $"Failide TÖR väljavõtted nimetavad mitut tööandjat ({subject}); impordi korraga ühe tööandja failid.",
+            Core.Import.ReaderRefusal.AlreadyImported => $"Sama fail on juba imporditud {LocalStamp(subject)}{(detail is null ? "" : $" nimega „{detail}“")}.",
+            _ => null,
+        };
+    }
+
+    /// <summary>A file of the selection that could not be opened at all (in use, no access): the system's own reason after it.</summary>
+    public static string FileUnreadable(string reason) => $"Faili ei saanud avada: {reason}";
+
+    /// <summary>An import log line of a file not imported (decision 229, the owner's option A): the refusal in Estonian when the
+    /// window words it, the Core's English after it in brackets; the English alone otherwise.</summary>
+    public static string ImportRefusedLine(string fileName, string? worded, string? english) =>
+        worded is null ? $"{fileName}: {english}" : $"{fileName}: {worded}{(string.IsNullOrEmpty(english) ? "" : $" ({english})")}";
+
+    /// <summary>What a file holds, in words (the import log, the files dialog's „Liik“ column).</summary>
+    public static string ImportKindText(Core.Import.ImportKind? kind) => kind switch
+    {
+        Core.Import.ImportKind.Statement => "pangaväljavõte",
+        Core.Import.ImportKind.Tor => "TÖR väljavõte",
+        Core.Import.ImportKind.Mixed => "TÖR ja pangaväljavõte",
+        _ => "",
+    };
+
+    /// <summary>The import log's line of a file imported (or found imported before and linked).</summary>
+    public static string ImportedLine(string fileName, bool already, Core.Import.ImportKind? kind) =>
+        $"{fileName}: {(already ? "juba imporditud, seotud perioodiga" : "imporditud")} ({ImportKindText(kind)})";
+
+    /// <summary>A sheet as the import log names it: „Leht „x““, or "2. leht" for a sheet without a name.</summary>
+    public static string SheetLabel(string? sheet, int sheetNo) => sheet is { Length: > 0 } ? $"Leht „{sheet}“" : $"{sheetNo}. leht";
+
+    /// <summary>A note of the import (decision 135) in Estonian, "CODE: Leht „x“: …" with the code verbatim (decision 46), by its
+    /// code and the figures it carries; null for a code (or a note without its figures) this does not know, which is shown in
+    /// the Core's English as before. The Estonian alone: the headers, codes and names in it are the file's own.</summary>
+    public static string? SheetNoteText(Core.Import.ImportNote note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        var body = note.Code switch
+        {
+            Core.Import.SheetNotes.Empty => "tühi leht, sealt ei loetud midagi.",
+            Core.Import.SheetNotes.NoLayout => "päiserida ei vasta ühelegi väljavõtte paigutusele; lehte ei loetud.",
+            Core.Import.SheetNotes.TorLacks when note.Args.Count > 0 => $"sarnaneb TÖR väljavõttega, kuid sellel puuduvad veerud {string.Join(", ", note.Args.Select(h => $"„{h}“"))}; lehte ei loetud.",
+            Core.Import.SheetNotes.NearestLayout when note.Args is [var id] && note.Differences.Count > 0 =>
+                $"lehte ei tuntud ära. Lähim paigutus on „{id}“: {string.Join("; ", note.Differences.Select(HeaderDifferenceText))}.",
+            Core.Import.SheetNotes.Hidden => "töövihikus peidetud, loeti siiski.",
+            Core.Import.SheetNotes.RowProblems when note.Count is { } rows => $"probleemiga ridu {rows} ({string.Join(", ", note.Args)}).",
+            Core.Import.SheetNotes.UnclosedQuote when note.Args is [var record] => $"{record}. kirjes avatud jutumärk jääb sulgemata: kõik sellele järgnev loeti üheks väljaks.",
+            _ => ImportProblemBody(note.Code, note.Args, note.RowNo),
+        };
+        if (body is null)
+        {
+            return null;
+        }
+
+        return note.SheetNo > 0 ? $"{note.Code}: {SheetLabel(note.Sheet, note.SheetNo)}: {body}" : $"{note.Code}: {Capital(body)}";
+    }
+
+    /// <summary>A note as the import log, the re-read and the simulation show it: the Estonian, or the Core's English for one not worded.</summary>
+    public static string SheetNoteLine(Core.Import.ImportNote note) => SheetNoteText(note) ?? note.English;
+
+    /// <summary>How a sheet's header row differs from the nearest layout's, in Estonian.</summary>
+    public static string HeaderDifferenceText(Core.Import.HeaderDifference d) => d.Column is { } column
+        ? $"{d.RowNo}. rea {column}. veerg on „{d.Found}“, paigutuses „{d.Expected}“"
+        : $"{d.RowNo}. real on päiseveerge {d.Width}, paigutusel „{d.LayoutId}“ {d.LayoutWidth}";
+
+    /// <summary>A problem of a sheet or of one of its rows in Estonian, by its code and figures; null for a code this does not
+    /// know, or a problem stored before its figures were kept (its English then).</summary>
+    public static string? ImportProblemText(Core.Import.ImportProblem problem)
+    {
+        ArgumentNullException.ThrowIfNull(problem);
+        return ImportProblemBody(problem.Code, problem.Args, problem.RowNo) is { } body ? Capital(body) : null;
+    }
+
+    private static string? ImportProblemBody(string code, IReadOnlyList<string>? args, int? rowNo) => code switch
+    {
+        Core.Import.ImportProblem.AboveHeader when rowNo is { } r => $"rida {r} on päiserea kohal ja näeb välja nagu makse; päiserea kohal olevaid ridu ei loeta.",
+        Core.Import.ImportProblem.NoRows => "lehel ei ole ühtegi rida, kus oleks saaja nimi.",
+        Core.Import.ImportProblem.BadDate when rowNo is { } r => args switch
+        {
+            [] => $"real {r} ei ole kuupäeva.",
+            [var text] => $"rea {r} kuupäeva „{text}“ ei saanud lugeda.",
+            [var header, var text] => $"rea {r} veeru „{header}“ väärtust „{text}“ ei saanud lugeda.",
+            _ => null,
+        },
+        Core.Import.ImportProblem.NoAmount when rowNo is { } r => $"real {r} ei ole summat.",
+        Core.Import.ImportProblem.BadAmount when rowNo is { } r && args is [var text] => $"rea {r} summat „{text}“ ei saanud lugeda.",
+        Core.Import.ImportProblem.BadMarker when rowNo is { } r && args is [var marker, var debit, var credit] => $"rea {r} suund „{marker}“ ei ole „{debit}“ ega „{credit}“.",
+        Core.Import.TorParser.NoCode when rowNo is { } r && args is [var first, var last] => $"real {r} ({first} {last}) ei ole isikukoodi.",
+        Core.Import.TorParser.NoName when rowNo is { } r && args is [var personal, var which] => $"real {r} ({personal}) ei ole {(which == "first" ? "eesnime" : "perekonnanime")}.",
+        Core.Import.TorParser.SeveralEmployers when args is [var list] => $"TÖR väljavõte nimetab mitut tööandjat: {list}.",
+        Core.Import.TorParser.EmployerMismatch when args is [var foreign, var own] => $"TÖR väljavõte nimetab teist tööandjat ({foreign}), mitte seda ettevõtet ({own}). Kontrolli, et fail kuulub sellele ettevõttele.",
+        Core.Import.TorParser.NoEmployerCode => args switch
+        {
+            [] => $"TÖR väljavõttes ei ole tööandja registrikoodi (veerg „{Core.Import.TorHeaders.EmployerCode}“ puudub või on tühi): väljavõtet ei saa ettevõttega võrrelda ja see imporditakse valitud ettevõttele.",
+            [var rows] => $"tööandja registrikoodita ridu {rows}: neid ei saa ettevõttega võrrelda ja need loetakse ettevõtte omaks.",
+            _ => null,
+        },
+        Core.Import.TorParser.ExtraColumns when args is [var headers] => $"lehel on veerge, mida töötamise register ei kirjuta ({headers}): see võib olla töövihiku tehtud koopia või uuem väljavõte. Kontrolli, et fail on registrist alla laaditud.",
+        _ => null,
+    };
+
+    private static string Capital(string text) => text.Length == 0 ? text : char.ToUpper(text[0], System.Globalization.CultureInfo.CurrentCulture) + text[1..];
+
+    /// <summary>A problem the run or the review names in Estonian, by its code and figures; null for a code this does not
+    /// word, or a problem stored before its figures were kept (its English then). The persons grid's tooltip, the „Otsi
+    /// maksed“ log and the simulation put the code before it (<see cref="ProblemLine"/>).</summary>
+    public static string? MatchProblemText(MatchProblem problem)
+    {
+        ArgumentNullException.ThrowIfNull(problem);
+        // one row is said in the singular (the review of the Estonian texts)
+        var one = problem.Subject is { } listed && !listed.Contains(',', StringComparison.Ordinal);
+        var StateUnread = one
+            ? "loeti programmi varasema versiooniga, mis ei lugenud tehingu olekut: rida {0} ei liigutanud raha (tühistatud, tagasi lükatud, ebaõnnestunud või ootel), kuid on loetud makseks. "
+            : "loeti programmi varasema versiooniga, mis ei lugenud tehingu olekut: read {0} ei liigutanud raha (tühistatud, tagasi lükatud, ebaõnnestunud või ootel), kuid on loetud makseteks. ";
+        var ByHand = one ? $"võta see rida käsitsi deklaratsioonist välja (märge „{Declare}“ maha)." : $"võta need read käsitsi deklaratsioonist välja (märge „{Declare}“ maha).";
+        var a = problem.Args;
+        string Span(string first, string last) => first == last ? $"rida {first}" : $"read {first}–{last}";
+        return problem.Code switch
+        {
+            MatchProblem.StateUnread when problem.Source is { } source && problem.Subject is { } rows => $"{source} " + string.Format(System.Globalization.CultureInfo.InvariantCulture, StateUnread, rows)
+                + (problem.Variant == MatchProblem.StateUnreadLocked
+                    ? $"Faili ei saa uuesti lugeda (see on juba eksporditud või deklareeritud kuu failide hulgas või sellest koostatud rida on olnud serveris): {ByHand}"
+                    : $"Loe fail uuesti ({Files.TrimEnd('…')} › {Reread}) või {ByHand}"),
+            MatchProblem.HeaderRow when a is [var source, var row] => $"{source} [{row}]: andmete seas on päiserida; see jäeti välja.",
+            MatchProblem.RowsBelowLastPayee when a is [var source, var first, var last, var count] && Whole(count) is { } n => problem.Variant == MatchProblem.NoPayeeRow
+                ? $"{source} [{Span(first, last)}]: ükski rida ei nimeta saajat, seega {(n == 1 ? "jäi ainus rida" : $"jäid kõik {n} rida")} loetlemata – kontrolli paigutuse saaja veergu."
+                : $"{source} [{Span(first, last)}]: viimasest saajaga reast allpool jäi {n} rida loetlemata – {(n == 1 ? "see võib olla" : "nende seas võib olla")} teenustasu või lõppsaldo; vaata väljavõtet.",
+            MatchProblem.DuplicateRow when a is [var reference, var original] => $"{reference} on sama makse kui {original}; rida on loetletud, kuid arvesse ei lähe.",
+            MatchProblem.NoFilters when a is [var source, var layout] => $"{source}: paigutusel „{layout}“ ei ole kategooriate filtreid; selle väljavõtte ridadele kategooriat ei määrata.",
+            MatchProblem.SeveralEntries when a is [var name, var count, var rows] => $"{name}: TÖR loetleb isikut {count} korda (read {rows}).",
+            MatchProblem.NoEmploymentInMonth when a is [var name, var year, var month] && Whole(year) is { } y && Whole(month) is { } m =>
+                $"{name}: ükski TÖR-i töötamine ei kata kuud {m:00}.{y}.",
+            MatchProblem.NoName when a is [var row] => $"TÖR-i rida {row}: eesnimi või perekonnanimi puudub; isikut ei otsitud.",
+            MatchProblem.AmbiguousMask when a is [var name, var last, var first, var other, var count, var source, var rows] && Whole(count) is { } n =>
+                $"{name}: otsingumaskid „{last} {first}“ võivad tähendada ka isikut {other}; väljavõttel {source} jäi {n} rida isikuta ({(n == 1 ? "rida" : "read")} {rows}).",
+            MatchProblem.NameContained when a is [var source, var row, var owner, var shorter, var count] => Whole(count) == 1
+                ? $"{source} [{row}] leiti isikule {owner} ja isikule {shorter}, kelle nimi sisaldub tema nimes; makse arvestati isikule {owner}."
+                : $"{source} [{row}] leiti isikule {owner} ja isikutele {shorter}, kelle nimed sisalduvad tema nimes; makse arvestati isikule {owner}.",
+            MatchProblem.SharedRow when a is [var source, var row, var names] => $"{source} [{row}] leiti mitmele isikule ({names}); kellelegi seda ei arvestatud – vali real isik.",
+            MatchProblem.NotDone when a is [var source, var row, var payee, var amount] =>
+                $"{source} [{row}]: {payee}{(Figure(amount) is { } sum ? " " + Money(sum) : "")} – tehingu oleku järgi raha ei liikunud (tühistatud, tagasi lükatud, ebaõnnestunud või ootel); rida jäeti välja, see ei ole makse.",
+            MatchProblem.BadAmount when a is [var reference] => $"{reference}: summat ei saanud lugeda; makse ei lähe arvesse.",
+            MatchProblem.OtherEmployer when a is [var shown, var more, var total, var employers, var code] && Whole(more) is { } extra && Whole(total) is { } all => all == 1
+                ? $"TÖR-i rida {shown}: teine tööandja ({employers}), mitte ettevõte {code} – jäeti välja, see ei ole selle ettevõtte isik."
+                : $"TÖR-i read {shown}{(extra > 0 ? $" ja veel {extra}" : "")}: teine tööandja ({employers}), mitte ettevõte {code} – jäeti välja, need ei ole selle ettevõtte isikud.",
+            MatchProblem.NamesakeOtherCode when a is [var code] => $"Andmebaasis on sama nimega isik teise isikukoodiga ({code}), keda selle kuu TÖR ei loetle. Kui register parandas koodi, "
+                + $"on sellel kaardil vaikimisi andmed, mitte teise kaardi valikud (maksuvaba, A1 tõend, {DeclarationLabel}) – võrdle kaht kaarti.",
+            MatchProblem.OldReading when a is [var source] => $"{source} luges programmi varasem versioon, mis võttis kaardiväljavõtte iga summa laekumiseks: selle väljamaksed jäävad välja. "
+                + $"Loe fail uuesti ({Files.TrimEnd('…')} › {Reread}).",
+            MatchProblem.DecisionOnCopy when problem.Variant == MatchProblem.CopyParts && a is [var copy, var original, var state] =>
+                $"{copy} on rea {original} koopia ja sellelt on makse osi jagatud; osad jäävad oma kohale – {(state == "draft" ? "jaga originaal ja eemalda koopia osad summaga 0" : "kontrolli originaali")}.",
+            MatchProblem.DecisionOnCopy when a is [var copy, var original] && problem.Variant switch
+                {
+                    MatchProblem.CopyPastDraft => "kuu ei ole enam mustand",
+                    MatchProblem.CopySplit => "sellelt on makse osi jagatud",
+                    MatchProblem.CopyOriginalOwn => "originaalil on oma otsus",
+                    _ => null,
+                } is { } why => $"{copy} on rea {original} koopia ja sellel on otsus; {why}, seega jääb otsus oma kohale – kontrolli originaali.",
+            MatchProblem.DecisionMoved when a is [var mark] => $"{mark}: koopial tehtud otsus viidi originaalreale; kontrolli seda ja kustuta siis märge veerust „{Note}“.",
+            MatchProblem.IncludedWithoutRow => $"Kaardil on {DeclarationLabel} „{DeclarationInclude}“, kuid kuu TÖR isikut ei loetle ja makset ei leitud: sel kuul ei koostata midagi. "
+                + $"Kui töötamine on lõppenud, vali kaardil „{DeclarationAuto}“.",
+            MatchProblem.PayeeAmbiguous when a is [var reference] => $"{reference}: ettevõtte kahel isikul on saaja nimed; vali real õige isik.",
+            MatchProblem.PayeeCodeElsewhere when a is [var reference] => $"{reference}: rea isikukood kuulub ettevõtte teisele isikule; rida kuulub seotud nimede järgi saajale – kontrolli mõlemat kaarti.",
+            MatchProblem.PayeeHandLine when a is [var reference] => $"{reference}: isikul on sel kuul sama summaga käsitsi lisatud rida, seega rida vaikimisi ei deklareerita (märgi „{Declare}“, kui mõlemad on päris maksed).",
+            MatchProblem.OutsideTorSalary when a is [var count, var sum] && Whole(count) is { } n && Figure(sum) is { } euros =>
+                $"{n} palgamustriga {(n == 1 ? "makse" : "makset")} ({Money(euros)} €) isikule, keda TÖR ei loetle, jääb deklareerimata: registreeri töötamine TÖR-is või anna reale kategooria või väljamakse liik.",
+            _ => null,
+        };
+    }
+
+    /// <summary>A problem of the run or the review as the window shows it: its code verbatim (decision 46), then the Estonian,
+    /// or the Core's English for one not worded.</summary>
+    public static string ProblemLine(MatchProblem problem) => $"{problem.Code}: {MatchProblemText(problem) ?? problem.Message}";
+
+    /// <summary>A whole number as the Core's figures carry it (invariant), or null.</summary>
+    private static int? Whole(string text) => int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+
+    /// <summary>A decimal figure as the Core's figures carry it (invariant), or null.</summary>
+    private static decimal? Figure(string text) => decimal.TryParse(text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+
+    /// <summary>A refusal of a payment (the review's own and the engine's, <see cref="ReviewChecks"/>, <see cref="PaymentChecks"/>)
+    /// in Estonian by its code and figures; null for a code this does not word (its English then). The check cell's tooltip
+    /// and the simulation put the code before it (<see cref="RefusalLine"/>).</summary>
+    public static string? RefusalText(Refusal refusal)
+    {
+        ArgumentNullException.ThrowIfNull(refusal);
+        var et = System.Globalization.CultureInfo.GetCultureInfo("et-EE");
+        var a = refusal.Args;
+        string Pct(decimal percent) => percent.ToString("0.####", et) + " %";
+        string Res(string residency) => residency == nameof(Core.Model.Residency.NonResident) ? "mitteresident" : "resident";
+        return refusal.Code switch
+        {
+            ReviewChecks.ForeignCurrency when a is [var currency] => $"Summa on valuutas {currency}, mitte eurodes: deklareeri summa eurodes käsitsi lisatud real („{AddLine}“).",
+            ReviewChecks.MoneyIn => "Rida on laekumine, mitte väljamakse, ja seda siin ei deklareerita; tagasi makstud palk on selle väljamakse parandus, mis tehakse e-MTA-s.",
+            ReviewChecks.DuplicateRow => "Rida on varasema väljavõtte rea koopia (sama makse kaks korda): arvesse läheb originaal, see rida mitte kunagi.",
+            ReviewChecks.NoPerson => "Maksel ei ole isikut: vali isik või jäta makse deklareerimata.",
+            ReviewChecks.NoPayeeId => "Isikul ei ole Eesti isikukoodi ega MTA mitteresidendi koodi.",
+            ReviewChecks.CodeInvalid when a is [var code] => $"Isiku kood „{code}“ ei ole Eesti isikukood (üksteist numbrit, päris sünnikuupäevaga): paranda see kaardil või kustuta see ja sisesta MTA mitteresidendi kood. "
+                + "Käsitsi määratud residentsus seda ei asenda.",
+            ReviewChecks.ResidencyNotChecked => $"Isiku residentsust ei ole kontrollitud – ei registrist ega käsitsi („{RunLookups}“ või kaardil „{ConfirmByHand}“).",
+            ReviewChecks.NotInPeriod => "Makse kuupäev ei ole perioodi kuus; see kuulub teise kuu faili.",
+            ReviewChecks.NotCounted => "Summat ei saanud lugeda või leiti reale kaks isikut; makse ei lähe arvesse.",
+            ReviewChecks.TwoContracts when a is { Count: > 0 } => $"Makse päeval kehtib kaks eri liiki töötamist (TÖR {string.Join(", ", a)}): vali veerus „{PaymentType}“ makse liik või märgi kaardil „{SimTypeFromCard}“.",
+            ReviewChecks.NoType => "Väljamakse liik puudub: kategoorial ei ole selle isiku jaoks koodi või töötamise liik on teadmata.",
+            ReviewChecks.UnknownType when a is [var type] => $"Väljamakse liiki {type} ei ole liikide tabelis.",
+            ReviewChecks.OutsideTor when a is [var reason] => reason switch
+            {
+                nameof(OutsideTorReason.NoRegister) => OutsideTorTip(true),
+                nameof(OutsideTorReason.NotListed) => OutsideTorTip(false),
+                _ => null,
+            },
+            PaymentChecks.NegativeAmount => "Tagasimakseid (negatiivseid summasid) ei toetata.",
+            PaymentChecks.ZeroNotAllowed when a is [var type] => $"Väljamakse liik {type} ei luba summat 0.",
+            PaymentChecks.TypePayeeMismatch when a is [var type, var payee, var residency] =>
+                $"Väljamakse liik {type} on mõeldud {(payee == nameof(Core.Model.Residency.NonResident) ? "mitteresidendile" : "residendile")}, kuid isik on {Res(residency)}: vali teise residentsuse liik või kontrolli isiku residentsust.",
+            PaymentChecks.A1CountriesMissing => $"A1 tõendi korral on isiku kaardil vaja nii „{A1Country}“ kui ka „{WorkCountry}“.",
+            PaymentChecks.A1CountriesInconsistent when a is [var a1] => a1 switch
+            {
+                nameof(Core.Model.A1Case.EstonianA1WorkAbroad) => "Eesti A1 tõendi korral peab A1 riik olema EE ja töö riik muu kui EE (KR_YLD2_09, KR_YLD2_07).",
+                nameof(Core.Model.A1Case.ForeignA1WorkInEstonia) => "Välisriigi A1 tõendi korral peab A1 riik olema muu kui EE ja töö riik EE (KR_YLD2_07).",
+                _ => null,
+            },
+            PaymentChecks.PensionNotChecked when a is [var type] => $"Liigiga {type} peetakse kinni II samba makse, kuid isiku II samba staatust ei ole kontrollitud – vajuta „{RunLookups}“ või kinnita see isiku kaardil.",
+            PaymentChecks.PensionRateUnknown when a is [var type] => $"Liigiga {type} peetakse kinni II samba makse, kuid isiku II samba määr on teadmata.",
+            PaymentChecks.PensionRateInvalid when a is [var rate] && Figure(rate) is { } r => $"II samba määr {Pct(r * 100m)} ei sobi: see peab olema üle 0 % ja alla 100 % (2 %, 4 % või 6 %).",
+            PaymentChecks.ExemptionWithoutApplication => $"„{ExemptionMonthly}“ on täidetud, kuid isik ei ole sellele väljamaksjale maksuvaba tulu avaldust esitanud: märgi „{ExemptionApplied}“ või tühjenda summa.",
+            PaymentChecks.ExemptionAboveLegal when a is [var applied, var legal] && Figure(applied) is { } given && Figure(legal) is { } most =>
+                $"Avalduse maksuvaba summa ({Money(given)}) peab olema vahemikus 0 kuni {Money(most)} kuus (seaduse järgi).",
+            // the sub-cent shown whole: rounded to cents it would look right
+            PaymentChecks.ExemptionSubCent when a is [var applied] && Figure(applied) is { } given => $"Avalduse maksuvaba summa ({given.ToString("#,##0.00########", et)}) peab olema täissentides.",
+            PaymentChecks.ExemptionNotEea when a is [var country] => $"„{ExemptionApplied}“ on märgitud, kuid kaardi maksuresidentsuse riik ({country}) on väljaspool EMP-d. "
+                + "Mitteresident saab maksuvaba tulu ainult EMP riigi residendina residentsustõendiga (MTA lükkab selle tagasi, KR_MVT_06). Eemalda avalduse märge või paranda riik.",
+            PaymentChecks.TreatyRateInvalid when a is [var treaty, var own] && Figure(treaty) is { } t && Figure(own) is { } o =>
+                $"Kaardi „{TreatyRate}“ ({Pct(t)}) peab olema täisprotsent vahemikus 0 kuni liigi oma määr {Pct(o)}.",
+            PaymentChecks.MinimumShareInvalid when a is [var share] && Figure(share) is { } s => $"SM miinimumkohustuse kuu osa ({s.ToString("0.####", et)}) peab olema üle 0 ja kuni 1.",
+            PaymentChecks.RatesExceedOne => "Kinnipeetavate maksude määrad on kokku 100 % või rohkem: netosummast ei saa brutosummat arvutada.",
+            _ => null,
+        };
+    }
+
+    /// <summary>A refusal as the check cell's tooltip and the simulation show it: its code verbatim (decision 46), then the
+    /// Estonian, or the Core's English for one not worded.</summary>
+    public static string RefusalLine(Refusal refusal) => $"{refusal.Code}: {RefusalText(refusal) ?? refusal.Message}";
+
+    /// <summary>A review refusal the card's own wording (<see cref="CardRefused"/>) does not know, in Estonian by its code
+    /// and case; null for any other. LINE_MISSING says which line, as the amount's refusal does.</summary>
+    public static string? ReviewRefused(ReviewException refusal) => refusal.Code switch
+    {
+        ReviewWorkspace.LineMissing => refusal.Variant switch
+        {
+            ReviewException.HandLine => HandLineMissing,
+            ReviewException.Part => PartMissing,
+            _ => "Seda rida ei ole enam andmebaasis – vaade laaditakse uuesti.",
+        },
+        _ => null,
+    };
+
+    private const string HandLineMissing = "Seda käsitsi lisatud rida ei ole enam andmebaasis – vaade laaditakse uuesti.";
+    private const string PartMissing = "Seda osa ei ole enam andmebaasis – vaade laaditakse uuesti.";
+
+    /// <summary>A refusal of the month's search („Otsi maksed“) in Estonian by its code; null for any other.</summary>
+    public static string? RunRefused(Exception refusal) => PhrasesRefusal.CodeOf(refusal) switch
+    {
+        MatchRunner.NoFiles => "Kuuga ei ole seotud ühtegi faili: impordi enne TÖR väljavõte ja pangaväljavõtted.",
+        MatchRunner.SeveralTorSheets => $"Kuu failides on {PhrasesRefusal.SubjectOf(refusal) ?? "mitu"} TÖR-i lehte, otsing kasutab ainult ühte: eemalda teised Failid-aknas kuu failide hulgast.",
+        _ => null,
+    };
+
+    /// <summary>A step of a person's register check in Estonian, by its code and figures; null for one this does not word.</summary>
+    public static string? LookupStep(LookupNote note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        return note.Code switch
+        {
+            LookupNote.Asked => note.Kind switch
+            {
+                LookupKind.Residency => "küsiti EMTA-lt residentsust",
+                LookupKind.Pension => "küsiti Pensionikeskuselt II sammast",
+                _ => null,
+            },
+            LookupNote.Reused when note.At is { } at && note.Kind is { } kind =>
+                $"{(kind == LookupKind.Residency ? "residentsus" : "II sammas")}: kasutati {at.ToString("dd.MM.yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture)} saadud vastust",
+            LookupNote.ResidencyKept => "residentsus on määratud käsitsi ja jääb",
+            LookupNote.ResidencyBack => "residentsus võetakse taas registrist",
+            LookupNote.ResidencySet when note.Value is { } resident => $"residentsus: {(resident ? "resident" : "mitteresident")}",
+            LookupNote.ExemptionOff => "maksuvaba tulu avalduse märge eemaldati: mitteresident",
+            LookupNote.PensionDerived => "II sammast ei küsitud: mitteresident",
+            LookupNote.PensionBack => "II sammas võetakse taas registrist",
+            LookupNote.PensionKept => "II sammas on määratud käsitsi ja jääb",
+            LookupNote.PensionSet when note.Value is { } member => member ? $"II sammas: liitunud, määr {Percent(note.Rate)}" : "II sammas: ei ole liitunud",
+            _ => null,
+        };
+    }
+
+    /// <summary>A problem of a register check as the log shows it: its code verbatim (decision 46), then the Estonian; null
+    /// for one this does not word (the Core's English then). A register's failure keeps its own detail in brackets (decision 242).</summary>
+    public static string? LookupProblem(LookupNote note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        const string Stand = "andmed jäävad, nagu olid";
+        const string HandStands = "käsitsi määratu jääb";
+        string Res(bool resident) => resident ? "resident" : "mitteresident";
+        string Member(bool member, decimal? rate) => member ? $"liitunud, määr {Percent(rate)}" : "ei ole liitunud";
+        var failure = note.Failure is null ? "vastust ei saadud" : LookupFailure(note.Failure);
+        var said = note.Code switch
+        {
+            LookupRunner.Skipped => note.Variant switch
+            {
+                LookupNote.NoCode => "kehtiv isikukood puudub, registritest ei ole midagi küsida.",
+                LookupNote.RegisterNoCode when note.Name is { } name => $"{name}: isikukood puudub nii TÖR-is kui ka kaardil, registritest ei ole midagi küsida.",
+                LookupNote.PaidNoCode when note.Name is { } name => $"{name}: isikule on sel kuul makstud, kuid isikukood puudub, registritest ei ole midagi küsida – määra residentsus kaardil.",
+                _ => null,
+            },
+            LookupRunner.Failed => (note.Kind, note.Variant) switch
+            {
+                (LookupKind.Residency, LookupNote.FactsStand) when failure is not null => $"residentsuse päring ebaõnnestus – {failure}; {Stand}.",
+                (LookupKind.Residency, LookupNote.HandUsed) when failure is not null && note.Value is { } hand =>
+                    $"residentsuse päring ebaõnnestus – {failure}; kasutatakse käsitsi määratud residentsust ({Res(hand)}).",
+                (LookupKind.Pension, LookupNote.FactsStand) when failure is not null => $"II samba päring ebaõnnestus – {failure}; {Stand}.",
+                (LookupKind.Pension, LookupNote.MembershipUnknown) when note.Day is { } day =>
+                    $"II samba päring ebaõnnestus – isik on liitunud, kuid leht ei nimeta kinnipidamise algust{(note.Ended is { } ended ? $", ainult et sissemaksed lõpevad {Day(ended)} ehk pärast {Day(day)}" : "")}: "
+                    + $"ei ole teada, kas isik oli {Day(day)} liitunud; {Stand}.",
+                _ => null,
+            },
+            LookupRunner.Disagrees => note.Kind switch
+            {
+                LookupKind.Residency when note.Value is { } register && note.Day is { } day && note.ByHand is { } hand =>
+                    $"registri järgi on isik {Day(day)} seisuga {Res(register)}, käsitsi on määratud {Res(hand)}; {HandStands}.",
+                LookupKind.Pension when note.Value is { } member && note.Day is { } day && note.ByHand is { } hand =>
+                    (note.Derived == true ? "mitteresidendina ei ole liitunud (Pensionikeskuselt ei küsitud)" : $"Pensionikeskuse järgi {Day(day)} seisuga {Member(member, note.Rate)}")
+                    + $", käsitsi on määratud: {Member(hand, note.ByHandRate)}; {HandStands}.",
+                _ => null,
+            },
+            LookupRunner.RateUnknown when note.Day is { } day => $"isik on {Day(day)} seisuga liitunud, kuid ükski määra rida ei kata seda päeva; määr jääb teadmata (vaikimisi 2 % ei võeta).",
+            LookupRunner.Reset => "II samba andmed tulenesid mitteresidentsusest; nüüd on isik resident ja andmed on teadmata, kuni Pensionikeskus vastab.",
+            _ => null,
+        };
+        // the run's own problem has no code on screen, as it had none before
+        return note.Code == LookupNote.NoRun ? $"Perioodi makseid ei ole otsitud („{RunMatch}“): kontrollitakse kõiki ettevõtte isikuid."
+            : said is null ? null : $"{note.Code}: {said}";
+    }
+
+    /// <summary>A problem line of a register check: the Estonian of its note, or the Core's English (no note, or one not worded).</summary>
+    public static string LookupProblemLine(string english, LookupNote? note) => (note is null ? null : LookupProblem(note)) ?? english;
+
+    /// <summary>A register's failure in Estonian by its fixed prefix, the site's or the library's own detail after it in
+    /// brackets (decision 242); null for a failure without a known prefix (the line keeps its English then).</summary>
+    public static string? LookupFailure(string english)
+    {
+        ArgumentNullException.ThrowIfNull(english);
+        const string Timeout = "request timeout or access denied: ";
+        const string Content = "content error: ";
+        return english == "no answer" ? "vastust ei saadud"
+            : english == "data not found" ? "registri leht ei andnud andmeid (leht võib olla hoolduses)"
+            : english == "table size mismatch" ? "registri lehe tabel oli ootamatu kujuga"
+            : english.StartsWith(Timeout, StringComparison.Ordinal) ? $"päring aegus või ligipääs keelati ({english[Timeout.Length..]})"
+            : english.StartsWith(Content, StringComparison.Ordinal) ? $"registri lehe vastust ei tuntud ära ({english[Content.Length..]})"
+            : null;
+    }
 
     /// <summary>A refusal of the build the main window words itself — the simulation says it as „Koosta read“ does, in
     /// Estonian (the fifth audit, item 19); null for any other.</summary>
     public static string? DeclareRefused(Exception refusal) => refusal is Core.Declare.DeclareException declare ? declare.Code switch
     {
-        Core.Declare.PeriodDeclarer.RatesMissing => RatesMissing,
-        Core.Declare.PeriodDeclarer.RunStale => RunStaleRefused,
-        Core.Declare.PeriodDeclarer.ModeChanged => DeclareModeRefused,
-        _ => null,
+        Core.Declare.PeriodDeclarer.RatesMissing => RatesMissingFor(declare.Subject),
+        Core.Declare.PeriodDeclarer.RunStale => declare.Variant switch
+        {
+            "notSearched" => "Perioodi maksed on otsimata: read koostatakse alles otsingu järel. Vajuta „Otsi maksed“.",
+            "changed" => "Perioodi failid muutusid pärast otsingut: read koostatakse alles uue otsingu järel. Vajuta uuesti „Otsi maksed“ (kahe TÖR-lehe korral eemalda enne Failid-aknas vana otsing ja vana TÖR).",
+            _ => RunStaleRefused,
+        },
+        Core.Declare.PeriodDeclarer.ModeChanged => declare.Subject is not { } key ? DeclareModeRefused : declare.Variant switch
+        {
+            "perPayment" => $"Rida {key} on e-MTA-s ühe makse rida: kuu on deklareeritud iga makse eraldi reana. Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.",
+            "totals" => $"Rida {key} on e-MTA-s väljamakse liigi koondrida: kuu on deklareeritud koondina liigi kaupa. Vali Seaded menüüst sama lõige või võta enne read deklaratsioonist välja.",
+            _ => DeclareModeRefused,
+        },
+        ReviewWorkspace.PeriodNotDraft => Enum.TryParse<Core.Store.PeriodState>(declare.Subject, out var state) && Enum.IsDefined(state) && !int.TryParse(declare.Subject, out _)
+            ? $"Kuu ei ole enam mustand ({PeriodState(state)}) – ridu ei saa koostada."
+            : "Kuu ei ole enam mustand – ridu ei saa koostada.",
+        _ => SubmitRefused(declare),
     } : null;
+
+    /// <summary>A refusal of the export, a withdrawal, a mark or a reopen (<see cref="Core.Declare.PeriodSubmitter"/>) in
+    /// Estonian by its code and case; null for a code or case this does not know, which is shown in the Core's English.</summary>
+    public static string? SubmitRefused(Core.Declare.DeclareException refusal)
+    {
+        ArgumentNullException.ThrowIfNull(refusal);
+        var state = StateOf(refusal.Subject);
+        return refusal.Code switch
+        {
+            Core.Declare.PeriodSubmitter.NoDrafts => $"Perioodil ei ole mustandridu, mida eksportida. Vajuta enne eksporti „{BuildLines}“.",
+            Core.Declare.PeriodSubmitter.LinesStale when refusal.Subject is { } key && refusal.Detail is { } rule =>
+                $"Rida {key} ({(refusal.Section is { } s ? SectionShort(s) + ", " : "")}{(Enum.TryParse<LineAction>(refusal.Variant, out var action) && Enum.IsDefined(action) ? ActionText(action) : refusal.Variant)}) "
+                + $"ei sobi enam võtme varasemate versioonidega: {LineKeyText(rule) ?? rule}. Vajuta enne eksporti uuesti „{BuildLines}“.",
+            Core.Declare.PeriodSubmitter.ReasonNeeded => refusal.Variant switch
+            {
+                Core.Declare.PeriodSubmitter.ReasonNone => "Deklaratsioon on kinnitatud: seda muutev fail peab nimetama paranduse põhjuse (PARANDUSPOHJUS_1–4).",
+                Core.Declare.PeriodSubmitter.ReasonUnknown => $"„{refusal.Subject}“ ei ole paranduse põhjuse kood (PARANDUSPOHJUS_1–4).",
+                Core.Declare.PeriodSubmitter.ReasonMissing when refusal.Section is { } s =>
+                    $"Osale {SectionShort(s)} ei ole paranduse põhjust valitud. Fail kannab selle osa ridu ja iga osa vajab oma põhjust.",
+                Core.Declare.PeriodSubmitter.ReasonMisfit when refusal.Section is { } s && refusal.Subject is { } reason =>
+                    $"Põhjus „{ReasonText(reason)}“ ei sobi osale {SectionShort(s)}. Vali sellele osale sobiv põhjus.",
+                _ => null,
+            },
+            Core.Declare.PeriodSubmitter.InvalidFile => refusal.Variant switch
+            {
+                Core.Declare.PeriodSubmitter.FileStructure when refusal.Problems.Count > 0 =>
+                    "XML-faili ei kirjutatud, sest kontroll leidis vead:" + Environment.NewLine
+                    + string.Join(Environment.NewLine, refusal.Problems.Select(p => DeclarationProblemText(p) ?? p.Message)),
+                Core.Declare.PeriodSubmitter.FileSchema when refusal.SchemaProblems.Count > 0 =>
+                    "Koostatud XML-fail ei vasta MTA skeemile, seega seda ei kirjutatud. Teata sellest programmi omanikule." + Environment.NewLine
+                    + string.Join(Environment.NewLine, refusal.SchemaProblems.Select(p => $"rida {p.Line}, veerg {p.Position}: {p.Detail}")),
+                _ => null,
+            },
+            Core.Declare.PeriodSubmitter.SchemasMissing =>
+                $"MTA XBRL GL skeeme ei leitud programmi kaustast{(refusal.Subject is null ? "" : $" ({refusal.Subject})")}. Faili ei saa kontrollida, seega seda ei kirjutatud. Paigalda programm uuesti või teata sellest programmi omanikule.",
+            Core.Declare.PeriodSubmitter.WrongState => refusal.Variant switch
+            {
+                Core.Declare.PeriodSubmitter.StateWithdraw when state is { } st =>
+                    $"Periood on olekus „{PeriodState(st)}“. Eksporti saab tühistada („{Withdraw}“) ainult failil, mida ei ole veel üles laadituks märgitud.",
+                Core.Declare.PeriodSubmitter.StateWithdrawNotLatest when refusal.Subject is { } file =>
+                    $"Tühistada saab ainult viimase faili eksporti ({file}); varasem fail jääb ajalukku.",
+                Core.Declare.PeriodSubmitter.StateUpload when state is { } st =>
+                    $"Periood on olekus „{PeriodState(st)}“. Üles laadituks saab märkida ainult eksporditud faili.",
+                Core.Declare.PeriodSubmitter.StateConfirm when state is { } st =>
+                    $"Periood on olekus „{PeriodState(st)}“. Kinnitatuks saab märkida ainult eksporditud või üles laaditud perioodi.",
+                Core.Declare.PeriodSubmitter.StateReopen => "Periood on juba mustand ja muudetav; parandamiseks pole seda vaja avada.",
+                Core.Declare.PeriodSubmitter.StateUndoReopen when state is { } st =>
+                    $"Periood on olekus „{PeriodState(st)}“. Parandamisest saab loobuda ainult siis, kui kinnitatud periood avati parandamiseks ja pärast seda ei ole ühtegi faili eksporditud.",
+                _ => null,
+            },
+            Core.Declare.PeriodSubmitter.LinesPending => refusal.Variant == Core.Declare.PeriodSubmitter.StateUndoReopen
+                ? UndoReopenDraftsLog(refusal.DraftLines)
+                : refusal.DraftLines.Count + refusal.OpenLines.Count + refusal.RefusedLines.Count + refusal.RefusedOverLines.Count > 0 ? ConfirmRefused(refusal) : null,
+            _ => null,
+        };
+
+        static Core.Store.PeriodState? StateOf(string? subject) =>
+            Enum.TryParse<Core.Store.PeriodState>(subject, out var state) && Enum.IsDefined(state) && !int.TryParse(subject, out _) ? state : null;
+    }
+
+    /// <summary>A problem the file's own check found (<see cref="Core.Xbrl.DeclarationValidator"/>), in Estonian by its code
+    /// and figures; null for a code this does not know, which is shown in the Core's English.</summary>
+    public static string? DeclarationProblemText(Core.Xbrl.DeclarationProblem problem)
+    {
+        ArgumentNullException.ThrowIfNull(problem);
+        var where = problem.Section is { } s ? $"{SectionShort(s)}{(problem.Key is null ? "" : $", rida {problem.Key}")}" : problem.Key is null ? "" : $"Rida {problem.Key}";
+        const string CompanyCard = "Vali ettevõtte kaardil (Ettevõte → Muuda ettevõtet…) koodi õige liik; kui kood ise on vale, loo ettevõte uuesti.";
+        const string MrrShape = "selles võivad olla ainult ladina tähed A–Z ja numbrid, ilma tühikute ja muude märkideta.";
+        return problem.Code switch
+        {
+            Core.Xbrl.DeclarationValidator.PayerEmpty => "Maksja registrikood on tühi.",
+            Core.Xbrl.DeclarationValidator.PayerNotRegistry => $"Maksja kood „{problem.Subject}“ on failis märgitud äriregistri koodiks (ARIREGISTRIKOOD), kuid see ei ole 8-kohaline. {CompanyCard}",
+            Core.Xbrl.DeclarationValidator.PayerNotPersonal => $"Maksja kood „{problem.Subject}“ on failis märgitud isikukoodiks (ISIKUKOOD), kuid see ei ole 11-kohaline. {CompanyCard}",
+            Core.Xbrl.DeclarationValidator.PayerMrrInvalid => $"Maksja kood „{problem.Subject}“ ei ole MTA mitteresidendi kood: {MrrShape} Ettevõtte koodi ei saa muuta: loo ettevõte uuesti koodiga, nagu MTA selle annab.",
+            Core.Xbrl.DeclarationValidator.NoSection => "Failis ei ole ühtegi andmeosa. MTA skeem nõuab vähemalt üht osa (entryHeader).",
+            Core.Xbrl.DeclarationValidator.SectionTwice => $"Osa {where} on failis kaks korda; iga osa võib failis olla ainult üks kord.",
+            Core.Xbrl.DeclarationValidator.KeyEmpty => $"{where}: ühel real puudub võti (lineNumber).",
+            Core.Xbrl.DeclarationValidator.KeyRepeated => $"{where}: võti kordub selles osas (KR_XBRL_VALJAMAKSED_2).",
+            Core.Xbrl.DeclarationValidator.CounterInvalid => $"{where}: rea järjekorranumber (lineNumberCounter) peab olema positiivne täisarv.",
+            Core.Xbrl.DeclarationValidator.TypeMissing => $"{where}: R- või M-real peab olema väljamakse liik.",
+            Core.Xbrl.DeclarationValidator.TypeWrongSection when problem.OtherSection is { } right =>
+                $"{where}: väljamakse liik {problem.Subject} kuulub osasse {SectionShort(right)}, mitte siia (KR_VM_05).",
+            Core.Xbrl.DeclarationValidator.AmountMissing => $"{where}: R- või M-real peab olema summa (0, kui midagi ei makstud).",
+            Core.Xbrl.DeclarationValidator.PayeeMissing => $"{where}: R- või M-real peab olema saaja (isikukood või MTA mitteresidendi kood).",
+            Core.Xbrl.DeclarationValidator.PayeeMrrInvalid => $"{where}: „{problem.Subject}“ ei ole MTA mitteresidendi kood: {MrrShape} Paranda kood isiku kaardil.",
+            Core.Xbrl.DeclarationValidator.DateMissing => $"{where}: R- või M-real peab olema väljamakse kuupäev.",
+            Core.Xbrl.DeclarationValidator.DateOutsideMonth when problem.Day is { } day && problem.Month is { } month =>
+                $"{where}: väljamakse kuupäev {Day(day)} jääb väljapoole faili kuud {month:MM.yyyy} (KR_XBRL_VALJAMAKSED_17).",
+            _ => null,
+        };
+    }
+
+    /// <summary>A refusal of the store, the feedback reader or the system on the submission and feedback path
+    /// (<see cref="Core.Declare.SubmissionRefusal"/>), in Estonian by its code; null for any other. The system's own reason
+    /// (a file in use, a share offline) is said after the Estonian, as Windows gives it.</summary>
+    public static string? FeedbackRefused(Exception refusal)
+    {
+        ArgumentNullException.ThrowIfNull(refusal);
+        var subject = Core.Declare.SubmissionRefusal.SubjectOf(refusal);
+        var items = Core.Declare.SubmissionRefusal.ItemsOf(refusal);
+        const string AnotherFile = "raport kuulub teisele failile. Vali saadetud failide loendist fail, millele raport vastab, ja loe tagasiside uuesti. Midagi ei salvestatud.";
+        return Core.Declare.SubmissionRefusal.CodeOf(refusal) switch
+        {
+            Core.Declare.SubmissionRefusal.NotDraft => "Mõni rida ei ole enam mustand (teine aken võis selle juba eksportida): eksport jäi tegemata. Vaade on värskendatud; vaata read üle.",
+            Core.Declare.SubmissionRefusal.WithdrawAnswered => $"Failil on juba vastus (tagasiside või käsitsi kinnitatud või tagasi lükatud rida): fail on üles laaditud ja selle eksporti ei saa tühistada. Kasuta „{MarkUploaded}“.",
+            Core.Declare.SubmissionRefusal.NotPending => Enum.TryParse<PaymentStatus>(subject, out var status) && Enum.IsDefined(status) && !int.TryParse(subject, out _)
+                ? $"Käsitsi saab otsustada ainult saadetud või otsust ootava versiooni üle; selle versiooni olek on „{PaymentStatusText(status)}“. Vaade on värskendatud."
+                : "Käsitsi saab otsustada ainult saadetud või otsust ootava versiooni üle. Vaade on värskendatud.",
+            Core.Declare.SubmissionRefusal.WriteFailed => $"XML-faili ei saanud kausta {subject} kirjutada. Kontrolli, kas kaust on kättesaadav (kas võrguketas on ühendatud), ja ekspordi uuesti. Windowsi põhjus: {refusal.Message}",
+            Core.Declare.SubmissionRefusal.FileUnopened => FileUnreadable(refusal.Message),
+            Core.Declare.SubmissionRefusal.Unreadable => "Faili ei saanud tagasisideraportina lugeda: see ei ole loetav XML-fail ega ZIP-arhiiv. Laadi raport e-MTA-st uuesti alla.",
+            Core.Declare.SubmissionRefusal.ZipEmpty => "ZIP-arhiivis ei ole ühtegi XML-raportit. Vali e-MTA-st alla laaditud tagasisideraport.",
+            Core.Declare.SubmissionRefusal.NoRoot => "Fail ei ole e-MTA tagasisideraport: XML-is puudub juurelement.",
+            Core.Declare.SubmissionRefusal.NotReport => $"Fail ei ole e-MTA tagasisideraport: juurelement on <{subject}>, tagasisideraportil on see <processing>. Kas valisid kogemata eksporditud XML-faili?",
+            Core.Declare.SubmissionRefusal.NoEntry => $"Tagasisideraportis (tulemus „{subject}“) ei ole ühtegi osa (entryHeader); MTA skeem nõuab vähemalt üht. Raport on poolik; laadi see e-MTA-st uuesti alla.",
+            Core.Declare.SubmissionRefusal.LineNoId => "Tagasisideraportis on reaviide ilma rea võtmeta (lineInternalId); raportit ei saa ridadele rakendada.",
+            Core.Declare.SubmissionRefusal.Confirmation => "See on kinnitamise raport, mitte faili tagasiside: ridade kohta see midagi ei ütle.",
+            Core.Declare.SubmissionRefusal.NoLines => "Valitud failil ei ole andmebaasis ühtegi rida (või faili ei ole enam andmebaasis): raportit ei saa sellele rakendada. Vaade on värskendatud.",
+            Core.Declare.SubmissionRefusal.OtherFile => $"Raport nimetab ridu, mida see fail ei kandnud ({string.Join(", ", items.Select(ReportKeyText))}): {AnotherFile}",
+            Core.Declare.SubmissionRefusal.PlacedElsewhere => $"Raport paigutab read teisiti kui see fail ({string.Join("; ", items.Select(PlacedText))}): {AnotherFile}",
+            _ => null,
+        };
+
+        static string PlacedText(string item) => item.Split('|') is [var key, var said, var own]
+            ? $"{ReportKeyText(key)}: raportis {said}. rida, failis {own}. rida"
+            : item;
+    }
+
+    /// <summary>A line a report names ("EE0201001/12") in the window's words: the key, its section after it.</summary>
+    private static string ReportKeyText(string item) => item.LastIndexOf('/') is var cut and > 0
+        && Enum.TryParse<Core.Model.Section>(item[..cut], out var section) && Enum.IsDefined(section) && !int.TryParse(item[..cut], out _)
+        ? $"{item[(cut + 1)..]} ({SectionShort(section)})"
+        : item;
+
+    /// <summary>The year without rates, said with the year when the refusal names it.</summary>
+    public static string RatesMissingFor(string? year) => year is null ? RatesMissing
+        : $"Programmi selles versioonis ei ole {year}. aasta maksumäärasid ega kuumäära: kuu ridu ei saa koostada enne, kui uus versioon need toob.";
+
+    /// <summary>A note of the build („Koosta read“, the simulation) in Estonian, "CODE: …" with the code verbatim (decision
+    /// 46), by its code and case and the figures it carries; null for a code or case this does not know, which is shown in
+    /// the Core's English as before. The English stays the note's own text for the tests and support.</summary>
+    public static string? BuildNoteText(Core.Declare.BuildNote note)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        var said = BuildNoteBody(note);
+        return said is null ? null : $"{note.Code}: {said}";
+    }
+
+    /// <summary>A note as the log and the simulation show it: the Estonian, or the Core's English for one not worded.</summary>
+    public static string BuildNoteLine(Core.Declare.BuildNote note) => BuildNoteText(note) ?? note.Text;
+
+    private static string? BuildNoteBody(Core.Declare.BuildNote n)
+    {
+        const string Kaasa = $"kaardil {DeclarationLabel} „kaasa“";
+        const string ZeroDraftGoes = "Nullrea mustand kustutatakse, serveris olev rida jääb.";
+        const string DraftsGo = "kuu maksete mustandid kustutatakse, serveris olevad read jäävad.";
+        const string NoMinimum = "selle kuu maksetelt miinimumi ei arvestata";
+        string Ref(string? reference) => Core.Report.ReportText.SourceText(reference);
+        string Refs(IReadOnlyList<string> references) => string.Join(", ", references.Select(r => Ref(Core.Declare.PeriodDeclarer.ShownToken(r))));
+        var one = n.Items.Count == 1;
+        return n.Code switch
+        {
+            Core.Declare.PeriodDeclarer.Included => n.Variant switch
+            {
+                "noRowNoPay" => $"{n.Subject}: {Kaasa}, kuid kuu TÖR-is pole isiku kannet ja makset ei leitud; isikule ridu ei koostata (varasem mustand kustutatakse ja serveris olevale reale koostatakse tühistus nagu ikka).",
+                "noValid" => $"deklareeritakse nagu kehtiv töötamine ({Kaasa}); registris pole sel kuul kehtivat töötamist."
+                    + (n.Count is { } paid
+                        ? $" Kuul on isikule {Count(paid, "makse", "makset")}, mida ei deklareerita ({string.Join(", ", n.Items)}): anna reale kategooria või väljamakse liik"
+                          + (n.AskCardType ? $" või märgi nullrea jaoks kaardile „{TorType}“ ja „{TypeFromCard}“" : "") + "."
+                        : "")
+                    + n.Unmet switch
+                    {
+                        "noTypeNoneDeclared" => $" Nullrida ega makse rida ei koostata: töötamise liik on teadmata (seda pole registris ega kaardi väljal „{TorType}“).",
+                        "noType" => $" Nullrida ei koostata: töötamise liik on teadmata (seda pole registris ega kaardi väljal „{TorType}“).",
+                        "typeNoMinimum" => $" Nullrida ei koostata: töötamise liik {n.TypeId} ei kanna sotsiaalmaksu miinimumi.",
+                        "a1" => " Nullrida ei koostata: isiku A1 juhul Eestis sotsiaalmaksu ei maksta.",
+                        _ => "",
+                    },
+                "paused" => $"deklareeritakse nagu kehtiv töötamine ({Kaasa}); registris on töötamine peatatud alates {Day(n.Day)} ja miinimum arvestab ka peatamise päevi.",
+                _ => null,
+            },
+            Core.Declare.PeriodDeclarer.Excluded => n.Count is null or 0 ? "isik on deklaratsioonist välja jäetud."
+                : $"isik on deklaratsioonist välja jäetud; {(n.Count == 1 ? "1 deklareerimiseks märgitud makse" : $"{n.Count} deklareerimiseks märgitud makset")} jääb deklareerimata.",
+            Core.Declare.PeriodDeclarer.Refused => $"{Ref(n.Reference)}: makset ei deklareerita – ülevaatus keeldub ({string.Join(", ", n.Items)}). Selle mustand kustutatakse, serveris olev rida jääb.",
+            ReviewChecks.ResidencyNotChecked when n.Variant == "zeroLine" =>
+                $"miinimumi nullrida (väljamakse liik {n.PaymentType}) jääb koostamata: isiku residentsust ei ole kontrollitud (registrist ega käsitsi). {ZeroDraftGoes}",
+            Core.Declare.PeriodDeclarer.MinimumHeld => n.Variant switch
+            {
+                "zeroLine" => $"nullrida (väljamakse liik {n.PaymentType}) ei koostata: "
+                    + (one ? $"kuu makse {Refs(n.Items)} kannab miinimumi, kuid ülevaatus keeldus sellest. Miinimum ootab, kuni makse on parandatud või deklaratsioonist välja võetud; "
+                        : $"kuu maksed {Refs(n.Items)} kannavad miinimumi, kuid ülevaatus keeldus neist. Miinimum ootab, kuni maksed on parandatud või deklaratsioonist välja võetud; ")
+                    + "nullrea mustand kustutatakse, serveris olev rida jääb.",
+                "topUp" => one
+                    ? $"kuu makse {Refs(n.Items)} kannab miinimumi, kuid ülevaatus keeldus sellest; isiku teised maksed koostatakse miinimumi suurenduseta, kuni see makse on parandatud või deklaratsioonist välja võetud."
+                    : $"kuu maksed {Refs(n.Items)} kannavad miinimumi, kuid ülevaatus keeldus neist; isiku teised maksed koostatakse miinimumi suurenduseta, kuni need maksed on parandatud või deklaratsioonist välja võetud.",
+                _ => null,
+            },
+            Core.Tax.PaymentChecks.PensionNotChecked or Core.Tax.PaymentChecks.PensionRateUnknown or Core.Tax.PaymentChecks.PensionRateInvalid when n.Variant == "zeroLine" =>
+                $"miinimumi nullrida (väljamakse liik {n.PaymentType}) jääb koostamata: "
+                + (n.Code == Core.Tax.PaymentChecks.PensionNotChecked ? "isiku II samba staatus on kontrollimata"
+                    : n.Code == Core.Tax.PaymentChecks.PensionRateUnknown ? "isiku II samba määr on teadmata" : "isiku II samba määr ei ole lubatud")
+                + $" – vajuta „{RunLookups}“ või kinnita see isiku kaardil. {ZeroDraftGoes}",
+            Core.Declare.PeriodDeclarer.ZeroLine => n.Variant switch
+            {
+                "valid" or "ended" or "paused" => $"kuul kehtib töötamine (TÖR liik {n.TypeId}"
+                    + (n.Variant == "ended" ? $"; registris lõpetatud {Day(n.Day)}" : n.Variant == "paused" ? $"; registris peatatud alates {Day(n.Day)}" : "")
+                    + (n.FromCard ? "; liik kaardilt kõigile maksetele" : "")
+                    + $"), kuid kuu jooksul pole miinimumi kandvat makset: miinimumi kannab nullrida väljamakse liigiga {n.PaymentType}.",
+                "asIfEmployed" => $"deklareeritakse nagu kehtiv töötamine ({Kaasa}), TÖR liik {n.TypeId}; kuu jooksul pole miinimumi kandvat makset: miinimumi kannab nullrida väljamakse liigiga {n.PaymentType}.",
+                _ => null,
+            },
+            Core.Declare.PeriodDeclarer.NoPayee => $"isikul pole isikukoodi ega MTA mitteresidendi koodi; ridu ei koostata – {DraftsGo}",
+            ReviewChecks.CodeInvalid => $"isiku kood „{n.Subject}“ ei ole Eesti isikukood; selle all ridu ei koostata – mustandid kustutatakse, serveris olevad read jäävad. Paranda kood isiku kaardil.",
+            Core.Declare.PeriodDeclarer.FactsOfAnotherMonth => n.Variant switch
+            {
+                "lookedUpFor" => $"residentsus või II sammas on viimati päritud seisuga {Day(n.Day)} (teine kuu); kui need võisid muutuda, vajuta selle kuu jaoks „{RunLookups}“.",
+                "checkedOn" => $"residentsust või II sammast kontrolliti {Day(n.Day)}, enne seda kuud; kui need võisid muutuda, vajuta selle kuu jaoks „{RunLookups}“.",
+                _ => null,
+            },
+            Core.Declare.PeriodDeclarer.FactsOfAnotherDay =>
+                $"residentsus ja II sammas on päritud seisuga {Day(n.Day)}, ülevaatuse järgi on isiku kontrollpäev nüüd {Day(n.OtherDay)}; vajuta uuesti „{RunLookups}“.",
+            Core.Declare.PeriodDeclarer.NoResidenceCountry =>
+                $"mitteresident deklareeritakse ilma maksuresidentsuse riigita (RR_MAKSURESIDENTSUSE_RIIK); MTA võrdleb seda oma registriga (KR_ISIK_6, punane viga) – sisesta isiku kaardile „{ResidenceCountry}“, kui see on teada.",
+            Core.Declare.PeriodDeclarer.NoEmploymentInMonth => n.Variant switch
+            {
+                "notCovered" => $"ükski registri töötamine ei kata seda kuud; {NoMinimum}.",
+                "notListed" => $"kuu TÖR-is isikut ei ole; {NoMinimum} (kui isik kuul töötas, vali kaardil {DeclarationLabel} „kaasa“).",
+                "paused" => $"töötamine on kogu kuu peatatud (või register ei ütle, millest alates); {NoMinimum}.",
+                "notInForce" => $"ükski miinimumi kandev registri kanne ei kehti kuul ühelgi päeval (lõpetatud kanne ilma lõppkuupäevata või kande olek „{n.Subject}“, mida programm ei tunne); {NoMinimum}.",
+                _ => null,
+            },
+            Core.Declare.PeriodDeclarer.MinimumWithPension =>
+                $"kaardil on märgitud „{OnPension}“ ja „{SocialTaxMinimum}“; riikliku pensioni saaja eest miinimumi ei maksta (SMS § 2 lg 4 p 6) – kui pensioni makstakse, eemalda kaardilt märge „{SocialTaxMinimum}“.",
+            Core.Declare.PeriodDeclarer.NotAllocated => n.Variant switch
+            {
+                "keptPools" => (one ? $"makse, millest ülevaatus keeldus, rida {string.Join(", ", n.Items)} on serveris ja kasutab"
+                        : $"maksete, millest ülevaatus keeldus, read {string.Join(", ", n.Items)} on serveris ja kasutavad")
+                    + " kuu maksuvaba tulu või miinimumi; paranda makse (või võta see deklaratsioonist välja), enne kui isiku teised maksed koostatakse. Teiste maksete mustandid kustutatakse.",
+                "engine" when n.Cause is { } cause => $"kuu makseid ei saanud arvutada: {CauseText(cause)}. Ridu ei koostata – {DraftsGo}",
+                _ => null,
+            },
+            Core.Store.LineKeyRules.KeyDead or Core.Store.LineKeyRules.CancellationPending or Core.Store.LineKeyRules.DraftPending
+                or Core.Store.LineKeyRules.KeyExists or Core.Store.LineKeyRules.KeyUnknown when n.Variant == "keyRule" =>
+                $"{Ref(n.Reference)}: {LineKeyText(n.Code)}.",
+            Core.Declare.PeriodDeclarer.NotBuilt when n.Cause is { } cause => $"{Ref(n.Reference)}: rida ei saa koostada: {CauseText(cause)}. Selle mustand kustutatakse, serveris olev rida jääb.",
+            Core.Declare.PeriodDeclarer.CancellationPending => n.Variant switch
+            {
+                "reconcile" => $"{Ref(n.Reference)}: rea {n.Key} tühistus ootab MTA vastust; uus rida koostatakse, kui vastus on käes.",
+                "retire" => $"{Ref(n.Reference)}: rea {n.Key} tühistus ootab MTA vastust.",
+                _ => null,
+            },
+            Core.Declare.PeriodDeclarer.SectionChanged when n.Section is { } section =>
+                $"{Ref(n.Reference)}: väljamakse liik kuulub nüüd osasse {SectionShort(section)}; rida {n.Key} tühistatakse enne (T), uus rida koostatakse, kui MTA tühistuse vastu võtab.",
+            _ => null,
+        };
+    }
+
+    /// <summary>A line's note in the build's log: its own code verbatim, the two notes in words in Estonian.</summary>
+    public static string? LineNoteText(string? note) => note switch
+    {
+        Core.Declare.BuiltLine.NothingToCancel => "serveris pole midagi tühistada",
+        Core.Declare.BuiltLine.CancellationDrafted => "tühistus on koostatud",
+        _ => note,
+    };
+
+    /// <summary>The key's rule a line broke (<see cref="Core.Store.LineKeyRules"/>), in words without a full stop; null for another code.</summary>
+    public static string? LineKeyText(string code) => code switch
+    {
+        Core.Store.LineKeyRules.KeyDead => "võti on tühistatud (T vastu võetud) ega ole enam kasutatav – makse vajab uut võtit ja uut rida (R)",
+        Core.Store.LineKeyRules.CancellationPending => "selle võtme tühistus ootab MTA vastust; märgi enne MTA vastus",
+        Core.Store.LineKeyRules.DraftPending => "selle võtme mustand ootab saatmist; muuda või kustuta see, teist mustandit ei lisata",
+        Core.Store.LineKeyRules.KeyExists => "võti on juba serveris; uus R lükataks tagasi (KR_XBRL_VALJAMAKSED_4) – saada muudatus (M)",
+        Core.Store.LineKeyRules.KeyUnknown => "võtit pole serveris; M või T lükataks tagasi (M puhul KR_XBRL_VALJAMAKSED_5, T puhul _6) – saada uue reana (R)",
+        _ => null,
+    };
+
+    /// <summary>The engine's, the line factory's or the store's refusal met by a build (<see cref="Core.Tax.TaxRefusal"/>), in
+    /// words without a full stop; null for one without a known code.</summary>
+    public static string? TaxRefusedText(Exception refusal)
+    {
+        var subject = Core.Tax.TaxRefusal.SubjectOf(refusal);
+        var figure = Core.Tax.TaxRefusal.FigureOf(refusal);
+        var other = Core.Tax.TaxRefusal.OtherOf(refusal);
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        return Core.Tax.TaxRefusal.CodeOf(refusal) switch
+        {
+            Core.Tax.PaymentChecks.ZeroNotAllowed => $"väljamakse liik {subject} ei luba summat 0",
+            Core.Tax.PaymentChecks.ExemptionWithoutApplication => $"„{ExemptionMonthly}“ on antud, kuid „{ExemptionApplied}“ ei ole märgitud – märgi avaldus või tühjenda summa",
+            Core.Tax.PaymentChecks.ExemptionAboveLegal => $"avalduse maksuvaba summa ({Money(figure ?? 0m)}) peab olema 0 kuni seaduse järgi {Money(other ?? 0m)} kuus (KR_KOOND_02/03)",
+            Core.Tax.PaymentChecks.ExemptionSubCent => $"avalduse maksuvaba summa ({figure?.ToString(culture)}) peab olema täissentides",
+            Core.Tax.PaymentChecks.MinimumShareInvalid => $"miinimumkohustuse kuu osa ({figure?.ToString("0.####", culture)}) peab olema üle 0 ja kuni 1",
+            Core.Tax.PaymentChecks.PensionNotChecked => $"väljamakse liik {subject} peab kinni kogumispensioni, kuid isiku II samba staatus on kontrollimata",
+            Core.Tax.PaymentChecks.PensionRateUnknown => $"väljamakse liik {subject} peab kinni kogumispensioni, kuid isiku II samba määr on teadmata",
+            Core.Tax.PaymentChecks.PensionRateInvalid => $"II samba määr {(figure is { } rate ? (rate * 100m).ToString("0.####", culture) + " %" : "")} ei ole lubatud (peab olema üle 0 % ja alla 100 %)",
+            Core.Tax.PaymentChecks.TypePayeeMismatch => Core.Tax.TaxRefusal.DetailOf(refusal) == nameof(Core.Model.Residency.NonResident)
+                ? $"väljamakse liik {subject} on residendile, isik on mitteresident"
+                : $"väljamakse liik {subject} on mitteresidendile, isik on resident",
+            Core.Tax.PaymentChecks.A1CountriesMissing => $"A1 juhul on vaja nii „{A1Country}“ kui ka „{WorkCountry}“ (isiku kaardil)",
+            Core.Tax.PaymentChecks.A1CountriesInconsistent => "A1 juht ja selle riigid isiku kaardil ei sobi kokku (KR_YLD2_07/09)",
+            Core.Tax.PaymentChecks.NegativeAmount => "tagasimakseid (negatiivseid summasid) ei toetata",
+            Core.Tax.TaxRefusal.CalcDateAfterPayment => "arvestuse kuupäev (TSD01) ei tohi olla hilisem kui väljamakse kuupäev (KR_YLD_25)",
+            Core.Tax.TaxRefusal.RowTaken => subject?.Split(' ') is [var section, var key] && Enum.TryParse<Core.Model.Section>(section, out var s)
+                ? $"pangarida on juba rea {key} ({SectionShort(s)}) allikas; üht pangarida deklareeritakse üks kord"
+                : $"pangarida on juba {(subject is null ? "teise rea" : $"rea {subject}")} allikas; üht pangarida deklareeritakse üks kord",
+            Core.Tax.TaxRefusal.KeyOtherRow => "võti on juba seotud teise pangareaga; võtme kõik versioonid jäävad sama rea juurde",
+            Core.Tax.TaxRefusal.KeyOtherLine => "võti on juba seotud teise käsitsi lisatud reaga; võtme kõik versioonid jäävad sama rea juurde",
+            Core.Tax.TaxRefusal.RowOtherCompany => "pangarida kuulub teise ettevõtte failile",
+            Core.Tax.TaxRefusal.RowNotPayment => $"pangarida ei ole makserida ({SkipText(subject)}); sellest ei saa deklareeritud rida koostada",
+            Core.Tax.TaxRefusal.NotDraft => Enum.TryParse<PaymentStatus>(subject, out var status) && Enum.IsDefined(status) && !int.TryParse(subject, out _)
+                ? $"ainult mustandit saab asendada, see versioon on {PaymentStatusText(status)} (programmi viga)"
+                : "ainult mustandit saab kustutada, saadetud versioon jääb ajalukku (programmi viga)",
+            _ => null,
+        };
+
+        static string SkipText(string? skip) => skip switch
+        {
+            Core.Import.SkipReason.Blank => "tühi rida",
+            Core.Import.SkipReason.Header => "päiserea koopia",
+            Core.Import.SkipReason.NotDone => "tehing jäi tegemata",
+            _ => skip ?? "?",
+        };
+    }
+
+    /// <summary>The refusal behind a build's note in words: by its code, else „programmi viga“ with the Core's English in
+    /// brackets for support (decision 242's way), an argument's parameter name left out.</summary>
+    public static string CauseText(Exception cause)
+    {
+        ArgumentNullException.ThrowIfNull(cause);
+        if ((cause is Core.Store.LineKeyException key ? LineKeyText(key.Code) : TaxRefusedText(cause)) is { } said)
+        {
+            return said;
+        }
+
+        var english = cause.Message;
+        if (cause is ArgumentException { ParamName: { } name } && english.EndsWith($" (Parameter '{name}')", StringComparison.Ordinal))
+        {
+            english = english[..^$" (Parameter '{name}')".Length];
+        }
+
+        return $"programmi viga ({english.TrimEnd('.')})";
+    }
+
+    /// <summary>A refusal met by the build that escaped it (a key's rule, the store's guard): a sentence; null for any other.</summary>
+    public static string? BuildRefused(Exception refusal)
+    {
+        var said = refusal is Core.Store.LineKeyException key ? LineKeyText(key.Code) : TaxRefusedText(refusal);
+        return said is null ? null : char.ToUpper(said[0], System.Globalization.CultureInfo.CurrentCulture) + said[1..] + ".";
+    }
 
     /// <summary>A refusal of the category phrases' file, in Estonian by its code (decision 202); null for any other.</summary>
     public static string? PhrasesRefused(Exception refusal)
@@ -641,6 +1467,8 @@ internal static class UiText
     public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 või _6 (võti ei ole serveris)";
     public const string ReviewChangedSinceBuild ="Ülevaatus on pärast „Koosta read“ muutunud ja read ei kajasta seda. Eksportida siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string ReviewNotChecked = "Ei saanud kontrollida, kas read vastavad ülevaatusele.";
+    public static string MarkedButLeftOutAtExport(int payments, decimal sum) => $"Deklareerimiseks märgitud makseid, mida read ei sisalda: {payments}, kokku {Money(sum)}. Ülevaatus keeldus neist või hoiab neid sama liigi keeldutud makse tõttu kinni (vt veerg „{Undeclared}“ ja logi); fail läheb ilma nendeta. Eksportida siiski? (Muidu paranda need ja vajuta uuesti „{BuildLines}“.)";
+    public static string MarkedButLeftOutLog(int payments, decimal sum) => $"{Count(payments, "märgitud makse", "märgitud makset")} (kokku {Money(sum)}) ei ole ridades";
     public const string ReopenConfirm = "Avada periood parandamiseks? Ülevaatus muutub taas muudetavaks; järgmine eksport kannab muudatused (M) ja tühistused (T) võtmetele, mida e-MTA juba teab. e-MTA-s tuleb deklaratsioon samuti muudatusteks avada. (Kui faili ei laaditudki üles, kasuta „Tühista eksport“.)";
     public const string ApplyReportTo = "Rakendada raport failile";
     public const string ResolveAcceptedConfirm = "Märkida rida e-MTA-s vastu võetuks (sinu sõna, tagasisideraportita)?";
@@ -812,11 +1640,14 @@ internal static class UiText
     public const string SimOwnPhrases = "Kategooriad otsiti omade fraasidega (imporditud failist).";
     public const string SimBuiltInPhrases = "Kategooriad otsiti sisseehitatud fraasidega.";
     public static string SimImportRefused(string reason) => "Näidist ei saanud lugeda: " + reason;
+    public const string SimImportUnread = "Näidist ei saanud lugeda.";
 
     /// <summary>Why the simulation stopped before the build, worded as the main window words the same refusal; null when it
-    /// did not stop.</summary>
+    /// did not stop. The import's refusal is worded as the import log words it (its code known), else in its English.</summary>
     public static string? SimStop(SimResult result) =>
-        result.RefusalError is { } e ? Worded(e) ?? e.Message
+        result.ImportStopped
+            ? (result.RefusalError is { } ie ? SimImportRefused(Worded(ie) ?? ie.Message) : result.Refusal is { } said ? SimImportRefused(said) : SimImportUnread)
+        : result.RefusalError is { } e ? Worded(e) ?? e.Message
         : result.Refusal is { } reason ? SimImportRefused(reason)
         : null;
 
@@ -841,9 +1672,14 @@ internal static class UiText
 
         text.AppendLine(result.OwnPhrases ? SimOwnPhrases : SimBuiltInPhrases);
         text.AppendLine("Sammud:");
-        foreach (var step in result.Steps)
+        foreach (var note in result.ImportNotes)
         {
-            text.AppendLine("  " + step);
+            text.AppendLine("  " + SheetNoteLine(note));
+        }
+
+        foreach (var problem in result.RunProblems)
+        {
+            text.AppendLine("  " + ProblemLine(problem));
         }
 
         if (result.Review is { } review)
@@ -854,7 +1690,12 @@ internal static class UiText
                 text.AppendLine($"  [{payment.RowNo}] {payment.Date?.ToString("dd.MM.yyyy", et)} {Euro(payment.Amount)} {payment.Description} — {payment.Category ?? NoCategory}, liik {payment.TypeCode ?? RulesNone}, {(payment.Declare ? "deklareeritakse" : "ei deklareerita")}");
                 foreach (var blocker in payment.Blockers)
                 {
-                    text.AppendLine($"      {blocker.Code}: {blocker.Message}");
+                    text.AppendLine($"      {RefusalLine(blocker)}");
+                }
+
+                foreach (var notice in payment.Notices)
+                {
+                    text.AppendLine($"      {NoticeTip(payment, notice)}");
                 }
             }
 
@@ -874,13 +1715,14 @@ internal static class UiText
             text.AppendLine($"Maksuvaba: pakutud {Euro(build.ExemptionOffered)}, alles {Euro(build.ExemptionLeft)}.");
         }
 
-        var problems = (result.Build?.Problems ?? []).Concat(result.BuildProblems).Distinct().ToList();
+        // the build's notes in Estonian, each once (by the Core's English: the person's and the period's may say the same)
+        var problems = (result.Build?.Notes ?? []).Concat(result.BuildNotes).DistinctBy(n => n.Text, StringComparer.Ordinal).ToList();
         if (problems.Count > 0)
         {
             text.AppendLine().AppendLine("Probleemid:");
             foreach (var problem in problems)
             {
-                text.AppendLine("  " + problem);
+                text.AppendLine("  " + BuildNoteLine(problem));
             }
         }
 
@@ -902,6 +1744,9 @@ internal static class UiText
     public const string MinimumShare = "Kuu osa (päevad/30)";
     // the calculator's pension-age tick and what it cannot use, said before anything is computed (the fifth audit, item 13)
     public const string PensionAgeThisYearTick = "Pensioniealine sel aastal (MVT_650)";
+
+    // the calculator's third tick: the age reached in a month before the payment's, so no employee's unemployment premium
+    public const string PensionAgeReachedTick = "Pensioniiga saabunud enne makse kuud (TK 1,6 % ei peeta kinni)";
 
     public static string CalculatorExemptionOutOfRange(decimal legal) => $"{ExemptionMonthly} peab olema 0 kuni {Money(legal)} (seaduse järgi).";
 
@@ -937,8 +1782,8 @@ internal static class UiText
     /// beside ours — the cell itself keeps its short "Severity: codes" text (the grid sorts, searches and exports it).</summary>
     public static string FeedbackDetail(LineFeedback feedback, Core.Tax.TaxResult? ours)
     {
-        var lines = new List<string> { $"Viimane raport ({feedback.RecordedAt.ToLocalTime():dd.MM.yyyy HH:mm}): {feedback.Severity}" };
-        lines.AddRange(feedback.Messages.Select(m => $"{m.Code} ({m.Severity}): {m.Info}"));
+        var lines = new List<string> { $"Viimane raport ({feedback.RecordedAt.ToLocalTime():dd.MM.yyyy HH:mm}): {Core.Report.ReportText.SeverityText(feedback.Severity)}" };
+        lines.AddRange(feedback.Messages.Select(m => $"{m.Code} ({Core.Report.ReportText.SeverityText(m.Severity)}): {m.Info}"));
         if (NextActionText(feedback.NextAction) is { Length: > 0 } advice)
         {
             lines.Add(advice);
@@ -964,7 +1809,13 @@ internal static class UiText
 
     /// <summary>A report's finding that points at no line: about the file, or a whole section.</summary>
     public static string GeneralText(Core.Feedback.GeneralValidation general) =>
-        $"{general.EntryNumber ?? "fail"}: {general.Validation.Level} {general.Validation.Code} — {general.Validation.Description}";
+        $"{EntryText(general.EntryNumber)}: {Core.Report.ReportText.LevelText(general.Validation.Level)} {general.Validation.Code} — {general.Validation.Description}";
+
+    /// <summary>A report's section (entryNumber) in the window's words; the raw text for one it does not know, „fail“ for none.</summary>
+    private static string EntryText(string? entry) =>
+        entry is null ? "fail"
+        : Enum.TryParse<Core.Model.Section>(entry, out var section) && Enum.IsDefined(section) && !int.TryParse(entry, out _) ? SectionShort(section)
+        : entry;
 
     // MTA's answers in Estonian, never the enum's English name (the fifth audit, item 29)
     public static string ProcessingResultText(Core.Feedback.ProcessingResult result) => result switch

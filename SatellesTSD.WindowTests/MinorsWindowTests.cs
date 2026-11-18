@@ -303,6 +303,13 @@ public class MinorsWindowTests
             dialog.ComputeNow();
             Assert.Equal([UiText.SimNotANumber(UiText.Amount, "abc"), UiText.SimNotANumber(UiText.ExemptionMonthly, "x")], said);
 
+            // the engine's coded refusal of a negative amount is said in Estonian, not in its English
+            dialog.ExemptionBox.Text = "";
+            dialog.AmountBox.Text = "-100";
+            dialog.ComputeNow();
+            Assert.Equal("Tagasimakseid (negatiivseid summasid) ei toetata.", dialog.OutputText);
+            dialog.AmountBox.Text = "1000";
+
             // the engine's other refusals of an own figure are said in Estonian too: no application, part of a cent
             said.Clear();
             dialog.ExemptionBox.Text = "500";

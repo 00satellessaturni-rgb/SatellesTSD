@@ -131,6 +131,9 @@ public class ImportStoreTests
             var again = Assert.Throws<ImportException>(() => store.AddImport(company.Id, parsed with { FileName = "koopia.xlsx" }, bytes));
             Assert.Contains("already imported", again.Message);
             Assert.Contains("palgad.xlsx", again.Message);
+            var earlier = store.FindImport(company.Id, parsed.Sha256)!;
+            Assert.Equal((ReaderRefusal.AlreadyImported, earlier.ImportedAt.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture), "palgad.xlsx"),
+                (ReaderRefusal.CodeOf(again), ReaderRefusal.SubjectOf(again), ReaderRefusal.DetailOf(again))); // worded in Estonian by its code (decision 229, option A)
 
             var other = store.AddCompany("12223047", "Teine OÜ");
             Assert.NotNull(store.AddImport(other.Id, parsed, bytes)); // another company may hold the same bytes

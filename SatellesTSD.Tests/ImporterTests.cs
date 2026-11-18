@@ -79,6 +79,7 @@ public class ImporterTests
         var html = Encoding.UTF8.GetBytes("<html><table><tr><td>Kliendi konto</td></tr></table></html>");
         var ex = Assert.Throws<ImportException>(() => Importer.Read("statement.xls", html));
         Assert.Contains("web page", ex.Message);
+        Assert.Equal(ReaderRefusal.WebPage, ReaderRefusal.CodeOf(ex)); // worded in Estonian by its code, the English kept (decision 229, option A)
 
         // an Excel 2003 XML spreadsheet is said to be one, not a web page (the fifth audit, item 22)
         var spreadsheetMl = Encoding.UTF8.GetBytes("<?xml version=\"1.0\"?>\r\n<?mso-application progid=\"Excel.Sheet\"?>\r\n<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"></Workbook>");
@@ -86,14 +87,23 @@ public class ImporterTests
         Assert.Contains("Excel 2003 XML", xml.Message);
         Assert.Contains("save it as .xlsx", xml.Message);
         Assert.DoesNotContain("web page", xml.Message);
+        Assert.Equal(ReaderRefusal.SpreadsheetXml, ReaderRefusal.CodeOf(xml));
 
-        Assert.Throws<ImportException>(() => Importer.Read("x.bin", [0, 1, 2, 3]));
+        Assert.Equal(ReaderRefusal.UnknownFormat, ReaderRefusal.CodeOf(Assert.Throws<ImportException>(() => Importer.Read("x.bin", [0, 1, 2, 3]))));
 
         var noExcel = new Importer(LayoutCatalog.Default);
-        Assert.Contains("no Excel reader", Assert.Throws<ImportException>(() => noExcel.Read("a.xlsx", Tables.Xlsx("S", ["a"]))).Message);
+        var none = Assert.Throws<ImportException>(() => noExcel.Read("a.xlsx", Tables.Xlsx("S", ["a"])));
+        Assert.Contains("no Excel reader", none.Message);
+        Assert.Equal(ReaderRefusal.NoExcelReader, ReaderRefusal.CodeOf(none));
 
         var broken = new byte[] { 0x50, 0x4B, 0x03, 0x04, 1, 2, 3, 4, 5, 6, 7, 8 };
-        Assert.Throws<ImportException>(() => Importer.Read("broken.xlsx", broken));
+        var unopened = Assert.Throws<ImportException>(() => Importer.Read("broken.xlsx", broken));
+        Assert.Equal(ReaderRefusal.ExcelUnopened, ReaderRefusal.CodeOf(unopened));
+        Assert.False(string.IsNullOrEmpty(ReaderRefusal.DetailOf(unopened))); // the library's own text, kept for the log's English
+
+        // the Excel reader handed something else names the format it found
+        var notExcel = Assert.Throws<ImportException>(() => new ExcelTableReader().Read("a.xlsx", Encoding.UTF8.GetBytes("a;b\n1;2\n")));
+        Assert.Equal((ReaderRefusal.NotExcel, "Csv"), (ReaderRefusal.CodeOf(notExcel), ReaderRefusal.SubjectOf(notExcel)));
     }
 
     [Fact]
@@ -139,5 +149,7 @@ public class ImporterTests
         var error = Record.Exception(() => Importer.Read("katki.xlsx", damaged));
         Assert.True(error is ImportException, error is null ? $"read without a word: {string.Join(" | ", Importer.Read("katki.xlsx", damaged).Sheets.Select(s => $"{s.Name}:{s.Kind}:{s.Message}:{s.Statement?.Rows.Count}"))}" : error.ToString());
         Assert.StartsWith("katki.xlsx could not be read (sheet 2)", error!.Message); // this file's failure, named by sheet; another file of the batch is still imported
+        Assert.Equal((ReaderRefusal.SheetUnreadable, "2"), (ReaderRefusal.CodeOf(error), ReaderRefusal.SubjectOf(error)));
+        Assert.False(string.IsNullOrEmpty(ReaderRefusal.DetailOf(error)));
     }
 }

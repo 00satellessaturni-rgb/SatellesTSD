@@ -589,6 +589,14 @@ public class DeclareTests
         Assert.Contains("No reason is named for section EE0201002", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3" }));
         Assert.Contains("PARANDUSPOHJUS_4 does not fit section EE0201001", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_4", [Section.EE0201002] = "PARANDUSPOHJUS_4" }));
         Assert.Contains("is not a PARANDUSPOHJUS code", Refusal(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3", [Section.EE0201002] = "x" }));
+
+        // each case carries what the window words it by (the case, the section, the code named)
+        (string?, string?, Section?) Case(Dictionary<Section, string>? reasons) =>
+            Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder, reasons)) is var e ? (e.Variant, e.Subject, e.Section) : default;
+        Assert.Equal<(string?, string?, Section?)>((PeriodSubmitter.ReasonNone, null, null), Case(null));
+        Assert.Equal<(string?, string?, Section?)>((PeriodSubmitter.ReasonMissing, null, Section.EE0201002), Case(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3" }));
+        Assert.Equal<(string?, string?, Section?)>((PeriodSubmitter.ReasonMisfit, "PARANDUSPOHJUS_4", Section.EE0201001), Case(new() { [Section.EE0201001] = "PARANDUSPOHJUS_4", [Section.EE0201002] = "PARANDUSPOHJUS_4" }));
+        Assert.Equal<(string?, string?, Section?)>((PeriodSubmitter.ReasonUnknown, "x", null), Case(new() { [Section.EE0201001] = "PARANDUSPOHJUS_3", [Section.EE0201002] = "x" }));
         Assert.Empty(box.Store.Submissions(box.Period.Id).Where(s => s.Id != first.Submission.Id)); // nothing was written by the refusals
 
         var correction = box.Submitter.Export(box.Period.Id, box.Folder, new Dictionary<Section, string> { [Section.EE0201001] = "PARANDUSPOHJUS_3", [Section.EE0201002] = "PARANDUSPOHJUS_4" });
@@ -701,7 +709,8 @@ public class DeclareTests
 
         // the hidden R settled as refused (the history view's business): the stale M cannot go out, the next build makes the draft an R again
         box.Submitter.Resolve(history[0].Id, onServer: false);
-        Assert.Equal(PeriodSubmitter.LinesStale, Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder)).Code);
+        var stale = Assert.Throws<DeclareException>(() => box.Submitter.Export(box.Period.Id, box.Folder));
+        Assert.Equal<(string, string?, string?, Section?, string?)>((PeriodSubmitter.LinesStale, m.LineNumber, "M", sent.Section, LineKeyRules.KeyUnknown), (stale.Code, stale.Subject, stale.Variant, stale.Section, stale.Detail));
         var rebuilt = box.Declarer.Build(box.Period.Id);
         Assert.True(rebuilt.Count(LineChange.Replaced) == 1, string.Join(" | ", rebuilt.Persons.SelectMany(p => p.Lines.Select(l => $"{l.Key} {l.Action} {l.Change} {l.Note}").Concat(p.Problems)).Concat(rebuilt.Problems)));
         var r = box.Lines.Single();
@@ -924,6 +933,91 @@ public class DeclareTests
         var line = Assert.Single(ended.Lines);
         Assert.Equal((0m, 0m, 0m), (line.Result!.SocialTaxMinimumIncrease, mari.MinimumDue, mari.MinimumShortfall));
         Assert.True(line.Result.Gross < 886m);
+    }
+
+    [Fact]
+    public void A_hand_type_whose_taxes_differ_from_the_registers_gives_a_notice_that_refuses_nothing_and_changes_no_figure()
+    {
+        using var box = Ready();
+        Assert.Empty(box.Salary.Notices); // the register's own type: no notice
+
+        // a hand 16 on a Tööleping (TÖR 1) salary: income tax only, as decided (decisions 40, 85), with the notice beside it
+        box.Workspace.SetTypeCode(box.Salary, "16");
+        var forced = box.Salary;
+        Assert.Equal(("16", "10"), (forced.TypeCode, forced.DefaultTypeCode));
+        Assert.Equal([ReviewChecks.TypeTaxesDiffer], forced.Notices);
+        Assert.Empty(forced.Checks);
+        Assert.Empty(forced.Blockers);
+        Assert.DoesNotContain(ReviewChecks.TypeTaxesDiffer, forced.Flags);
+        Assert.True(forced.Declare);
+        var person = box.Workspace.Load(box.Period.Id).Persons[0];
+        Assert.Empty(person.Undeclared);
+
+        var report = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(1, report.Count(LineChange.New));
+        var line = Assert.Single(box.Lines);
+        Assert.Equal("16", line.Line.TypeCode);
+        var result = line.Result!;
+        Assert.Equal((0m, 0m, 0m, 0m, 0m), (result.SocialTax, result.SocialTaxMinimumIncrease, result.UnemploymentEmployee, result.UnemploymentEmployer, result.FundedPension));
+        Assert.True(result.IncomeTaxApplies);
+        Assert.Equal((905.92m, result.Net + result.IncomeTax), (result.Net, result.Gross)); // income tax alone stands between net and gross
+
+        // the default chosen again stores no hand type and gives no notice; a hand 17 differs by the minimum alone and gives one
+        box.Workspace.SetTypeCode(box.Salary, "10");
+        Assert.Equal(("10", "10"), (box.Salary.TypeCode, box.Salary.DefaultTypeCode));
+        Assert.Empty(box.Salary.Notices);
+        box.Workspace.SetTypeCode(box.Salary, "17");
+        Assert.Equal([ReviewChecks.TypeTaxesDiffer], box.Salary.Notices);
+        box.Workspace.SetTypeCode(box.Salary, null);
+        Assert.Equal("10", box.Salary.TypeCode);
+        Assert.Empty(box.Salary.Notices);
+
+        // a category change clears the hand type and with it the notice (decision 40)
+        box.Workspace.SetTypeCode(box.Salary, "16");
+        Assert.NotEmpty(box.Salary.Notices);
+        box.Workspace.SetCategory(box.Salary, "Haigusleht");
+        box.Workspace.SetCategory(box.Salary, "Palgad");
+        Assert.Equal("10", box.Salary.TypeCode);
+        Assert.Empty(box.Salary.Notices);
+
+        // an undeclared payment gives none
+        box.Workspace.SetTypeCode(box.Salary, "16");
+        box.Workspace.SetDeclare(box.Salary, false);
+        Assert.Empty(box.Salary.Notices);
+    }
+
+    [Fact]
+    public void A_hand_line_of_another_taxes_type_gives_the_notice_too()
+    {
+        using var box = Ready();
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad", typeCode: "16");
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 21), 50m, "Mari Maasikas", "lisatasu", "Palgad", typeCode: "10");
+        var payments = box.Workspace.Load(box.Period.Id).Persons[0].Payments;
+        var sixteen = Assert.Single(payments, p => p.IsByHand && p.TypeCode == "16");
+        Assert.Equal([ReviewChecks.TypeTaxesDiffer], sixteen.Notices);
+        Assert.Empty(sixteen.Checks);
+        Assert.Empty(Assert.Single(payments, p => p.IsByHand && p.TypeCode == "10").Notices); // the default named by hand: nothing differs
+    }
+
+    [Fact]
+    public void A_salary_paid_on_a_free_work_entry_gives_a_notice_and_is_built_as_today()
+    {
+        using var box = Ready(minimum: true, mariType: 501);
+        var salary = box.Salary;
+        Assert.Equal("10", salary.TypeCode);
+        Assert.Contains(ReviewChecks.PayOnFreeWork, salary.Notices);
+        Assert.Empty(salary.Checks);
+        Assert.True(salary.Declare);
+
+        var report = box.Declarer.Build(box.Period.Id);
+        var line = Assert.Single(box.Lines); // no minimum zero line beside it
+        Assert.Equal("10", line.Line.TypeCode);
+        Assert.Equal(0m, line.Result!.SocialTaxMinimumIncrease);
+        Assert.DoesNotContain(report.Persons.Single(p => p.PersonId == box.Mari.Id).Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+
+        // a category that is no salary on the same entry gives none
+        box.Workspace.SetCategory(box.Salary, "Haigusleht");
+        Assert.DoesNotContain(ReviewChecks.PayOnFreeWork, box.Salary.Notices);
     }
 
     [Fact]
@@ -1150,6 +1244,68 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_kaasa_person_outside_the_register_with_an_undeclared_outside_tor_payment_is_told_of_the_payment_not_of_a_month_without_pay()
+    {
+        using var box = Ready();
+        var kati = box.Workspace.AddPerson(box.Company.Id, "Kati", "Kask", "60001010008", null);
+        box.Workspace.SavePerson(kati with { Declaration = DeclarationChoice.Include, FundedPensionMember = false, SocialTaxMinimumApplies = true }, confirmResidency: true, confirmPension: true);
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 20), 500m, "Kati Kask", "Septembrikuu palk", ReviewDefaults.OutsideTorCategory);
+        var payment = Assert.Single(Assert.Single(box.Workspace.Load(box.Period.Id).Persons, p => p.PersonId == kati.Id).Payments);
+        Assert.Equal(((string?)null, false), (payment.TypeCode, payment.Declare));
+
+        // no card type: no line, no zero line, and the note names the payment and its refusal
+        var report = box.Declarer.Build(box.Period.Id);
+        var built = report.Persons.Single(p => p.PersonId == kati.Id);
+        var note = Assert.Single(built.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        Assert.Contains("The month has 1 payment(s) for the person, not declared (OUTSIDE_TOR)", note, StringComparison.Ordinal);
+        Assert.Contains("No zero line and no line for the payment: no employment type is known", note, StringComparison.Ordinal);
+        Assert.DoesNotContain(built.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.DoesNotContain(box.Lines, l => l.PersonId == kati.Id);
+
+        // the card's TÖR type 1: the zero line follows as before; the payment stays undeclared and is said
+        box.Workspace.SavePerson(box.Store.Persons(box.Company.Id).Single(p => p.Id == kati.Id) with { TorEmploymentTypeId = "1" });
+        report = box.Declarer.Build(box.Period.Id);
+        built = report.Persons.Single(p => p.PersonId == kati.Id);
+        Assert.Contains(built.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.DoesNotContain(built.Problems, p => p.Contains("no line for the payment", StringComparison.Ordinal));
+        note = Assert.Single(built.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        Assert.Contains("The month has 1 payment(s) for the person, not declared (OUTSIDE_TOR)", note, StringComparison.Ordinal);
+        Assert.DoesNotContain("for the zero line", note, StringComparison.Ordinal); // the zero line was typed: the card's type is not asked for
+        var zero = Assert.Single(box.Lines, l => l.PersonId == kati.Id);
+        Assert.Equal(PeriodDeclarer.MinimumSource, zero.SourceRef);
+    }
+
+    [Fact]
+    public void A_kaasa_persons_money_that_is_no_income_or_was_left_out_by_hand_is_not_said_as_pay_refused()
+    {
+        // the review of the leftovers: a row with no category and no type is no pay, and a typed salary unticked by hand
+        // carries no refusal; neither is "a payment not declared"
+        using var box = Ready();
+        var kati = box.Workspace.AddPerson(box.Company.Id, "Kati", "Kask", "60001010008", null);
+        box.Workspace.SavePerson(kati with { Declaration = DeclarationChoice.Include, FundedPensionMember = false, SocialTaxMinimumApplies = true }, confirmResidency: true, confirmPension: true);
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 20), 50m, "Kati Kask", "kulude hüvitis");
+        string Note() => Assert.Single(box.Declarer.Build(box.Period.Id).Persons.Single(p => p.PersonId == kati.Id).Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        Assert.DoesNotContain("payment(s) for the person, not declared", Note(), StringComparison.Ordinal);
+        Assert.Contains("No zero line: no employment type is known (neither the register nor the card's TÖR type).", Note(), StringComparison.Ordinal);
+
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 21), 100m, "Kati Kask", "tasu", typeCode: "16", declare: false);
+        Assert.DoesNotContain("payment(s) for the person, not declared", Note(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_kaasa_person_outside_the_register_with_no_payment_keeps_the_old_words()
+    {
+        // a register-less kaasa person with a payment declared (a hand line typed 10) is no month of undeclared pay: the old words
+        using var box = Ready();
+        var kati = box.Workspace.AddPerson(box.Company.Id, "Kati", "Kask", "60001010008", null);
+        box.Workspace.SavePerson(kati with { Declaration = DeclarationChoice.Include, FundedPensionMember = false, SocialTaxMinimumApplies = true }, confirmResidency: true, confirmPension: true);
+        box.Workspace.AddHandLine(box.Period.Id, kati.Id, new DateOnly(2026, 10, 20), 100m, "Kati Kask", "tasu", typeCode: "16", declare: true);
+        var note = Assert.Single(box.Declarer.Build(box.Period.Id).Persons.Single(p => p.PersonId == kati.Id).Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        Assert.DoesNotContain("payment(s) for the person, not declared", note, StringComparison.Ordinal);
+        Assert.Contains("No zero line: no employment type is known (neither the register nor the card's TÖR type).", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_refused_salary_whose_sent_line_stands_gets_no_zero_line_beside_it_so_the_minimum_is_never_declared_twice()
     {
         using var box = Ready(minimum: true, salary: 300m);
@@ -1236,7 +1392,7 @@ public class DeclareTests
         box.Declarer.Build(box.Period.Id);
         var first = box.Submitter.Export(box.Period.Id, box.Folder);
         box.Submitter.MarkUploaded(box.Period.Id);
-        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => box.Submitter.Withdraw(first.Submission.Id)).Code);
+        Assert.Equal<(string?, string?)>((PeriodSubmitter.StateWithdraw, "Uploaded"), Assert.Throws<DeclareException>(() => box.Submitter.Withdraw(first.Submission.Id)) is var uploaded ? (uploaded.Variant, uploaded.Subject) : default);
         box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
         box.Submitter.MarkConfirmed(box.Period.Id);
 
@@ -1245,7 +1401,7 @@ public class DeclareTests
         box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.04m });
         box.Declarer.Build(box.Period.Id);
         var second = box.Submitter.Export(box.Period.Id, box.Folder, "PARANDUSPOHJUS_1");
-        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => box.Submitter.Withdraw(first.Submission.Id)).Code);
+        Assert.Equal<(string?, string?)>((PeriodSubmitter.StateWithdrawNotLatest, second.Submission.FileName), Assert.Throws<DeclareException>(() => box.Submitter.Withdraw(first.Submission.Id)) is var older ? (older.Variant, older.Subject) : default);
         var period = box.Store.Periods(box.Company.Id).Single();
         Assert.True(box.Submitter.CanWithdraw(second.Submission, period, box.Store.Submissions(box.Period.Id)));
         Assert.False(box.Submitter.CanWithdraw(first.Submission, period, box.Store.Submissions(box.Period.Id)));
@@ -1342,7 +1498,7 @@ public class DeclareTests
         Assert.Equal((LineAction.M, PaymentStatus.Rejected), (line.RefusedAttempt!.Action, line.RefusedAttempt.Status));
         Assert.Equal(Severity.Black, line.RefusedFeedback!.Severity);
         Assert.Equal("vastu võetud; parandus tagasi lükatud", SatellesTSD.Core.Report.ReportText.LineStatusText(line));
-        Assert.StartsWith("Black:", SatellesTSD.Core.Report.ReportText.FeedbackText(line), StringComparison.Ordinal);
+        Assert.StartsWith("must viga:", SatellesTSD.Core.Report.ReportText.FeedbackText(line), StringComparison.Ordinal);
 
         var refused = Assert.Throws<DeclareException>(() => box.Submitter.MarkConfirmed(box.Period.Id));
         Assert.Equal(PeriodSubmitter.LinesPending, refused.Code);
@@ -1682,7 +1838,7 @@ public class DeclareTests
         }
 
         Drafted();
-        Withdrawn(mari0 with { FundedPensionMember = null, PensionRate = null }, PeriodDeclarer.NotAllocated); // the pension dropped (a code corrected)
+        Withdrawn(mari0 with { FundedPensionMember = null, PensionRate = null }, PaymentChecks.PensionNotChecked); // the pension dropped (a code corrected): refused up front (decision 238)
         Drafted();
         Withdrawn(mari0 with { PersonalCode = null, MrrCode = null }, PeriodDeclarer.NoPayee);
         Drafted();
@@ -1924,6 +2080,52 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_pension_recipient_with_the_minimum_on_is_noted_and_still_topped_up()
+    {
+        // decision 237: a note, not a refusal — the figures follow the card's switch, the accountant decides (decision 3)
+        using var box = Ready(minimum: true, salary: 500m);
+        box.Workspace.SavePerson(box.Mari with { OnOldAgeOrFlexiblePension = true });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+        var topped = Assert.Single(box.Lines).Result!;
+        Assert.Equal((292.38m, 386m), (topped.SocialTax, topped.SocialTaxMinimumIncrease));
+
+        // the minimum unticked: the pay's own social tax, no top-up, no note
+        box.Workspace.SavePerson(box.Mari with { SocialTaxMinimumApplies = false });
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+        var plain = Assert.Single(box.Lines).Result!;
+        Assert.Equal((165.00m, 0m), (plain.SocialTax, plain.SocialTaxMinimumIncrease));
+    }
+
+    [Fact]
+    public void A_pension_recipients_zero_line_is_noted_and_a_month_owing_no_minimum_is_not()
+    {
+        // a valid employment with no pay carrying the minimum: the zero line carries it, and the card is noted
+        using (var box = Ready(minimum: true))
+        {
+            box.Workspace.SavePerson(box.Mari with { OnOldAgeOrFlexiblePension = true });
+            box.Workspace.SetCategory(box.Salary, "Haigusleht");
+            var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+            Assert.Single(mari.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+            Assert.Single(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+
+            // the minimum off: no zero line, no note
+            box.Workspace.SavePerson(box.Mari with { SocialTaxMinimumApplies = false });
+            mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+        }
+
+        // pay after the employment ended: no minimum is owed anyway, so nothing to note
+        using var ended = Ready(minimum: true, salary: 300m, mariEnded: true);
+        ended.Workspace.SavePerson(ended.Mari with { OnOldAgeOrFlexiblePension = true });
+        var settled = Assert.Single(ended.Declarer.Build(ended.Period.Id).Persons, p => p.PersonId == ended.Mari.Id);
+        Assert.Contains(settled.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal));
+        Assert.DoesNotContain(settled.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Income_the_month_does_not_declare_is_listed_on_the_person_with_why_and_whether_it_was_chosen()
     {
         using var box = Ready();
@@ -1971,6 +2173,45 @@ public class DeclareTests
         Assert.Equal((box.Salary.RowId, false, Undeclared.TypeHeld), (held.Payment.RowId, held.ByChoice, Assert.Single(held.Codes)));
         box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
         Assert.Empty(box.Lines);
+    }
+
+    [Fact]
+    public void The_payments_marked_but_left_out_are_the_refused_and_the_held_ones_and_add_up_by_the_grids_rule()
+    {
+        // decision 239: what the export asks about — the review's refusals of ticked payments and the totals cut's holds,
+        // never what the accountant chose; added up by the "Deklareerimata" rule (decision 100)
+        using var box = Ready();
+        Assert.Empty(box.Workspace.Load(box.Period.Id).MarkedButLeftOut);
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 11, 2), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        ReviewPayment Hand() => box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand);
+        box.Workspace.SetDeclare(Hand(), true);
+
+        // payment by payment: the refused one alone
+        var view = box.Workspace.Load(box.Period.Id);
+        var refused = Assert.Single(view.MarkedButLeftOut);
+        Assert.Equal((Undeclared.Refused, 100m), (refused.Reason, Undeclared.SumOf(view.MarkedButLeftOut)));
+
+        // the totals cut: the type's bank salary held beside it
+        box.Workspace.TotalsPerType = true;
+        view = box.Workspace.Load(box.Period.Id);
+        Assert.Equal([Undeclared.Refused, Undeclared.Held], view.MarkedButLeftOut.Select(u => u.Reason).Order(StringComparer.Ordinal).Reverse());
+        Assert.Equal(100m + box.Salary.Amount, Undeclared.SumOf(view.MarkedButLeftOut));
+        Assert.Equal(view.Persons[0].UndeclaredSum, Undeclared.SumOf(view.Persons[0].Undeclared));
+
+        // unticked: the accountant's word, nothing refused and nothing held
+        box.Workspace.SetDeclare(Hand(), false);
+        box.Workspace.SetDeclare(box.Salary, false);
+        view = box.Workspace.Load(box.Period.Id);
+        Assert.Equal(Undeclared.Unticked, Assert.Single(view.Persons[0].Undeclared).Reason);
+        Assert.Empty(view.MarkedButLeftOut);
+
+        // ticked again, and the person excluded on the card: the accountant's word too
+        box.Workspace.SetDeclare(box.Salary, null);
+        box.Workspace.SetDeclare(Hand(), true);
+        box.Workspace.SavePerson(box.Mari with { Declaration = DeclarationChoice.Exclude });
+        view = box.Workspace.Load(box.Period.Id);
+        Assert.All(view.Persons[0].Undeclared, u => Assert.Equal(Undeclared.Excluded, u.Reason));
+        Assert.Empty(view.MarkedButLeftOut);
     }
 
     [Fact]
@@ -2187,6 +2428,61 @@ public class DeclareTests
         Assert.Empty(box.Declarer.Build(box.Period.Id).Persons.Single(p => p.PersonId == mariId).Lines); // nothing stands, nothing to say a second time
     }
 
+    [Theory]
+    [InlineData(null, PaymentChecks.PensionNotChecked)]
+    [InlineData(true, PaymentChecks.PensionRateUnknown)]
+    public void No_zero_line_is_built_while_the_II_pillar_status_is_unchecked_and_one_drafted_goes(bool? member, string code)
+    {
+        // decision 238: the zero line's type withholds the funded pension, so a status (or rate) never checked refuses it
+        // up front under the review's own code, as decision 191 refuses it for the residency — never the engine's throw
+        using var box = Ready(minimum: true);
+        var mariId = box.Mari.Id;
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+        var checkedMari = box.Mari;
+
+        box.Store.UpdatePerson(checkedMari with { FundedPensionMember = member, PensionRate = null });
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == mariId);
+        Assert.StartsWith($"{code}:", mari.Problems[0], StringComparison.Ordinal);
+        Assert.Contains(mari.Problems, p => p.StartsWith($"{code}:", StringComparison.Ordinal) && p.Contains("zero line", StringComparison.Ordinal));
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal) || p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.Equal((LineChange.Deleted, code), (mari.Lines.Single().Change, mari.Lines.Single().Note));
+        Assert.Empty(box.Lines);
+        Assert.True(box.Declarer.DraftsCurrent(box.Period.Id));
+
+        // the zero line on the server: it stands, and is not cancelled
+        box.Store.UpdatePerson(checkedMari);
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.Reopen(box.Period.Id);
+        box.Store.UpdatePerson(checkedMari with { FundedPensionMember = member, PensionRate = null });
+        report = box.Declarer.Build(box.Period.Id);
+        mari = Assert.Single(report.Persons, p => p.PersonId == mariId);
+        Assert.Equal((LineChange.Kept, code), (mari.Lines.Single().Change, mari.Lines.Single().Note));
+        Assert.Equal(0, report.Count(LineChange.Cancelled));
+        Assert.Equal(PaymentStatus.Accepted, box.Lines.Single().Status);
+    }
+
+    [Fact]
+    public void A_non_residents_zero_line_needs_no_II_pillar_status()
+    {
+        // decision 238: the pension is withheld only for a resident with no foreign A1 (PaymentChecks), so a non-resident's
+        // zero line is not refused for a status never checked
+        using var box = Ready(minimum: true);
+        var mariId = box.Mari.Id;
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Workspace.SavePerson(box.Mari with { Residency = Residency.NonResident, ResidenceCountry = "LV" }, confirmResidency: true);
+        box.Store.UpdatePerson(box.Mari with { FundedPensionMember = null, PensionRate = null });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == mariId);
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PaymentChecks.PensionNotChecked, StringComparison.Ordinal) || p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal));
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+    }
+
     [Fact]
     public void A_change_built_back_to_the_figures_on_the_server_drops_its_M_draft_and_the_line_is_kept()
     {
@@ -2338,5 +2634,64 @@ public class DeclareTests
         box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
         var second = Assert.Single(box.Lines);
         Assert.Equal((first.Line.Amount, first.SourceRef), (second.Line.Amount, second.SourceRef));
+    }
+
+    [Fact]
+    public void The_submitters_refusals_carry_their_case_and_figures_for_the_windows_own_words()
+    {
+        using var box = Ready();
+        DeclareException Refused(Action act) => Assert.Throws<DeclareException>(act);
+        static (string, string?, string?) Case(DeclareException e) => (e.Code, e.Variant, e.Subject);
+
+        Assert.Equal((PeriodSubmitter.NoDrafts, (string?)null, (string?)null), Case(Refused(() => box.Submitter.Export(box.Period.Id, box.Folder))));
+        Assert.Equal((PeriodSubmitter.WrongState, (string?)PeriodSubmitter.StateUpload, (string?)"Draft"), Case(Refused(() => box.Submitter.MarkUploaded(box.Period.Id))));
+        Assert.Equal((PeriodSubmitter.WrongState, (string?)PeriodSubmitter.StateConfirm, (string?)"Draft"), Case(Refused(() => box.Submitter.MarkConfirmed(box.Period.Id))));
+        Assert.Equal((PeriodSubmitter.WrongState, (string?)PeriodSubmitter.StateReopen, (string?)"Draft"), Case(Refused(() => box.Submitter.Reopen(box.Period.Id))));
+        Assert.Equal((PeriodSubmitter.WrongState, (string?)PeriodSubmitter.StateUndoReopen, (string?)"Draft"), Case(Refused(() => box.Submitter.UndoReopen(box.Period.Id))));
+
+        // a folder that cannot be made (a file stands in its place): the system's own refusal, its type kept, marked by a code
+        box.Declarer.Build(box.Period.Id);
+        Directory.CreateDirectory(box.Folder);
+        var blocked = Path.Combine(box.Folder, "fail-mitte-kaust");
+        File.WriteAllText(blocked, "x");
+        var unwritable = Assert.Throws<IOException>(() => box.Submitter.Export(box.Period.Id, blocked));
+        Assert.Equal((SubmissionRefusal.WriteFailed, blocked), (SubmissionRefusal.CodeOf(unwritable), SubmissionRefusal.SubjectOf(unwritable)));
+        Assert.Equal(PeriodState.Draft, box.Store.Periods(box.Company.Id).Single().State); // nothing recorded
+
+        // the feedback reader's refusals, each by its code, the English kept
+        static Exception Read(string xml) => Assert.Throws<InvalidDataException>(() => FeedbackReader.Read(System.Xml.Linq.XDocument.Parse(xml)));
+        var wrongRoot = Read("<tsd/>");
+        Assert.Equal((SubmissionRefusal.NotReport, "tsd"), (SubmissionRefusal.CodeOf(wrongRoot), SubmissionRefusal.SubjectOf(wrongRoot)));
+        Assert.Equal("Expected a <processing> root, found <tsd>.", wrongRoot.Message);
+        var noEntry = Read("<processing result=\" ERROR \"/>");
+        Assert.Equal((SubmissionRefusal.NoEntry, "ERROR"), (SubmissionRefusal.CodeOf(noEntry), SubmissionRefusal.SubjectOf(noEntry)));
+        Assert.Equal(SubmissionRefusal.LineNoId, SubmissionRefusal.CodeOf(Read("<processing result=\"OK\"><entryHeader><validations><validation><errorLevel>OK</errorLevel><lineReferences><lineReference/></lineReferences></validation></validations></entryHeader></processing>")));
+        Assert.Equal(SubmissionRefusal.NoRoot, SubmissionRefusal.CodeOf(Assert.Throws<InvalidDataException>(() => FeedbackReader.Read(new System.Xml.Linq.XDocument()))));
+        var bytes = new MemoryStream();
+        using (var made = new System.IO.Compression.ZipArchive(bytes, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            made.CreateEntry("loe-mind.txt");
+        }
+
+        bytes.Position = 0;
+        using (var empty = new System.IO.Compression.ZipArchive(bytes, System.IO.Compression.ZipArchiveMode.Read))
+        {
+            Assert.Equal(SubmissionRefusal.ZipEmpty, SubmissionRefusal.CodeOf(Assert.Throws<InvalidDataException>(() => FeedbackReader.ReadZip(empty))));
+        }
+
+        // a file that is no XML, a damaged ZIP: unreadable, the .NET text kept as the detail; a file in use: the system's reason
+        var text = Path.Combine(box.Folder, "raport.xml");
+        File.WriteAllText(text, "see ei ole XML");
+        var notXml = Assert.Throws<System.Xml.XmlException>(() => box.Submitter.ReadFeedback(Guid.NewGuid(), text));
+        Assert.Equal((SubmissionRefusal.Unreadable, notXml.Message), (SubmissionRefusal.CodeOf(notXml), SubmissionRefusal.DetailOf(notXml)));
+        var zip = Path.Combine(box.Folder, "raport.zip");
+        File.WriteAllBytes(zip, [0x50, 0x4B, 0x03, 0x04, 1, 2, 3, 4, 5, 6, 7, 8]);
+        Assert.Equal(SubmissionRefusal.Unreadable, SubmissionRefusal.CodeOf(Assert.Throws<InvalidDataException>(() => box.Submitter.ReadFeedback(Guid.NewGuid(), zip))));
+        using (new FileStream(text, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.Equal(SubmissionRefusal.FileUnopened, SubmissionRefusal.CodeOf(Assert.Throws<IOException>(() => box.Submitter.ReadFeedback(Guid.NewGuid(), text))));
+        }
+
+        Assert.Null(SubmissionRefusal.CodeOf(ReaderRefusal.Of(ReaderRefusal.WebPage, "x"))); // another area's code is not this path's
     }
 }

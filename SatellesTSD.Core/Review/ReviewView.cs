@@ -111,6 +111,14 @@ public sealed class ReviewPayment
     /// review leaves undeclared by default stays out (no type, another currency, an unreadable amount).</summary>
     public IReadOnlyList<Refusal> Blockers { get; init; } = [];
 
+    /// <summary>Why the payment is refused as OUTSIDE_TOR (a "TÖR-väline palgad" payment of no type to a person outside the
+    /// month's register), null when it is not: the window words its tip by it.</summary>
+    public OutsideTorReason? OutsideTor { get; init; }
+
+    /// <summary>The declared payment's notices (<see cref="ReviewChecks.NoticesOf"/>: TYPE_TAXES_DIFFER, PAY_ON_FREE_WORK):
+    /// shown only, they refuse nothing and change no figure; never part of <see cref="Checks"/>, <see cref="Blockers"/> or <see cref="Flags"/>.</summary>
+    public IReadOnlyList<string> Notices { get; init; } = [];
+
     public string? Note { get; init; }
 
     public bool HasOverride { get; init; }
@@ -165,8 +173,7 @@ public sealed class ReviewPerson
 
     /// <summary>The income not declared, added up by one rule for the grid and the report (decision 100): a euro amount
     /// that was read and is no copy of another source's row; null when nothing goes undeclared.</summary>
-    public decimal? UndeclaredSum => Undeclared.Count == 0 ? null
-        : Undeclared.Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && u.Payment.Direction != Import.Direction.Credit).Sum(u => u.Payment.Amount);
+    public decimal? UndeclaredSum => Undeclared.Count == 0 ? null : Review.Undeclared.SumOf(Undeclared);
 
     /// <summary>The register entry standing for the person (the one "Kande olek" shows) when it is paused (kande olek 3), else null.</summary>
     public Import.TorEntry? PausedEntry => Register?.Entry is { StateId: Import.TorStates.Paused } entry ? entry : null;
@@ -198,6 +205,11 @@ public sealed record Undeclared(ReviewPayment Payment, string Reason, IReadOnlyL
     public const string Held = "HELD";
 
     public const string TypeHeld = "TYPE_HELD";
+
+    /// <summary>The income not declared, added up by one rule for the grid, the report and the export (decision 100): a
+    /// euro amount that was read, is no copy of another source's row and is no money in.</summary>
+    public static decimal SumOf(IEnumerable<Undeclared> list) =>
+        list.Where(u => u.Payment.AmountText is null && ReviewChecks.IsEuro(u.Payment.Currency) && !u.Payment.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal) && u.Payment.Direction != Import.Direction.Credit).Sum(u => u.Payment.Amount);
 }
 
 /// <summary>A period as the window shows it: the run (or none yet), the catalog the run was made with, the persons in
@@ -236,6 +248,13 @@ public sealed class ReviewView
 
     /// <summary>The run's rows that are not payment rows (balances, fees, blank lines) and so are not shown.</summary>
     public int RowsLeftOut { get; init; }
+
+    /// <summary>The payments marked to declare that the lines will not hold, as the review stands: the ticked payments the
+    /// review refuses and, under the totals cut, those held with their type by a refused one. What the accountant chose is
+    /// not counted (excluded, unticked, another currency, money in), nor what is not declared by default; the build's own
+    /// holds stay in its log (decision 122). The export asks about them first (decision 239).</summary>
+    public IReadOnlyList<Undeclared> MarkedButLeftOut =>
+        Persons.SelectMany(p => p.Undeclared).Where(u => !u.ByChoice && u.Reason is Undeclared.Refused or Undeclared.Held).ToList();
 
     public ReviewPerson Unmatched => Persons.Last(p => p.IsUnmatched);
 }

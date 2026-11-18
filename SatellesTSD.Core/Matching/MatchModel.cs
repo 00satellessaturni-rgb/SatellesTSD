@@ -102,8 +102,30 @@ public sealed record MatchPerson(SearchPerson Person, IReadOnlyList<TorEntry> En
 }
 
 /// <summary>Something the run wants the accountant to see; never a reason to stop.</summary>
-public sealed record MatchProblem(string Code, string Message, string? PersonKey = null, string? Source = null, int? RowNo = null)
+/// <param name="Message">The Core's English (the tests, the store and support read it).</param>
+/// <param name="Subject">A figure the window words the problem with in Estonian (STATE_UNREAD: the rows joined by ", ").</param>
+/// <param name="Variant">The case the window words (STATE_UNREAD: "locked" when the file cannot be read again, else null;
+/// the other codes of two shapes: <see cref="NoPayeeRow"/>, <see cref="CopyParts"/> and the like).</param>
+/// <param name="Args">The figures the window words the problem with in Estonian, as invariant text (names, rows, counts,
+/// references); null for a problem stored before they were kept, which keeps its English.</param>
+public sealed record MatchProblem(string Code, string Message, string? PersonKey = null, string? Source = null, int? RowNo = null, string? Subject = null, string? Variant = null, IReadOnlyList<string>? Args = null)
 {
+    public bool Equals(MatchProblem? other) =>
+        other is not null && Code == other.Code && Message == other.Message && PersonKey == other.PersonKey && Source == other.Source && RowNo == other.RowNo
+        && Subject == other.Subject && Variant == other.Variant && (Args is null) == (other.Args is null) && (Args ?? []).SequenceEqual(other.Args ?? [], StringComparer.Ordinal);
+
+    public override int GetHashCode() => HashCode.Combine(Code, Message, PersonKey, Source, RowNo, Subject, Variant, Args?.Count ?? -1);
+
+    /// <summary>ROWS_BELOW_LAST_PAYEE's variant when no row of the source names a payee at all.</summary>
+    public const string NoPayeeRow = "noPayee";
+
+    /// <summary>DECISION_ON_COPY's variant when the copy carries parts split off its payment (the decision's own variants
+    /// are <see cref="CopyPastDraft"/>, <see cref="CopySplit"/> and <see cref="CopyOriginalOwn"/>).</summary>
+    public const string CopyParts = "parts";
+    public const string CopyPastDraft = "pastDraft";
+    public const string CopySplit = "split";
+    public const string CopyOriginalOwn = "originalOwn";
+
     /// <summary>A person's masked hits in a source were dropped because the masks could also mean another person.</summary>
     public const string AmbiguousMask = "AMBIGUOUS_MASK";
     /// <summary>Two persons of the register hit the same row by their exact names; it is counted for neither.</summary>
@@ -149,11 +171,18 @@ public sealed record MatchProblem(string Code, string Message, string? PersonKey
     /// payment: shown, nothing built (decision 137).</summary>
     public const string IncludedWithoutRow = "INCLUDED_NO_ROW";
 
+    /// <summary>Salary-pattern money ("TÖR-väline palgad") paid this month to a person the month's register does not list
+    /// (or of a month searched with no register), not declared: said of the person, never coloured or summed (decision 100).</summary>
+    public const string OutsideTorSalary = "OUTSIDE_TOR_SALARY";
+
     /// <summary>A card export stored before 0.16.0 keeps its old reading — every amount as money in, in the payment's own
     /// currency — so its payouts are left out as money in (decision 141): said, with the way to read it again (decision 171).</summary>
     public const string OldReading = "OLD_READING";
     /// <summary>A statement sheet was read before its layout read the transaction's state: a row that moved no money may stand as a payment until the file is read again (decision 179).</summary>
     public const string StateUnread = "STATE_UNREAD";
+
+    /// <summary>STATE_UNREAD's variant when the file cannot be read again (a month past Draft lists it, or a line built from it has been on the server).</summary>
+    public const string StateUnreadLocked = "locked";
 
     /// <summary>Rows of a statement below its last payee row were not listed (the workbook's cut, decision 29): counted and said (140).</summary>
     public const string RowsBelowLastPayee = "ROWS_BELOW_LAST_PAYEE";

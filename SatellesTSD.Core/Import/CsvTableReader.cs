@@ -38,10 +38,12 @@ public sealed class CsvTableReader : ITableReader
         var delimiter = _delimiter ?? SniffDelimiter(FirstLines(text, StatementParser.DefaultHeaderSearchRows)); // as deep as the header is looked for: a title block does not outvote the table
         var rows = ParseRecords(text, delimiter, out var unterminated);
         var sheet = new SheetTable(0, Path.GetFileNameWithoutExtension(fileName), rows);
+        var record = rows.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var warnings = unterminated
-            ? new[] { $"{fileName}: a quote opened at record {rows.Count} is never closed; everything after it was read as that one field." }
+            ? new[] { $"{fileName}: a quote opened at record {record} is never closed; everything after it was read as that one field." }
             : [];
-        return new SourceWorkbook(fileName, SourceFormat.Csv, [sheet], encodingName, warnings);
+        var notes = warnings.Select(w => new ImportNote(SheetNotes.UnclosedQuote, w, null, 0, [record])).ToList();
+        return new SourceWorkbook(fileName, SourceFormat.Csv, [sheet], encodingName, warnings) { WarningNotes = notes };
     }
 
     /// <summary>The text and the name of the encoding it was decoded with.</summary>

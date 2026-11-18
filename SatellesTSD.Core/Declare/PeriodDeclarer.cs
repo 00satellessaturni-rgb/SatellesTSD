@@ -46,6 +46,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     public const string FactsOfAnotherDay = "FACTS_OF_ANOTHER_DAY";
     public const string NoResidenceCountry = "NO_RESIDENCE_COUNTRY";
 
+    /// <summary>A note, not a refusal: the card has "Vanaduspensionil" ticked and the minimum on (decision 237).</summary>
+    public const string MinimumWithPension = "MINIMUM_WITH_PENSION";
+
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
 
@@ -241,7 +244,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var view = _workspace.Load(periodId);
         if (!view.Editable)
         {
-            throw new DeclareException(ReviewWorkspace.PeriodNotDraft, $"The period is {view.Period.State}; its lines are built while it is a Draft.");
+            throw new DeclareException(ReviewWorkspace.PeriodNotDraft, $"The period is {view.Period.State}; its lines are built while it is a Draft.") { Subject = view.Period.State.ToString() };
         }
 
         if (view.RunIsStale)
@@ -250,7 +253,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // would miss or double payments, or retire every bank-row line
             throw new DeclareException(RunStale, view.Run is null
                 ? "The period's files have not been searched; search (Otsi maksed) before building the lines."
-                : "The period's files changed after the payments were searched; search again (Otsi maksed) before building the lines.");
+                : "The period's files changed after the payments were searched; search again (Otsi maksed) before building the lines.")
+                { Variant = view.Run is null ? "notSearched" : "changed" };
         }
 
         var period = view.Period;
@@ -268,7 +272,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             throw new DeclareException(ModeChanged, mode == DeclarationMode.TotalsPerType
                 ? $"Line {otherCut.LineNumber} on the server stands for one payment; the month was declared payment by payment. Build it that way, or cancel its lines first."
-                : $"Line {otherCut.LineNumber} on the server adds up a type; the month was declared as totals per type. Build it that way, or cancel its lines first.");
+                : $"Line {otherCut.LineNumber} on the server adds up a type; the month was declared as totals per type. Build it that way, or cancel its lines first.")
+            { Subject = otherCut.LineNumber, Variant = mode == DeclarationMode.TotalsPerType ? "perPayment" : "totals" };
         }
         // several keys may have stood for one source over time (a dead one, a refused one, the live one): the live one speaks for it
         var bySource = new Dictionary<string, StoredPayment>(StringComparer.Ordinal);
@@ -282,10 +287,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var builds = new List<PersonBuild>();
-        var problems = new List<string>();
+        var problems = new List<BuildNote>();
         // the month's own year's rates; a year this build knows no rates for is refused, never computed with another's
         var rates = _ratesGiven ? _rates : TaxRates.For(period.Year)
-            ?? throw new DeclareException(RatesMissing, $"This version knows no tax rates for {period.Year}; the month's lines cannot be built until a version that does.");
+            ?? throw new DeclareException(RatesMissing, $"This version knows no tax rates for {period.Year}; the month's lines cannot be built until a version that does.")
+            { Subject = period.Year.ToString(System.Globalization.CultureInfo.InvariantCulture) };
         var allocator = new MonthAllocator(new TaxEngine(rates));
         // whether the month was searched against a register: only then does a person it does not list have no employment in it
         var monthHasRegister = view.StoredRun?.TorSheetId is not null || view.Persons.Any(p => p.Register is not null);
@@ -296,7 +302,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 if (reviewPerson.Register is null && reviewPerson.Payments.Count == 0)
                 {
                     // "kaasa" on the card, no register row and no payment this month (decision 137): shown in the review, nothing built
-                    problems.Add($"{Included}: {persons[reviewPerson.PersonId!.Value].LastName} {persons[reviewPerson.PersonId!.Value].FirstName}: declared as if employed on the card, but the month's register has no row and no payment was found; no line is built for the person (a line standing from before is undone as usual).");
+                    var nobody = $"{persons[reviewPerson.PersonId!.Value].LastName} {persons[reviewPerson.PersonId!.Value].FirstName}";
+                    problems.Add(new BuildNote(Included, $"{Included}: {nobody}: declared as if employed on the card, but the month's register has no row and no payment was found; no line is built for the person (a line standing from before is undone as usual).")
+                    { Variant = "noRowNoPay", Subject = nobody });
                     continue;
                 }
 
@@ -333,22 +341,22 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             }
         });
 
-        return new BuildReport { Period = period, Persons = builds, Problems = problems };
+        return new BuildReport { Period = period, Persons = builds, Notes = problems };
     }
 
     private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode, bool monthHasRegister)
     {
         var name = $"{person.LastName} {person.FirstName}";
         var lines = new List<BuiltLine>();
-        var problems = new List<string>();
+        var problems = new List<BuildNote>();
         if (person.Declaration == DeclarationChoice.Exclude)
         {
             // the accountant's word: nothing is built and nothing claimed, so what stands for the person is undone below
             var left = reviewPerson.Payments.Count(p => p.Declare);
-            problems.Add(left == 0
+            problems.Add(new BuildNote(Excluded, left == 0
                 ? $"{Excluded}: the person is excluded from the declaration."
-                : $"{Excluded}: the person is excluded from the declaration; {left} payment(s) marked to declare are left out.");
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+                : $"{Excluded}: the person is excluded from the declaration; {left} payment(s) marked to declare are left out.") { Count = left });
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems };
         }
 
         var include = person.Declaration == DeclarationChoice.Include;
@@ -362,7 +370,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             var source = SourceOf(payment);
             if (payment.Checks.Count > 0)
             {
-                problems.Add($"{Refused}: {payment.Reference}: {string.Join(", ", payment.Checks.Select(c => c.Code))}");
+                problems.Add(new BuildNote(Refused, $"{Refused}: {payment.Reference}: {string.Join(", ", payment.Checks.Select(c => c.Code))}")
+                { Reference = payment.Reference, Items = payment.Checks.Select(c => c.Code).ToList() });
                 if (IsMonthsMinimumPay(payment, person, period.Year))
                 {
                     minimumHeldBy.Add(payment.Reference);
@@ -479,7 +488,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             : cardType ?? (entry ?? reviewPerson.Register?.Entries.Where(e => e.StartDate is null || e.StartDate <= lastDay).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault())?.TypeId ?? person.TorEmploymentTypeId;
         // what the zero line's build says, said once the line is built: a build that stops later (no payee, a month that
         // cannot be computed, the line factory's refusal) withdraws it instead, and says that (the fifth audit, item 2)
-        string? zeroNote = null;
+        BuildNote? zeroNote = null;
         var zeroNoteAt = 0;
         if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
@@ -492,7 +501,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 // the zero line never passes the review's checks, and its code follows the residency: one never checked
                 // refuses it as it refuses every other line of the person (decision 191). A draft under it goes, a line
                 // on the server stands, nothing is cancelled.
-                problems.Add($"{ReviewChecks.ResidencyNotChecked}: the minimum's zero line (type {zeroCode}) is not built: the person's residency has not been checked — by the register or by hand; a draft standing under it is withdrawn, a line on the server stands.");
+                problems.Add(new BuildNote(ReviewChecks.ResidencyNotChecked, $"{ReviewChecks.ResidencyNotChecked}: the minimum's zero line (type {zeroCode}) is not built: the person's residency has not been checked — by the register or by hand; a draft standing under it is withdrawn, a line on the server stands.")
+                { Variant = "zeroLine", PaymentType = zeroCode });
                 claimed.Add(zeroSource);
                 if (bySource.TryGetValue(zeroSource, out var held))
                 {
@@ -512,9 +522,22 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 // the person was paid this month in pay the review refused: not a month without pay, so no zero line; the
                 // minimum waits for the payment to be put right or taken out of the declaration. A draft zero line goes,
                 // one on the server stands, nothing is cancelled (decision 207, after 92 and 191)
-                problems.Add($"{MinimumHeld}: no zero line (type {zeroCode}): the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the minimum waits for it to be put right (or taken out of the declaration) — a draft zero line standing is withdrawn, a line on the server stands.");
+                problems.Add(new BuildNote(MinimumHeld, $"{MinimumHeld}: no zero line (type {zeroCode}): the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the minimum waits for it to be put right (or taken out of the declaration) — a draft zero line standing is withdrawn, a line on the server stands.")
+                { Variant = "zeroLine", PaymentType = zeroCode, Items = minimumHeldBy.Distinct(StringComparer.Ordinal).ToList() });
                 references[zeroSource] = (MinimumSource, null, null);
                 Withdraw([zeroSource], MinimumHeld);
+            }
+            else if (PaymentChecks.Check(zeroType, person.FactsFor(period.Year, period.Month, 1m), 0m, _rates)
+                .FirstOrDefault(r => r.Code is PaymentChecks.PensionNotChecked or PaymentChecks.PensionRateUnknown or PaymentChecks.PensionRateInvalid) is { } pension)
+            {
+                // the zero line's type withholds the funded pension where the person is a resident with no foreign A1: a status
+                // (or rate) never checked refuses it up front under the review's own code, as the person's other lines are
+                // refused, never by the engine's throw (NOT_ALLOCATED). Residency first (191), held pay next (207), then this.
+                // A draft under it goes, a line on the server stands, nothing is cancelled (decision 238, refining 206)
+                problems.Add(new BuildNote(pension.Code, $"{pension.Code}: the minimum's zero line (type {zeroCode}) is not built: the person's II-pillar status (or rate) has not been checked — ask the registers (Päringud) or confirm it on the card; a draft standing under it is withdrawn, a line on the server stands.")
+                { Variant = "zeroLine", PaymentType = zeroCode });
+                references[zeroSource] = (MinimumSource, null, null);
+                Withdraw([zeroSource], pension.Code);
             }
             else
             {
@@ -522,40 +545,74 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 references[zeroSource] = (MinimumSource, null, null);
                 zeroNoteAt = problems.Count;
                 zeroNote = InForce(carrier)
-                    ? $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it."
-                    : $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.";
+                    ? new BuildNote(ZeroLine, $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.")
+                    {
+                        Variant = carrier.StateId == TorStates.Valid ? "valid" : carrier.StateId == TorStates.Ended ? "ended" : "paused",
+                        Day = carrier.StateId == TorStates.Valid ? null : carrier.StateId == TorStates.Ended ? carrier.EndDate : carrier.PauseStart,
+                        FromCard = cardType is not null, TypeId = zeroTypeId, PaymentType = zeroCode,
+                    }
+                    : new BuildNote(ZeroLine, $"{ZeroLine}: declared as if employed (the person card's choice), type {zeroTypeId}, no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.")
+                    { Variant = "asIfEmployed", TypeId = zeroTypeId, PaymentType = zeroCode };
             }
         }
 
         if (include && !InForce(entry))
         {
-            // the card's choice is said, and so is why it made no zero line where one was looked for
-            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year))
-                ? zeroTypeId is null ? " No zero line: no employment type is known (neither the register nor the card's TÖR type)."
-                : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? $" No zero line: employment type {zeroTypeId} carries no minimum."
-                : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? " No zero line: the person's A1 case carries no Estonian social tax."
-                : ""
+            // the card's choice is said, and so is why it made no zero line where one was looked for; a month with payments
+            // of the person none of which is declared says so too, with their refusals (OUTSIDE_TOR, say), not as a month
+            // without pay. Only pay refused counts: salary-pattern money outside the register or a typed payment, in euros,
+            // with a refusal; not money that is no income, nor a row the accountant left out by choice. The card's TÖR type
+            // is asked for only when no zero line could be typed
+            var inMonth = reviewPerson.Payments.Where(p => p.InPeriod && p.Direction != Direction.Credit && !p.Flags.Contains(MatchProblem.DuplicateRow, StringComparer.Ordinal)).ToList();
+            var refusedPay = inMonth.Where(p => !p.Declare && p.Blockers.Count > 0 && ReviewChecks.IsEuro(p.Currency)
+                && (p.OutsideTor is not null || p.TypeCode is not null || p.DefaultTypeCode is not null)).ToList();
+            var noneDeclared = inMonth.Count > 0 && inMonth.All(p => !p.Declare) && refusedPay.Count > 0;
+            var paid = noneDeclared
+                ? $" The month has {refusedPay.Count} payment(s) for the person, not declared ({string.Join(", ", refusedPay.SelectMany(p => p.Blockers).Select(b => b.Code).Distinct(StringComparer.Ordinal))}): give the row a category or a payment type{(zeroTypeId is null ? ", or put the TÖR type on the card ('Kaardi töötamise liik kõigile maksetele') for the zero line" : "")}."
                 : "";
-            problems.Add($"{Included}: declared as if employed (the person card's choice); the register has no valid employment for the month.{unmet}");
+            var unmetCase = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year))
+                ? zeroTypeId is null ? noneDeclared ? "noTypeNoneDeclared" : "noType"
+                : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? "typeNoMinimum"
+                : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? "a1"
+                : null
+                : null;
+            var unmet = unmetCase switch
+            {
+                "noTypeNoneDeclared" => " No zero line and no line for the payment: no employment type is known (neither the register nor the card's TÖR type).",
+                "noType" => " No zero line: no employment type is known (neither the register nor the card's TÖR type).",
+                "typeNoMinimum" => $" No zero line: employment type {zeroTypeId} carries no minimum.",
+                "a1" => " No zero line: the person's A1 case carries no Estonian social tax.",
+                _ => "",
+            };
+            problems.Add(new BuildNote(Included, $"{Included}: declared as if employed (the person card's choice); the register has no valid employment for the month.{paid}{unmet}")
+            {
+                Variant = "noValid",
+                Count = noneDeclared ? refusedPay.Count : null,
+                Items = noneDeclared ? refusedPay.SelectMany(p => p.Blockers).Select(b => b.Code).Distinct(StringComparer.Ordinal).ToList() : [],
+                AskCardType = noneDeclared && zeroTypeId is null,
+                Unmet = unmetCase,
+                TypeId = zeroTypeId,
+            });
         }
         else if (include && person.SocialTaxMinimumApplies && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom } && Carries(entry.TypeId)
             && pausedFrom <= lastDay && (entry.PauseEnd is not { } pausedTo || pausedTo >= new DateOnly(period.Year, period.Month, 1))
             && (entry.StartDate is not { } begun || begun <= lastDay))
         {
             // in force on days of the month, paused on others: the card's choice counts the pause's days too, and says so
-            problems.Add($"{Included}: declared as if employed (the person card's choice); the register has the employment paused from {entry.PauseStart:dd.MM.yyyy}, and the minimum counts the pause's days as well.");
+            problems.Add(new BuildNote(Included, $"{Included}: declared as if employed (the person card's choice); the register has the employment paused from {entry.PauseStart:dd.MM.yyyy}, and the minimum counts the pause's days as well.")
+            { Variant = "paused", Day = entry.PauseStart });
         }
 
         if (monthPayments.Count == 0)
         {
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems };
         }
 
         if (person.PayeeId is not { } payee)
         {
-            problems.Add($"{NoPayee}: the person has neither a personal code nor an MTA non-resident code; nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands.");
+            problems.Add(new BuildNote(NoPayee, $"{NoPayee}: the person has neither a personal code nor an MTA non-resident code; nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands."));
             Withdraw(monthPayments.Select(m => m.Key), NoPayee);
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems };
         }
 
         if (ReviewChecks.InvalidCode(person) is { } invalidCode)
@@ -563,9 +620,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // the zero line never passes the review's checks: the same refusal here, so no line is built under a code
             // e-MTA cannot know (decision 142). A draft standing under it (built before the code was found wrong) goes,
             // since the export takes every draft; a line on the server stands, nothing is cancelled.
-            problems.Add($"{ReviewChecks.CodeInvalid}: the person's code '{invalidCode}' is not an Estonian personal code; nothing built under it — a draft standing under it is withdrawn, a line on the server stands. Correct the code on the card.");
+            problems.Add(new BuildNote(ReviewChecks.CodeInvalid, $"{ReviewChecks.CodeInvalid}: the person's code '{invalidCode}' is not an Estonian personal code; nothing built under it — a draft standing under it is withdrawn, a line on the server stands. Correct the code on the card.")
+            { Subject = invalidCode });
             Withdraw(monthPayments.Select(m => m.Key), ReviewChecks.CodeInvalid);
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems };
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems };
         }
 
         var share = MonthShare(entry, reviewPerson.Register?.Entries ?? [], period.Year, period.Month, include);
@@ -574,14 +632,16 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         if (fromRegisters && person.FactsControlDate is { } asked && (asked.Year != period.Year || asked.Month != period.Month))
         {
             // a note, not a refusal: the facts stand as the registers said them for that day; this month may say otherwise
-            problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.");
+            problems.Add(new BuildNote(FactsOfAnotherMonth, $"{FactsOfAnotherMonth}: the residency or the pension was last looked up for {asked:dd.MM.yyyy}, another month; ask the registers for this month (Päringud) if they may have changed.")
+            { Variant = "lookedUpFor", Day = asked });
         }
         else if (fromRegisters && person.FactsControlDate is { } checkedFor && ControlDayOf(period, person.Id) is { } due && due != checkedFor)
         {
             // a note, not a refusal: the registers answered for one day of the month, and the review now pays the person on
             // another (a row given to them or taken away, a line added, or a check made before the search) — the residency or
             // the membership may differ between the two days (decision 166)
-            problems.Add($"{FactsOfAnotherDay}: the residency and the pension were looked up for {checkedFor:dd.MM.yyyy}; as the review stands the person's day is {due:dd.MM.yyyy}; ask the registers again (Päringud).");
+            problems.Add(new BuildNote(FactsOfAnotherDay, $"{FactsOfAnotherDay}: the residency and the pension were looked up for {checkedFor:dd.MM.yyyy}; as the review stands the person's day is {due:dd.MM.yyyy}; ask the registers again (Päringud).")
+            { Day = checkedFor, OtherDay = due });
         }
         else if (fromRegisters && person.FactsControlDate is null
             && Earlier(person.ResidencySource == LookupSource.Emta ? person.ResidencyCheckedOn : null, person.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived ? person.PensionCheckedOn : null) is { } checkedOn
@@ -589,20 +649,21 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             // a person looked up before the control date was kept (schema v9): the day of the check stands in — the registers
             // are asked after the month, so only a check before the month's first day is of another month for sure
-            problems.Add($"{FactsOfAnotherMonth}: the residency or the pension was checked on {checkedOn:dd.MM.yyyy}, before this month; ask the registers for this month (Päringud) if they may have changed.");
+            problems.Add(new BuildNote(FactsOfAnotherMonth, $"{FactsOfAnotherMonth}: the residency or the pension was checked on {checkedOn:dd.MM.yyyy}, before this month; ask the registers for this month (Päringud) if they may have changed.")
+            { Variant = "checkedOn", Day = checkedOn });
         }
 
         if (facts.Residency == Residency.NonResident && string.IsNullOrWhiteSpace(facts.ResidenceCountry))
         {
             // a note, not a refusal: the schema lets the line go without the country, MTA expects it and checks it
-            problems.Add($"{NoResidenceCountry}: a non-resident declared without the country of tax residence (RR_MAKSURESIDENTSUSE_RIIK); MTA compares it with its register (KR_ISIK_6, red) — enter it on the person card when known.");
+            problems.Add(new BuildNote(NoResidenceCountry, $"{NoResidenceCountry}: a non-resident declared without the country of tax residence (RR_MAKSURESIDENTSUSE_RIIK); MTA compares it with its register (KR_ISIK_6, red) — enter it on the person card when known."));
         }
 
         if (inRegister && entry is null && facts.SocialTaxMinimumApplies && !include)
         {
             // pay after the employment ended (a final settlement): the register covers no day of the month, so no minimum is owed on it
             facts = facts with { SocialTaxMinimumApplies = false };
-            problems.Add($"{NoEmploymentInMonth}: no employment of the register covers the month; the minimum is not owed on this pay.");
+            problems.Add(new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: no employment of the register covers the month; the minimum is not owed on this pay.") { Variant = "notCovered" });
         }
         else if (monthHasRegister && reviewPerson.Register is null && facts.SocialTaxMinimumApplies && !include)
         {
@@ -610,7 +671,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // month's export), paid by hand or by a row given to them: no employment of the month, no minimum — the same as
             // pay after an ended row the export still lists; "kaasa" on the card declares them as if employed (decision 176)
             facts = facts with { SocialTaxMinimumApplies = false };
-            problems.Add($"{NoEmploymentInMonth}: the month's register does not list the person; the minimum is not owed on this pay (set the card's Deklareerimine to \"kaasa\" if the person was employed in the month).");
+            problems.Add(new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the month's register does not list the person; the minimum is not owed on this pay (set the card's Deklareerimine to \"kaasa\" if the person was employed in the month).")
+            { Variant = "notListed" });
         }
         else if (share == 0m)
         {
@@ -622,8 +684,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             if (owed)
             {
                 problems.Add(entry is { StateId: TorStates.Paused }
-                    ? $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay."
-                    : $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (an ended row with no end date, or kande olek '{entry?.StateId}' the app does not know); the minimum is not owed on this pay.");
+                    ? new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.") { Variant = "paused" }
+                    : new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (an ended row with no end date, or kande olek '{entry?.StateId}' the app does not know); the minimum is not owed on this pay.")
+                    { Variant = "notInForce", Subject = entry?.StateId });
             }
         }
 
@@ -632,19 +695,29 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             // refused pay carries the month's minimum beside these payments: topped up here, the minimum would be declared on
             // them as if the refused pay did not exist, and again on it once it is put right — it waits (decision 207)
             facts = facts with { SocialTaxMinimumApplies = false };
-            problems.Add($"{MinimumHeld}: the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the person's other payments are built without the minimum's top-up until it is put right (or taken out of the declaration).");
+            problems.Add(new BuildNote(MinimumHeld, $"{MinimumHeld}: the month's pay {string.Join(", ", minimumHeldBy.Distinct(StringComparer.Ordinal))} carries the minimum but was refused by the review; the person's other payments are built without the minimum's top-up until it is put right (or taken out of the declaration).")
+            { Variant = "topUp", Items = minimumHeldBy.Distinct(StringComparer.Ordinal).ToList() });
+        }
+
+        if (facts.SocialTaxMinimumApplies && person.OnOldAgeOrFlexiblePension && monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)))
+        {
+            // a note, not a refusal: the figures follow the card's switch, the accountant decides (decision 3) — said after
+            // the switches above, so a month that owes no minimum anyway is not noted; a zero line of the minimum is pay
+            // carrying it, so a pensioner with no pay is told too (decision 237)
+            problems.Add(new BuildNote(MinimumWithPension, $"{MinimumWithPension}: the card says the person is on an old-age or flexible pension and the social tax minimum applies; a state pension's recipient owes no minimum (SMS § 2(4) p 6) — untick the minimum on the person card if the pension is paid."));
         }
 
         if (keptPools.Count > 0 && monthPayments.Count > 0)
         {
             // a refused payment's line on the server used the month's exemption or minimum: the other payments would be given
             // them again (MTA refuses the month's exemption twice, KR_KOOND_02) — nothing is allocated until it is put right
-            problems.Add($"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.");
+            problems.Add(new BuildNote(NotAllocated, $"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.")
+            { Variant = "keptPools", Items = keptPools.ToList() });
             // what stands on the server stands, nothing is cancelled; a draft, allocated in an earlier build beside the
             // refused payment's own draft (gone now), would go out with the month's exemption or minimum once more — it
             // goes, to be allocated afresh once the payment is put right
             Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems, MinimumShare = share };
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems, MinimumShare = share };
         }
 
         MonthAllocation allocation;
@@ -656,9 +729,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             // what stands on the server stands; nothing is cancelled over a month that cannot be computed — but a draft of
             // an earlier build goes, since the export takes every draft and its figures are no longer the month's
-            problems.Add($"{NotAllocated}: {e.Message} Nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands.");
+            problems.Add(new BuildNote(NotAllocated, $"{NotAllocated}: {e.Message} Nothing built — a draft standing for the month's pay is withdrawn, a line on the server stands.")
+            { Variant = "engine", Cause = e });
             Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
-            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Problems = problems, MinimumShare = share };
+            return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems, MinimumShare = share };
         }
 
         foreach (var allocated in allocation.Payments)
@@ -678,13 +752,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             }
             catch (LineKeyException e)
             {
-                problems.Add($"{e.Code}: {reference}: {e.Message}");
+                problems.Add(new BuildNote(e.Code, $"{e.Code}: {reference}: {e.Message}") { Variant = "keyRule", Reference = reference, Cause = e });
             }
             catch (InvalidOperationException e)
             {
                 // the line factory refused the line (an A1 case without its countries, say): a draft of an earlier build
                 // goes with it, its figures or facts no longer the review's; a line on the server stands
-                problems.Add($"{NotBuilt}: {reference}: {e.Message} A draft standing for it is withdrawn, a line on the server stands.");
+                problems.Add(new BuildNote(NotBuilt, $"{NotBuilt}: {reference}: {e.Message} A draft standing for it is withdrawn, a line on the server stands.")
+                { Reference = reference, Cause = e });
                 Withdraw([source], NotBuilt);
             }
         }
@@ -694,7 +769,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             PersonId = person.Id,
             Name = name,
             Lines = lines,
-            Problems = problems,
+            Notes = problems,
             MinimumShare = share,
             ExemptionOffered = allocation.ExemptionOffered,
             ExemptionLeft = allocation.ExemptionLeft,
@@ -738,7 +813,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         }
     }
 
-    private BuiltLine Reconcile(Period period, Person person, StoredPayment? existing, string reference, Guid? rowId, Guid? lineId, PaymentType type, Section section, PayeeTaxFacts facts, AllocatedPayment allocated, List<string> problems)
+    private BuiltLine Reconcile(Period period, Person person, StoredPayment? existing, string reference, Guid? rowId, Guid? lineId, PaymentType type, Section section, PayeeTaxFacts facts, AllocatedPayment allocated, List<BuildNote> problems)
     {
         StoredPayment Draft(string key, LineAction action, Guid? row)
         {
@@ -799,7 +874,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         if (existing.Action == LineAction.T && existing.Pending)
         {
-            problems.Add($"{CancellationPending}: {reference}: the cancellation of {existing.LineNumber} awaits MTA's verdict; the line follows once it is settled.");
+            problems.Add(new BuildNote(CancellationPending, $"{CancellationPending}: {reference}: the cancellation of {existing.LineNumber} awaits MTA's verdict; the line follows once it is settled.")
+            { Variant = "reconcile", Reference = reference, Key = existing.LineNumber });
             return new BuiltLine { Key = existing.LineNumber, Section = existing.Section, Action = existing.Action, Change = LineChange.Kept, Source = reference, Note = CancellationPending };
         }
 
@@ -825,7 +901,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         {
             // a key is bound to its section: the old line is cancelled now, the new one follows once the key is dead
             _store.AddPayment(StoredPayment.New(period.Id, person.Id, existing.Section, PaymentLine.Cancellation(existing.LineNumber, 0), null, null, null, reference, null, lineId));
-            problems.Add($"{SectionChanged}: {reference}: the type moved to {section}; line {existing.LineNumber} is cancelled first, the new line follows once MTA accepts the cancellation.");
+            problems.Add(new BuildNote(SectionChanged, $"{SectionChanged}: {reference}: the type moved to {section}; line {existing.LineNumber} is cancelled first, the new line follows once MTA accepts the cancellation.")
+            { Reference = reference, Section = section, Key = existing.LineNumber });
             return new BuiltLine { Key = existing.LineNumber, Section = existing.Section, Action = LineAction.T, Change = LineChange.Cancelled, Source = reference, Note = SectionChanged };
         }
 
@@ -850,7 +927,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     /// <summary>A standing line nobody declares any more: a draft is deleted — and what it stood on, if on the server,
     /// gets its T; a T draft stays as it is; a line on the server gets its T.</summary>
-    private BuiltLine? Retire(StoredPayment payment, List<string> problems)
+    private BuiltLine? Retire(StoredPayment payment, List<BuildNote> problems)
     {
         var source = payment.SourceRef ?? "";
         switch (payment.Status)
@@ -860,10 +937,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 {
                     // the copy the T was to cancel was refused since (settled from the history view): nothing to cancel
                     _store.DeleteDraft(payment.Id);
-                    return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Deleted, Source = source, Note = "nothing on the server to cancel" };
+                    return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Deleted, Source = source, Note = BuiltLine.NothingToCancel };
                 }
 
-                return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Kept, Source = source, Note = "cancellation drafted" };
+                return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Kept, Source = source, Note = BuiltLine.CancellationDrafted };
             case PaymentStatus.Draft:
                 _store.DeleteDraft(payment.Id);
                 var beneath = HistoryStanding(payment);
@@ -874,7 +951,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
                 return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Deleted, Source = source };
             case PaymentStatus.Sent or PaymentStatus.Accepted or PaymentStatus.NeedsChange or PaymentStatus.Review when payment.Action == LineAction.T:
-                problems.Add($"{CancellationPending}: {source}: the cancellation of {payment.LineNumber} awaits MTA's verdict.");
+                problems.Add(new BuildNote(CancellationPending, $"{CancellationPending}: {source}: the cancellation of {payment.LineNumber} awaits MTA's verdict.")
+                { Variant = "retire", Reference = source, Key = payment.LineNumber });
                 return new BuiltLine { Key = payment.LineNumber, Section = payment.Section, Action = payment.Action, Change = LineChange.Kept, Source = source, Note = CancellationPending };
             case PaymentStatus.Sent or PaymentStatus.Accepted or PaymentStatus.NeedsChange or PaymentStatus.Review:
                 return Cancel(payment, source);
@@ -1007,7 +1085,7 @@ file static class PersonBuildExtensions
         PersonId = build.PersonId,
         Name = build.Name,
         Lines = [.. build.Lines, line],
-        Problems = build.Problems,
+        Notes = build.Notes,
         MinimumShare = build.MinimumShare,
         ExemptionOffered = build.ExemptionOffered,
         ExemptionLeft = build.ExemptionLeft,

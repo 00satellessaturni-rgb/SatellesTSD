@@ -35,19 +35,19 @@ public static class DeclarationLineFactory
 
         if (result.EffectiveA1 != A1Case.None && (string.IsNullOrWhiteSpace(facts.A1Country) || string.IsNullOrWhiteSpace(facts.WorkCountry)))
         {
-            throw new InvalidOperationException("An A1 case needs both the A1 country and the work country.");
+            throw TaxRefusal.Of(PaymentChecks.A1CountriesMissing, "An A1 case needs both the A1 country and the work country.");
         }
 
         if (!PaymentChecks.A1CountriesAgree(result.EffectiveA1, facts.A1Country, facts.WorkCountry))
         {
             // the file's classifiers would say the other case than the taxes worked out (the fifth audit, items 14 and 21)
-            throw new InvalidOperationException("The A1 case and its countries disagree (KR_YLD2_07/09).");
+            throw TaxRefusal.Of(PaymentChecks.A1CountriesInconsistent, "The A1 case and its countries disagree (KR_YLD2_07/09).");
         }
 
         var calcDate = calculationDate ?? documentDate;
         if (calcDate > documentDate)
         {
-            throw new InvalidOperationException("The calculation date (TSD01) may not be later than the payment date (KR_YLD_25).");
+            throw TaxRefusal.Of(TaxRefusal.CalcDateAfterPayment, "The calculation date (TSD01) may not be later than the payment date (KR_YLD_25).");
         }
 
         var extras = new List<AccountSubEntry>();

@@ -79,7 +79,11 @@ public sealed record Person(
 
     /// <summary>The year the person reaches pension age: the card's, else the personal code's by the law's table (decision
     /// 208) — so the exemption (MVT_650 from 1 January of that year) and the unemployment insurance read the same age.</summary>
-    private int? AgeYear => PensionAgeYear ?? PensionAge.ReachedOn(PersonalCode)?.Year;
+    private int? AgeYear => PensionAgeYearOf(PensionAgeYear, PersonalCode);
+
+    /// <summary>The year a person reaches pension age from a card's year and personal code: the card's year wins, else
+    /// the code's by the law's table — one reading for the store and the card (decision 208).</summary>
+    public static int? PensionAgeYearOf(int? cardYear, string? personalCode) => cardYear ?? PensionAge.ReachedOn(personalCode)?.Year;
 
     /// <summary>The person's facts for a payment month: <paramref name="month"/> places the pension age's month (the
     /// employee's unemployment insurance ends after it, <see cref="PensionAge"/>).</summary>

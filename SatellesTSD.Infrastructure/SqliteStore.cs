@@ -284,7 +284,7 @@ public sealed partial class SqliteStore : IStore
 
     private Period RequirePeriod(Guid periodId) =>
         Query(PeriodSelect + " WHERE id = $id", ReadPeriod, ("$id", G(periodId))).SingleOrDefault()
-        ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
+        ?? throw ImportRefusal.Tag(new KeyNotFoundException($"Period {periodId} is not in the store."), ImportRefusal.PeriodNotFound);
 
     // ---------------------------------------------------------------- keys and payments
 
@@ -348,7 +348,7 @@ public sealed partial class SqliteStore : IStore
             ("$rejected", PaymentStatus.Rejected.ToString()));
         if (other is not null)
         {
-            throw new InvalidOperationException($"The bank row already feeds line {other}; a row is declared once.");
+            throw TaxRefusal.Of(TaxRefusal.RowTaken, $"The bank row already feeds line {other}; a row is declared once.", other);
         }
     }
 
@@ -365,7 +365,7 @@ public sealed partial class SqliteStore : IStore
         var linkedRow = history.Select(v => v.SourceRowId).LastOrDefault(id => id is not null);
         if (payment.SourceRowId is { } given && linkedRow is { } had && given != had)
         {
-            throw new InvalidOperationException("The key already points at another bank row; every version of a key keeps its row.");
+            throw TaxRefusal.Of(TaxRefusal.KeyOtherRow, "The key already points at another bank row; every version of a key keeps its row.");
         }
 
         // and its hand line (or its part of a row), the same way
@@ -379,7 +379,7 @@ public sealed partial class SqliteStore : IStore
 
         if (payment.ReviewLineId is { } givenLine && linkedLine is { } hadLine && givenLine != hadLine)
         {
-            throw new InvalidOperationException("The key already points at another hand line; every version of a key keeps its line.");
+            throw TaxRefusal.Of(TaxRefusal.KeyOtherLine, "The key already points at another hand line; every version of a key keeps its line.");
         }
 
         ReserveSuppliedKey(period, payment.Section, payment.LineNumber); // after every refusal, so a refused line never moves the counter
@@ -412,13 +412,13 @@ public sealed partial class SqliteStore : IStore
 
         if (row.Owner != G(companyId))
         {
-            throw new InvalidOperationException("The bank row belongs to another company's file.");
+            throw TaxRefusal.Of(TaxRefusal.RowOtherCompany, "The bank row belongs to another company's file.");
         }
 
         // a row without a payee may be declared once the accountant has named the person it went to
         if (row.Skip is not (null or SatellesTSD.Core.Import.SkipReason.NoName))
         {
-            throw new InvalidOperationException($"The bank row is not a payment row ({row.Skip}); a declared line cannot come from it.");
+            throw TaxRefusal.Of(TaxRefusal.RowNotPayment, $"The bank row is not a payment row ({row.Skip}); a declared line cannot come from it.", row.Skip);
         }
     }
 
@@ -431,7 +431,7 @@ public sealed partial class SqliteStore : IStore
             ?? throw new KeyNotFoundException($"Payment {paymentId} is not in the store.");
         if (current.Status != PaymentStatus.Draft)
         {
-            throw new InvalidOperationException($"Only a Draft version can be replaced; this one is {current.Status}.");
+            throw TaxRefusal.Of(TaxRefusal.NotDraft, $"Only a Draft version can be replaced; this one is {current.Status}.", current.Status.ToString());
         }
 
         if (replacement.PeriodId != current.PeriodId || replacement.Section != current.Section || replacement.LineNumber != current.LineNumber || replacement.Action != current.Action)
@@ -447,7 +447,7 @@ public sealed partial class SqliteStore : IStore
             var keyRow = History(current.PeriodId, current.Section, current.LineNumber).Where(v => v.Id != current.Id).Select(v => v.SourceRowId).LastOrDefault(id => id is not null);
             if (keyRow is { } had && fresh != had)
             {
-                throw new InvalidOperationException("The key already points at another bank row; every version of a key keeps its row.");
+                throw TaxRefusal.Of(TaxRefusal.KeyOtherRow, "The key already points at another bank row; every version of a key keeps its row.");
             }
 
             RequireRowOf(fresh, RequirePeriod(current.PeriodId).CompanyId);
@@ -527,7 +527,7 @@ public sealed partial class SqliteStore : IStore
         var changed = Exec("DELETE FROM payment WHERE id = $id AND status = $draft", ("$id", G(paymentId)), ("$draft", PaymentStatus.Draft.ToString()));
         if (changed == 0)
         {
-            throw new InvalidOperationException("Only a Draft version can be deleted; anything sent is history.");
+            throw TaxRefusal.Of(TaxRefusal.NotDraft, "Only a Draft version can be deleted; anything sent is history.");
         }
 
         tx.Commit();
@@ -571,7 +571,7 @@ public sealed partial class SqliteStore : IStore
                 ("$id", G(paymentId)), ("$period", G(periodId)), ("$sent", PaymentStatus.Sent.ToString()), ("$submission", G(submission.Id)), ("$draft", PaymentStatus.Draft.ToString()));
             if (changed == 0)
             {
-                throw new InvalidOperationException($"Payment {paymentId} is not a Draft of period {periodId}; only drafts go into a new file.");
+                throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException($"Payment {paymentId} is not a Draft of period {periodId}; only drafts go into a new file."), Core.Declare.SubmissionRefusal.NotDraft);
             }
 
             if (counters is not null && HasCounterColumn && counters.TryGetValue(paymentId, out var counter))
@@ -595,7 +595,7 @@ public sealed partial class SqliteStore : IStore
             || Scalar<long>("SELECT COUNT(*) FROM payment WHERE submission_id = $id AND status <> $sent", ("$id", G(submissionId)), ("$sent", PaymentStatus.Sent.ToString())) > 0;
         if (answered)
         {
-            throw new InvalidOperationException("The submission already has a verdict on it (feedback or a line resolved by hand); it was uploaded and cannot be withdrawn.");
+            throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException("The submission already has a verdict on it (feedback or a line resolved by hand); it was uploaded and cannot be withdrawn."), Core.Declare.SubmissionRefusal.WithdrawAnswered);
         }
 
         Exec(HasCounterColumn
@@ -622,14 +622,14 @@ public sealed partial class SqliteStore : IStore
         ArgumentNullException.ThrowIfNull(report);
         if (report.Kind != ReportKind.Submission)
         {
-            throw new InvalidOperationException("This is a confirmation report, not a submission's feedback; it says nothing about individual lines.");
+            throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException("This is a confirmation report, not a submission's feedback; it says nothing about individual lines."), Core.Declare.SubmissionRefusal.Confirmation);
         }
 
         using var tx = Tx();
         var sent = Query(PaymentSelect + " WHERE submission_id = $submission", ReadPayment, ("$submission", G(submissionId)));
         if (sent.Count == 0)
         {
-            throw new KeyNotFoundException($"Submission {submissionId} has no lines (or is not in the store).");
+            throw Core.Declare.SubmissionRefusal.Of(new KeyNotFoundException($"Submission {submissionId} has no lines (or is not in the store)."), Core.Declare.SubmissionRefusal.NoLines);
         }
 
         var byKey = sent.ToDictionary(p => new LineKey(p.Section.ToString(), p.LineNumber));
@@ -637,7 +637,8 @@ public sealed partial class SqliteStore : IStore
         var foreign = outcomes.Where(o => !byKey.ContainsKey(new LineKey(o.EntryNumber, o.LineNumber))).Select(o => $"{o.EntryNumber}/{o.LineNumber}").ToList();
         if (foreign.Count > 0)
         {
-            throw new InvalidOperationException($"The report names lines this file did not carry ({string.Join(", ", foreign)}); it belongs to another submission.");
+            throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException($"The report names lines this file did not carry ({string.Join(", ", foreign)}); it belongs to another submission."),
+                Core.Declare.SubmissionRefusal.OtherFile, items: foreign);
         }
 
         // a report of another file that happens to carry the same keys (a later correction read onto the first file, say)
@@ -647,12 +648,14 @@ public sealed partial class SqliteStore : IStore
         {
             var placed = Query("SELECT id, file_counter FROM payment WHERE submission_id = $submission AND file_counter IS NOT NULL",
                 r => (Id: Guid.Parse(r.GetString(0)), Counter: (int)r.GetInt64(1)), ("$submission", G(submissionId))).ToDictionary(p => p.Id, p => p.Counter);
-            var elsewhere = outcomes
+            var misplaced = outcomes
                 .Where(o => o.Counter is { } said && placed.TryGetValue(byKey[new LineKey(o.EntryNumber, o.LineNumber)].Id, out var own) && own != said)
-                .Select(o => $"{o.EntryNumber}/{o.LineNumber} at {o.Counter}, here {placed[byKey[new LineKey(o.EntryNumber, o.LineNumber)].Id]}").ToList();
+                .Select(o => (Key: $"{o.EntryNumber}/{o.LineNumber}", Said: o.Counter, Own: placed[byKey[new LineKey(o.EntryNumber, o.LineNumber)].Id])).ToList();
+            var elsewhere = misplaced.Select(m => $"{m.Key} at {m.Said}, here {m.Own}").ToList();
             if (elsewhere.Count > 0)
             {
-                throw new InvalidOperationException($"The report places lines elsewhere than this file did ({string.Join("; ", elsewhere)}); it belongs to another submission.");
+                throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException($"The report places lines elsewhere than this file did ({string.Join("; ", elsewhere)}); it belongs to another submission."),
+                    Core.Declare.SubmissionRefusal.PlacedElsewhere, items: misplaced.Select(m => $"{m.Key}|{m.Said}|{m.Own}").ToList());
             }
         }
 
@@ -741,7 +744,8 @@ public sealed partial class SqliteStore : IStore
             ?? throw new KeyNotFoundException($"Payment {paymentId} is not in the store.");
         if (!payment.Pending)
         {
-            throw new InvalidOperationException($"Only a Sent or Review version can be resolved by hand; this one is {payment.Status}.");
+            throw Core.Declare.SubmissionRefusal.Of(new InvalidOperationException($"Only a Sent or Review version can be resolved by hand; this one is {payment.Status}."),
+                Core.Declare.SubmissionRefusal.NotPending, payment.Status.ToString());
         }
 
         var status = !onServer ? PaymentStatus.Rejected : payment.Action == LineAction.T ? PaymentStatus.Cancelled : PaymentStatus.Accepted;

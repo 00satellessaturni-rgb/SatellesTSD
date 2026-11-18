@@ -150,9 +150,32 @@ public static class ImportRefusal
     /// <summary>Other Draft months list the file.</summary>
     public const string OtherMonths = "FILE_OTHER_MONTHS";
 
-    public static InvalidOperationException Of(string code, string message, long count = 0, string? subject = null)
+    /// <summary>The file to read again is not among the period's files any more (the dialog's list is stale).</summary>
+    public const string NotListed = "FILE_NOT_LISTED";
+
+    /// <summary>The stored file's bytes are missing; the subject is the file's name.</summary>
+    public const string BytesMissing = "FILE_BYTES_MISSING";
+
+    /// <summary>The file is not in the store any more.</summary>
+    public const string NotFound = "FILE_NOT_FOUND";
+
+    /// <summary>The file belongs to another company than the period.</summary>
+    public const string OtherCompany = "FILE_OTHER_COMPANY";
+
+    /// <summary>The period is past Draft: its files stay as its record.</summary>
+    public const string PeriodNotDraft = "FILE_PERIOD_NOT_DRAFT";
+
+    /// <summary>The period is not in the store any more.</summary>
+    public const string PeriodNotFound = "PERIOD_NOT_FOUND";
+
+    public static InvalidOperationException Of(string code, string message, long count = 0, string? subject = null) =>
+        Tag(new InvalidOperationException(message), code, count, subject);
+
+    /// <summary>The code put on an exception of another type (a file or period not found stays a <see cref="KeyNotFoundException"/>).</summary>
+    public static T Tag<T>(T refusal, string code, long count = 0, string? subject = null)
+        where T : Exception
     {
-        var refusal = new InvalidOperationException(message);
+        ArgumentNullException.ThrowIfNull(refusal);
         refusal.Data["Code"] = code;
         refusal.Data["Count"] = count;
         refusal.Data["Subject"] = subject;

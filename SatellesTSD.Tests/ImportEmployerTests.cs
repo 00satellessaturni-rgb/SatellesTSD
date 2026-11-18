@@ -36,6 +36,12 @@ public class ImportEmployerTests
         Assert.Equal(new Employer("10235688", "Näidis OÜ"), pipeline.EmployerOf([("tor.xlsx", two)], "10235688"));
         Assert.Equal(new Employer("12345678", "Teine OÜ"), pipeline.EmployerOf([("tor.xlsx", two)], " 12345678 "));
         Assert.Contains("several employers", Assert.Throws<ImportException>(() => pipeline.EmployerOf([("tor.xlsx", two)], "99999999")).Message);
+
+        // worded in Estonian by its code, the two codes its subject (decision 229, option A)
+        var several = Assert.Throws<ImportException>(() => pipeline.EmployerOf([("tor.xlsx", two)]));
+        Assert.Equal((ReaderRefusal.SeveralEmployers, "10235688, 12345678"), (ReaderRefusal.CodeOf(several), ReaderRefusal.SubjectOf(several)));
+        var shownElsewhere = Assert.Throws<ImportException>(() => pipeline.EmployerOf([("tor.xlsx", two)], "99999999"));
+        Assert.Equal((ReaderRefusal.SeveralEmployers, "10235688, 12345678"), (ReaderRefusal.CodeOf(shownElsewhere), ReaderRefusal.SubjectOf(shownElsewhere)));
     }
 
     [Fact]

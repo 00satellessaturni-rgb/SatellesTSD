@@ -43,8 +43,8 @@ public sealed class SimulationDialog : Form
     private readonly TextBox _exemptionMonthly = new() { Width = 80 };
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true, Checked = true };
     private readonly ComboBox _a1 = Combo([new Choice(nameof(A1Case.None), UiText.RulesA1None), new Choice(nameof(A1Case.EstonianA1WorkAbroad), UiText.RulesA1Estonian), new Choice(nameof(A1Case.ForeignA1WorkInEstonia), UiText.RulesA1Foreign)], 200);
-    private readonly TextBox _a1Country = new() { Width = 60 };
-    private readonly TextBox _workCountry = new() { Width = 60 };
+    private readonly TextBox _a1Country = new() { Width = 60, CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
+    private readonly TextBox _workCountry = new() { Width = 60, CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
     private readonly TextBox _treaty = new() { Width = 60 };
     private readonly ComboBox _torType = Combo([new Choice("", UiText.SimNoCardType), .. EmploymentTypes.All.Select(e => new Choice(e.TorTypeId, $"{e.TorTypeId} {e.Name}"))], 220);
     private readonly CheckBox _typeFromCard = new() { Text = UiText.SimTypeFromCard, AutoSize = true };
@@ -59,6 +59,8 @@ public sealed class SimulationDialog : Form
     private readonly Button _run = new() { Text = UiText.SimRun, AutoSize = true };
     private readonly Button _open = new() { Text = UiText.SimOpen, AutoSize = true };
     private readonly Button _save = new() { Text = UiText.SimSave, AutoSize = true };
+    private readonly PensionMinimumLink _pensionMinimum;
+    private bool _filling;
 
     /// <param name="savedCatalog">The store in use's saved catalog document (the owner's phrases), so the example's rows are
     /// found as the app's own month finds them; null = the built-in phrases.</param>
@@ -76,8 +78,6 @@ public sealed class SimulationDialog : Form
 
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
         top.Controls.AddRange([Caption(UiText.SimMonth), _year, _month, Caption(UiText.SimRegisterLabel), _register, Caption(UiText.SimCut), _mode, Caption(UiText.TwoContractsMenu), _twoContracts]);
-        _tips.SetToolTip(_twoContracts, UiText.TwoContractsMenuTip);
-
         var card = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(4) };
         void Field(string label, Control control)
         {
@@ -101,6 +101,10 @@ public sealed class SimulationDialog : Form
         Field("A1", _a1);
         Field(UiText.SimA1Country, _a1Country);
         Field(UiText.SimWorkCountry, _workCountry);
+        var a1Hint = A1Fill.Hint();
+        a1Hint.MaximumSize = new Size(400, 0); // wraps within the card's column rather than widening it
+        card.Controls.Add(a1Hint);
+        card.SetColumnSpan(a1Hint, 2);
         Field(UiText.SimTreaty, _treaty);
         Field(UiText.SimCardType, _torType);
         Field("", _typeFromCard);
@@ -182,6 +186,18 @@ public sealed class SimulationDialog : Form
         _open.Click += (_, _) => OpenScenario();
         _exemption.CheckedChanged += (_, _) => _exemptionMonthly.Enabled = _exemption.Checked;
         _member.SelectedIndexChanged += (_, _) => _rate.Enabled = ((Choice)_member.SelectedItem!).Value == "1";
+        // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237); a scenario filled in is left as it is
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
+        // the A1 case picked by hand fills its fixed country with EE when that box is empty, as the card does
+        // (decision 222); a scenario filled in (the example, a file) is shown as written, so a missing country still
+        // reaches the run's A1_COUNTRIES_MISSING
+        _a1.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_filling)
+            {
+                A1Fill.FixedCountry(Enum.Parse<A1Case>(((Choice)_a1.SelectedItem!).Value), _a1Country, _workCountry);
+            }
+        };
 
         Fill(Example(year, month) with { TwoContracts = _startRule });
     }
@@ -198,9 +214,14 @@ public sealed class SimulationDialog : Form
     internal ComboBox ResidencyBox => _residency;
     internal ComboBox PensionMemberBox => _member;
     internal CheckBox MinimumBox => _minimum;
+    internal CheckBox OnPensionBox => _onPension;
+    internal ToolTip Tips => _tips;
     internal TextBox PensionAgeYearBox => _pensionAgeYear;
     internal CheckBox ExemptionBox => _exemption;
     internal ComboBox CardTypeBox => _torType;
+    internal ComboBox A1Box => _a1;
+    internal TextBox A1CountryBox => _a1Country;
+    internal TextBox WorkCountryBox => _workCountry;
     internal DataGridView EmploymentsGrid => _employments;
     internal DataGridView RowsGrid => _rows;
     internal DataGridView LinesGrid => _lines;
@@ -382,44 +403,55 @@ public sealed class SimulationDialog : Form
     /// <summary>A scenario put into the fields and grids.</summary>
     internal void Fill(SimScenario scenario)
     {
-        _year.Value = Math.Clamp(scenario.Year, (int)_year.Minimum, (int)_year.Maximum);
-        _month.Value = Math.Clamp(scenario.Month, 1, 12);
-        Select(_register, scenario.Register.ToString());
-        Select(_mode, scenario.Mode.ToString());
-        Select(_twoContracts, scenario.TwoContracts.ToString());
-        var p = scenario.Person;
-        _first.Text = p.FirstName;
-        _last.Text = p.LastName;
-        _code.Text = p.PersonalCode ?? "";
-        _mrr.Text = p.MrrCode ?? "";
-        Select(_residency, p.Residency == Residency.NonResident ? "N" : "R");
-        _country.Text = p.ResidenceCountry ?? "";
-        Select(_member, p.FundedPensionMember switch { true => "1", false => "0", null => "" });
-        Select(_rate, (p.PensionRate ?? 0.02m).ToString("0.00", CultureInfo.InvariantCulture));
-        _onPension.Checked = p.OnOldAgeOrFlexiblePension;
-        _pensionAgeYear.Text = p.PensionAgeYear?.ToString(CultureInfo.InvariantCulture) ?? "";
-        _exemption.Checked = p.BasicExemptionApplied;
-        _exemptionMonthly.Text = p.BasicExemptionMonthly?.ToString("0.00", Et) ?? "";
-        _minimum.Checked = p.SocialTaxMinimumApplies;
-        Select(_a1, p.A1.ToString());
-        _a1Country.Text = p.A1Country ?? "";
-        _workCountry.Text = p.WorkCountry ?? "";
-        _treaty.Text = p.TreatyIncomeTaxRate is { } treaty ? (treaty * 100m).ToString("0.##", Et) : "";
-        Select(_torType, p.TorTypeId ?? "");
-        _typeFromCard.Checked = p.TypeFromCard;
-        Select(_declaration, p.Declaration.ToString());
-
-        _employments.Rows.Clear();
-        foreach (var e in scenario.Employments)
+        // nothing a hand pick does happens while a scenario is put in: the pension tick's minimum, the A1 case's country
+        _filling = true;
+        try
         {
-            _employments.Rows.Add(EmploymentTypes.Find(e.TypeId)?.TorTypeId, DayText(e.Start), DayText(e.End), DayText(e.PauseStart), DayText(e.PauseEnd));
+            _year.Value = Math.Clamp(scenario.Year, (int)_year.Minimum, (int)_year.Maximum);
+            _month.Value = Math.Clamp(scenario.Month, 1, 12);
+            Select(_register, scenario.Register.ToString());
+            Select(_mode, scenario.Mode.ToString());
+            Select(_twoContracts, scenario.TwoContracts.ToString());
+            var p = scenario.Person;
+            _first.Text = p.FirstName;
+            _last.Text = p.LastName;
+            _code.Text = p.PersonalCode ?? "";
+            _mrr.Text = p.MrrCode ?? "";
+            Select(_residency, p.Residency == Residency.NonResident ? "N" : "R");
+            _country.Text = p.ResidenceCountry ?? "";
+            Select(_member, p.FundedPensionMember switch { true => "1", false => "0", null => "" });
+            Select(_rate, (p.PensionRate ?? 0.02m).ToString("0.00", CultureInfo.InvariantCulture));
+            _onPension.Checked = p.OnOldAgeOrFlexiblePension;
+            _pensionAgeYear.Text = p.PensionAgeYear?.ToString(CultureInfo.InvariantCulture) ?? "";
+            _exemption.Checked = p.BasicExemptionApplied;
+            _exemptionMonthly.Text = p.BasicExemptionMonthly?.ToString("0.00", Et) ?? "";
+            _minimum.Checked = p.SocialTaxMinimumApplies;
+            _pensionMinimum.Reset();
+            // the countries before the case: the guard alone keeps a scenario's empty country empty (decision 222)
+            _a1Country.Text = p.A1Country ?? "";
+            _workCountry.Text = p.WorkCountry ?? "";
+            Select(_a1, p.A1.ToString());
+            _treaty.Text = p.TreatyIncomeTaxRate is { } treaty ? (treaty * 100m).ToString("0.##", Et) : "";
+            Select(_torType, p.TorTypeId ?? "");
+            _typeFromCard.Checked = p.TypeFromCard;
+            Select(_declaration, p.Declaration.ToString());
+
+            _employments.Rows.Clear();
+            foreach (var e in scenario.Employments)
+            {
+                _employments.Rows.Add(EmploymentTypes.Find(e.TypeId)?.TorTypeId, DayText(e.Start), DayText(e.End), DayText(e.PauseStart), DayText(e.PauseEnd));
+            }
+
+            _rows.Rows.Clear();
+            foreach (var r in scenario.Rows)
+            {
+                var category = r.Category is { } name && MatchCatalog.Default.Find(name) is { } known ? known.Name : "";
+                _rows.Rows.Add(DayText(r.Date), r.Payee, r.Amount.ToString("0.00", Et), r.Description, r.Currency, r.MoneyIn, category, r.TypeCode ?? "", r.Declare switch { true => "1", false => "0", null => "" });
+            }
         }
-
-        _rows.Rows.Clear();
-        foreach (var r in scenario.Rows)
+        finally
         {
-            var category = r.Category is { } name && MatchCatalog.Default.Find(name) is { } known ? known.Name : "";
-            _rows.Rows.Add(DayText(r.Date), r.Payee, r.Amount.ToString("0.00", Et), r.Description, r.Currency, r.MoneyIn, category, r.TypeCode ?? "", r.Declare switch { true => "1", false => "0", null => "" });
+            _filling = false;
         }
     }
 

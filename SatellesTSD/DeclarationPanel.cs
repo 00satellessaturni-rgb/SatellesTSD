@@ -67,6 +67,8 @@ public sealed class DeclarationPanel : UserControl
     internal DataGridView LinesGrid => _lines;
     internal Button BuildButton => _build;
     internal Button ExportButton => _export;
+    internal Button WithdrawButton => _withdraw;
+    internal Button FeedbackButton => _feedback;
     internal Button UploadedButton => _uploaded;
     internal Button ConfirmedButton => _confirmed;
     internal Button ReopenButton => _reopen;

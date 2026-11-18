@@ -291,8 +291,8 @@ public class OwnerToolsWindowTests
                 dialog.RunButton.PerformClick();
                 Ui.Pump();
                 Assert.Empty(warnings);
-                Assert.Contains("PEATUS: " + UiText.RatesMissing, dialog.ReviewText, StringComparison.Ordinal);
-                Assert.Equal(UiText.RatesMissing, dialog.XmlText);
+                Assert.Contains("PEATUS: " + UiText.RatesMissingFor("2025"), dialog.ReviewText, StringComparison.Ordinal); // the year named (plan item 66)
+                Assert.Equal(UiText.RatesMissingFor("2025"), dialog.XmlText);
                 Assert.DoesNotContain("This version knows", dialog.ReviewText, StringComparison.Ordinal);
                 Assert.Empty(fixture.Failures);
                 dialog.Close();
@@ -302,6 +302,118 @@ public class OwnerToolsWindowTests
             Assert.NotNull(shown);
             Assert.Empty(fixture.Failures);
         }));
+    }
+
+    [Fact]
+    public void The_simulation_fills_the_A1_cases_fixed_country_as_the_card_does_and_never_while_a_scenario_is_filled()
+    {
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            SimulationDialog? shown = null;
+            form.SimulationOpening = dialog =>
+            {
+                shown = dialog;
+                dialog.StartPosition = FormStartPosition.Manual;
+                dialog.Location = new Point(-4000, -4000);
+                dialog.Show();
+                Ui.Pump();
+                var warnings = new List<string>();
+                dialog.Warning = warnings.Add;
+                (string, string) Countries() => (dialog.A1CountryBox.Text, dialog.WorkCountryBox.Text);
+                void Pick(A1Case a1)
+                {
+                    dialog.A1Box.SelectedIndex = dialog.A1Box.Items.Cast<Choice>().ToList().FindIndex(c => c.Value == a1.ToString());
+                    Ui.Pump();
+                }
+
+                // the hint row says the pairing, as on the card
+                Assert.Contains(Descendants(dialog), c => c is Label { Text: UiText.A1CountriesHint });
+
+                // (a) the example: both boxes empty; each case fills its own fixed country
+                Assert.Equal(("", ""), Countries());
+                Pick(A1Case.EstonianA1WorkAbroad);
+                Assert.Equal(("EE", ""), Countries());
+                Pick(A1Case.ForeignA1WorkInEstonia);
+                Assert.Equal(("EE", "EE"), Countries());
+
+                // (b) text typed in is never overwritten
+                Pick(A1Case.None);
+                dialog.A1CountryBox.Text = "LV";
+                dialog.WorkCountryBox.Text = "FI";
+                Pick(A1Case.ForeignA1WorkInEstonia);
+                Assert.Equal(("LV", "FI"), Countries());
+                Pick(A1Case.EstonianA1WorkAbroad);
+                Assert.Equal(("LV", "FI"), Countries());
+
+                // (c) a scenario filled in is shown as written: its empty A1 country stays empty
+                var example = SimulationDialog.Example((int)dialog.YearBox.Value, (int)dialog.MonthBox.Value);
+                var written = example with { Person = example.Person with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = null, WorkCountry = "FI" } };
+                Pick(A1Case.None);
+                dialog.Fill(written);
+                Ui.Pump();
+                Assert.Equal(nameof(A1Case.EstonianA1WorkAbroad), ((Choice)dialog.A1Box.SelectedItem!).Value);
+                Assert.Equal(("", "FI"), Countries());
+
+                // (c) the same through a file saved and opened
+                Directory.CreateDirectory(fixture.ExportFolder);
+                var path = Path.Combine(fixture.ExportFolder, "a1.json");
+                dialog.ChoosingFile = _ => path;
+                dialog.SaveButton.PerformClick();
+                Pick(A1Case.None);
+                dialog.A1CountryBox.Text = "";
+                dialog.WorkCountryBox.Text = "";
+                dialog.OpeningFile = () => path;
+                dialog.OpenButton.PerformClick();
+                Ui.Pump();
+                Assert.Empty(warnings);
+                Assert.Equal(nameof(A1Case.EstonianA1WorkAbroad), ((Choice)dialog.A1Box.SelectedItem!).Value);
+                Assert.Equal(("", "FI"), Countries());
+
+                // (c) and the run is the scenario as written: the missing country is refused, not filled in
+                dialog.RunButton.PerformClick();
+                Ui.Pump();
+                Assert.Empty(warnings);
+                Assert.Contains(Core.Tax.PaymentChecks.A1CountriesMissing, dialog.ReviewText, StringComparison.Ordinal);
+                Assert.Empty(fixture.Failures);
+                dialog.Close();
+            };
+            form.SimulationButton.PerformClick();
+            Ui.Pump();
+            Assert.NotNull(shown);
+            Assert.Empty(fixture.Failures);
+        }));
+    }
+
+    [Fact]
+    public void The_shared_A1_fill_puts_EE_only_into_the_cases_own_empty_box()
+    {
+        using var a1Country = new TextBox();
+        using var workCountry = new TextBox();
+        A1Fill.FixedCountry(A1Case.None, a1Country, workCountry);
+        Assert.Equal(("", ""), (a1Country.Text, workCountry.Text));
+        A1Fill.FixedCountry(A1Case.EstonianA1WorkAbroad, a1Country, workCountry);
+        Assert.Equal(("EE", ""), (a1Country.Text, workCountry.Text));
+        a1Country.Text = "LV";
+        A1Fill.FixedCountry(A1Case.ForeignA1WorkInEstonia, a1Country, workCountry);
+        Assert.Equal(("LV", "EE"), (a1Country.Text, workCountry.Text));
+        workCountry.Text = "FI";
+        A1Fill.FixedCountry(A1Case.ForeignA1WorkInEstonia, a1Country, workCountry);
+        A1Fill.FixedCountry(A1Case.EstonianA1WorkAbroad, a1Country, workCountry);
+        Assert.Equal(("LV", "FI"), (a1Country.Text, workCountry.Text));
+        Assert.Equal(UiText.A1CountriesHint, A1Fill.Hint().Text);
+    }
+
+    private static IEnumerable<Control> Descendants(Control parent)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            yield return child;
+            foreach (var deeper in Descendants(child))
+            {
+                yield return deeper;
+            }
+        }
     }
 
     private static void Mari(MainForm form)

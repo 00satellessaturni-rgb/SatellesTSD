@@ -180,6 +180,36 @@ public class XbrlGlTests
     }
 
     [Fact]
+    public void Each_problem_carries_its_code_and_figures_and_the_english_stays_as_it_was()
+    {
+        var day = new DateOnly(2026, 10, 10);
+        var declaration = Empty(
+            new SectionEntries(Section.EE0201001, null, [SalaryLine("dup", 1, day), SalaryLine("dup", 2, day), SalaryLine("late", 3, new DateOnly(2026, 11, 1)),
+                SalaryLine("nopayee", 4, day) with { Payee = null }, SalaryLine("spaced", 5, day) with { Payee = PayeeId.Mrr("A000 3689779") },
+                SalaryLine("notype", 0, day) with { TypeCode = null, Amount = null, DocumentDate = null }, SalaryLine("blank", 6, day) with { LineNumber = " " }]),
+            new SectionEntries(Section.EE0201002, null, [SalaryLine("wrongsection", 1, day)]),
+            new SectionEntries(Section.EE0201002, null, [])) with { RegistryCode = "1023568", RegistryCodeType = PayeeId.Ariregistrikood };
+
+        var problems = DeclarationValidator.Problems(declaration);
+
+        Assert.Equal(DeclarationValidator.Validate(declaration), problems.Select(p => p.Message)); // the English as before, in the same order
+        Assert.All(problems, p => Assert.Contains(p.Code, DeclarationValidator.Codes));
+        Assert.Equal(new DeclarationProblem(DeclarationValidator.PayerNotRegistry, problems[0].Message) { Subject = "1023568" }, problems[0]);
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.KeyRepeated, Section: Section.EE0201001, Key: "dup" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.DateOutsideMonth, Key: "late" } && p.Day == new DateOnly(2026, 11, 1) && p.Month == new DateOnly(2026, 10, 1));
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.PayeeMissing, Key: "nopayee" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.PayeeMrrInvalid, Key: "spaced", Subject: "A000 3689779" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.CounterInvalid, Key: "notype" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.TypeMissing, Key: "notype" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.AmountMissing, Key: "notype" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.DateMissing, Key: "notype" });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.KeyEmpty, Section: Section.EE0201001, Key: null });
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.TypeWrongSection, Section: Section.EE0201002, OtherSection: Section.EE0201001, Key: "wrongsection" } && p.Subject == "10");
+        Assert.Contains(problems, p => p is { Code: DeclarationValidator.SectionTwice, Section: Section.EE0201002 });
+        Assert.Equal(DeclarationValidator.NoSection, Assert.Single(DeclarationValidator.Problems(Empty())).Code);
+    }
+
+    [Fact]
     public void A_code_of_the_wrong_shape_is_named_before_the_file_is_written()
     {
         // the MTA non-resident code: letters and digits only (MTA's example A0003689779); the length is not known

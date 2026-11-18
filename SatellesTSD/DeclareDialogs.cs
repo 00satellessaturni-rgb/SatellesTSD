@@ -93,6 +93,7 @@ public sealed class CalculatorDialog : FieldDialog
     private readonly ComboBox _type;
     private readonly CheckBox _exemptionApplied = new() { Text = UiText.ExemptionApplied, AutoSize = true, Checked = true };
     private readonly CheckBox _pensionAge = new() { Text = UiText.PensionAgeThisYearTick, AutoSize = true }; // MVT_650 (the fifth audit, item 13)
+    private readonly CheckBox _pensionAgeReached = new() { Text = UiText.PensionAgeReachedTick, AutoSize = true }; // no TK (decision 208)
     private readonly TextBox _exemptionMonthly = new();
     private readonly ComboBox _member = Combo([new Choice("1", UiText.Yes), new Choice("0", UiText.No)]);
     private readonly ComboBox _rate = Combo([new Choice("0.02", "2 %"), new Choice("0.04", "4 %"), new Choice("0.06", "6 %")]);
@@ -100,6 +101,7 @@ public sealed class CalculatorDialog : FieldDialog
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true, Checked = true };
     private readonly TextBox _share = new() { Text = "1" };
     private readonly TextBox _output = new() { ReadOnly = true, Multiline = true, Height = 220, ScrollBars = ScrollBars.Vertical, Font = new Font(FontFamily.GenericMonospace, 9f) };
+    private readonly ToolTip _tips = new();
 
     public CalculatorDialog(TaxRates? rates = null) : base(UiText.CalculatorTitle)
     {
@@ -111,6 +113,7 @@ public sealed class CalculatorDialog : FieldDialog
         Field(UiText.PaymentType, _type);
         Field("", _exemptionApplied);
         Field("", _pensionAge);
+        Field("", _pensionAgeReached);
         Field(UiText.ExemptionMonthly, _exemptionMonthly);
         Field(UiText.PensionMemberLabel, _member);
         Field(UiText.PensionRate, _rate);
@@ -123,6 +126,12 @@ public sealed class CalculatorDialog : FieldDialog
         Field("", _output);
         Buttons();
         AcceptButton = compute; // Enter computes; Esc and the buttons close
+        // an age reached before the month is an age in the year too; no age in the year, none reached either
+        _pensionAgeReached.CheckedChanged += (_, _) => { if (_pensionAgeReached.Checked) { _pensionAge.Checked = true; } };
+        _pensionAge.CheckedChanged += (_, _) => { if (!_pensionAge.Checked) { _pensionAgeReached.Checked = false; } };
+        // "Vanaduspensionil" ticked takes the minimum off, unticked gives it back (decision 237); the dialog fills nothing
+        _ = new PensionMinimumLink(_onPension, _minimum, () => false, _tips);
+        Disposed += (_, _) => _tips.Dispose();
         _residency.SelectedIndexChanged += (_, _) =>
         {
             // a type of the other residency cannot stand; a type that fits is left as chosen
@@ -141,6 +150,10 @@ public sealed class CalculatorDialog : FieldDialog
     internal TextBox ExemptionBox => _exemptionMonthly;
     internal TextBox ShareBox => _share;
     internal CheckBox PensionAgeBox => _pensionAge;
+    internal CheckBox PensionAgeReachedBox => _pensionAgeReached;
+    internal CheckBox OnPensionBox => _onPension;
+    internal CheckBox MinimumBox => _minimum;
+    internal ToolTip Tips => _tips;
     internal CheckBox ExemptionAppliedBox => _exemptionApplied;
     internal string OutputText => _output.Text;
 
@@ -208,7 +221,8 @@ public sealed class CalculatorDialog : FieldDialog
             BasicExemptionApplied: _exemptionApplied.Checked,
             BasicExemptionMonthly: exemption,
             SocialTaxMinimumApplies: _minimum.Checked,
-            SocialTaxMinimumShare: share);
+            SocialTaxMinimumShare: share,
+            PensionAgeReached: _pensionAgeReached.Checked);
         try
         {
             var allocator = new MonthAllocator(new TaxEngine(_rates));
@@ -231,7 +245,7 @@ public sealed class CalculatorDialog : FieldDialog
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)
         {
-            _output.Text = e.Message;
+            _output.Text = UiText.Worded(e) ?? e.Message; // a coded refusal of the engine in Estonian, as the build says it
         }
     }
 }

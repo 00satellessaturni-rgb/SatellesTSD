@@ -58,6 +58,8 @@ public sealed class PersonPanel : UserControl
     private TaxRates _rates = TaxRates.Year2026;
     private decimal? _shownExemption; // what the exemption box was filled with, so an untouched box keeps the stored figure
     private bool _filling;
+    private readonly ToolTip _tips = new();
+    private readonly PensionMinimumLink _pensionMinimum;
 
     public event Action<Person, bool, bool>? SaveRequested;
 
@@ -91,7 +93,7 @@ public sealed class PersonPanel : UserControl
         Row(UiText.A1, _a1);
         Row(UiText.A1Country, _a1Country);
         Row(UiText.WorkCountry, _workCountry);
-        Row(new Label { Text = UiText.A1CountriesHint, AutoSize = true, ForeColor = Color.DimGray }, span: true);
+        Row(A1Fill.Hint(), span: true);
         Row(UiText.TreatyRate + ", %", _treatyRate);
         Row(UiText.TorType, _torType);
         Row(_typeFromCard, span: true);
@@ -133,22 +135,16 @@ public sealed class PersonPanel : UserControl
         };
         _a1.SelectedIndexChanged += (_, _) =>
         {
-            if (_filling)
+            // the A1 case decides one of its countries, only an empty box filled (the fifth audit, items 14 and 21);
+            // never while the card is filled from the store
+            if (!_filling)
             {
-                return;
-            }
-
-            // the A1 case decides one of its countries: Estonia's A1 is EE, a foreign A1's work is in Estonia
-            // (KR_YLD2_07/09); only an empty box is filled, never one typed in (the fifth audit, items 14 and 21)
-            if (_a1.SelectedIndex == (int)A1Case.EstonianA1WorkAbroad && _a1Country.Text.Length == 0)
-            {
-                _a1Country.Text = "EE";
-            }
-            else if (_a1.SelectedIndex == (int)A1Case.ForeignA1WorkInEstonia && _workCountry.Text.Length == 0)
-            {
-                _workCountry.Text = "EE";
+                A1Fill.FixedCountry((A1Case)Math.Max(0, _a1.SelectedIndex), _a1Country, _workCountry);
             }
         };
+        // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237)
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
+        Disposed += (_, _) => _tips.Dispose();
         _save.Click += (_, _) => Save();
         _revert.Click += (_, _) => Present(_person, _editable);
         _lookUp.Click += (_, _) => { if (_person is not null) { LookUpRequested?.Invoke(_person); } };
@@ -190,6 +186,12 @@ public sealed class PersonPanel : UserControl
     internal TextBox A1CountryBox => _a1Country;
 
     internal TextBox WorkCountryBox => _workCountry;
+
+    internal CheckBox OnPensionBox => _onPension;
+
+    internal CheckBox MinimumBox => _minimum;
+
+    internal ToolTip Tips => _tips;
 
     public bool ConfirmResidency => _confirmResidency.Checked;
 
@@ -298,6 +300,7 @@ public sealed class PersonPanel : UserControl
         _lookUp.Enabled = on && editable && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
         _filling = false;
         _exemptionTakenOff = false; // a card shown afresh: nothing on it was taken off by a pick
+        _pensionMinimum.Reset();
         IsDirty = false;
     }
 
@@ -435,7 +438,8 @@ public sealed class PersonPanel : UserControl
     /// <summary>A number as the accountant types it: the Estonian comma, or the invariant dot; no thousands separators.</summary>
     /// <summary>The person's own figure to store for the exemption box: unchanged from what was shown keeps what was
     /// stored (a figure of the person's own stays theirs in every year); else nothing when the typed figure is the allowance
-    /// in force for the month's year by the pension-age year as typed (700, or 776 from that year), else the figure typed.</summary>
+    /// in force for the month's year by the pension-age year as typed, else the personal code's (700, or 776 from that
+    /// year), else the figure typed.</summary>
     private decimal? ExemptionToStore(decimal? typed, int? pensionAgeYear)
     {
         if (typed == _shownExemption)
@@ -443,7 +447,8 @@ public sealed class PersonPanel : UserControl
             return _person?.BasicExemptionMonthly;
         }
 
-        var inForce = pensionAgeYear is { } y && _year >= y ? _rates.PensionAgeExemptionMonth : _rates.BasicExemptionMonth;
+        // the age as the store reads it: the year typed, else the personal code's (decision 208)
+        var inForce = Person.PensionAgeYearOf(pensionAgeYear, Null(_code.Text)) is { } y && _year >= y ? _rates.PensionAgeExemptionMonth : _rates.BasicExemptionMonth;
         return typed == inForce ? null : typed;
     }
 

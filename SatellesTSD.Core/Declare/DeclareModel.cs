@@ -10,6 +10,28 @@ public sealed class DeclareException(string code, string message) : InvalidOpera
 {
     public string Code { get; } = code;
 
+    /// <summary>The refusal's figure, for the window's own wording: the period's state (PERIOD_NOT_DRAFT, the enum's name),
+    /// the year (RATES_MISSING), the line on the server (MODE_CHANGED); null when there is none.</summary>
+    public string? Subject { get; init; }
+
+    /// <summary>Which case of the code: RUN_STALE "notSearched" or "changed"; MODE_CHANGED the cut on the server,
+    /// "perPayment" or "totals"; null when the code has one.</summary>
+    public string? Variant { get; init; }
+
+    /// <summary>The section the refusal speaks of: a stale line's (LINES_STALE), the one without a fitting reason
+    /// (CORRECTION_REASON_NEEDED); null when there is none.</summary>
+    public Section? Section { get; init; }
+
+    /// <summary>A second figure, for the window's own wording: the key's rule a stale line broke (LINES_STALE, a
+    /// <see cref="LineKeyException"/> code), the loader's own English of schemas not found (SCHEMAS_MISSING).</summary>
+    public string? Detail { get; init; }
+
+    /// <summary>What the file's own check found (INVALID_FILE, the structural case), each with its code and figures.</summary>
+    public IReadOnlyList<DeclarationProblem> Problems { get; init; } = [];
+
+    /// <summary>What MTA's schema found in the file (INVALID_FILE, the schema case).</summary>
+    public IReadOnlyList<XbrlSchemaProblem> SchemaProblems { get; init; } = [];
+
     /// <summary>The keys a confirmation found open (awaiting MTA or needing a change), for the window's own wording.</summary>
     public IReadOnlyList<string> OpenLines { get; init; } = [];
 
@@ -51,6 +73,12 @@ public enum LineChange
 
 public sealed class BuiltLine
 {
+    /// <summary>A retired T draft's note: the copy it was to cancel is not on the server (any more).</summary>
+    public const string NothingToCancel = "nothing on the server to cancel";
+
+    /// <summary>A retired T draft's note: the cancellation stands drafted.</summary>
+    public const string CancellationDrafted = "cancellation drafted";
+
     public required string Key { get; init; }
 
     public Section Section { get; init; }
@@ -65,6 +93,66 @@ public sealed class BuiltLine
     public string? Note { get; init; }
 }
 
+/// <summary>A note or problem of the build: its code, the Core's English as the tests, the store and support read it
+/// ("CODE: sentence", kept exactly), and the figures the window words it by in Estonian — which case of the code
+/// (<see cref="Variant"/>), the payment's reference, the line's key and section, the types, the days, a count, the
+/// references, codes or keys it names (<see cref="Items"/>), and the refusal behind it (<see cref="Cause"/>).</summary>
+public sealed record BuildNote(string Code, string Text)
+{
+    /// <summary>Which case of the code, when it has several (ZERO_LINE "valid"/"ended"/"paused"/"asIfEmployed", say).</summary>
+    public string? Variant { get; init; }
+
+    /// <summary>The payment's reference as the build named it (a bank row's, "by hand", "minimum", "totals:…").</summary>
+    public string? Reference { get; init; }
+
+    /// <summary>The references, codes or keys the note names, each on its own.</summary>
+    public IReadOnlyList<string> Items { get; init; } = [];
+
+    /// <summary>The employment type of the register (TÖR) the note speaks of.</summary>
+    public string? TypeId { get; init; }
+
+    /// <summary>The payment type (väljamakse liik) the note speaks of: the zero line's.</summary>
+    public string? PaymentType { get; init; }
+
+    public DateOnly? Day { get; init; }
+
+    public DateOnly? OtherDay { get; init; }
+
+    public int? Count { get; init; }
+
+    public Model.Section? Section { get; init; }
+
+    /// <summary>The line's key.</summary>
+    public string? Key { get; init; }
+
+    /// <summary>A name, a code or a state the note quotes.</summary>
+    public string? Subject { get; init; }
+
+    /// <summary>ZERO_LINE: the type is the card's, for every payment.</summary>
+    public bool FromCard { get; init; }
+
+    /// <summary>INCLUDED: the card's TÖR type is asked for (no zero line could be typed).</summary>
+    public bool AskCardType { get; init; }
+
+    /// <summary>INCLUDED: why no zero line was made where one was looked for — "noTypeNoneDeclared", "noType",
+    /// "typeNoMinimum", "a1" — or null.</summary>
+    public string? Unmet { get; init; }
+
+    /// <summary>The refusal behind the note (the engine's, the line factory's, the key's rules, the store's).</summary>
+    public Exception? Cause { get; init; }
+
+    public override string ToString() => Text;
+
+    public bool Equals(BuildNote? other) =>
+        other is not null && Code == other.Code && Text == other.Text && Variant == other.Variant && Reference == other.Reference
+        && Items.SequenceEqual(other.Items, StringComparer.Ordinal) && TypeId == other.TypeId && PaymentType == other.PaymentType
+        && Day == other.Day && OtherDay == other.OtherDay && Count == other.Count && Section == other.Section && Key == other.Key
+        && Subject == other.Subject && FromCard == other.FromCard && AskCardType == other.AskCardType && Unmet == other.Unmet
+        && ReferenceEquals(Cause, other.Cause);
+
+    public override int GetHashCode() => HashCode.Combine(Code, Text, Variant, Reference, Key, Day, Count);
+}
+
 /// <summary>One person's month as the build made it: the lines, the month's figures, what was said.</summary>
 public sealed class PersonBuild
 {
@@ -74,7 +162,11 @@ public sealed class PersonBuild
 
     public IReadOnlyList<BuiltLine> Lines { get; init; } = [];
 
-    public IReadOnlyList<string> Problems { get; init; } = [];
+    /// <summary>What the build said of the person, coded, with the figures the window words it by.</summary>
+    public IReadOnlyList<BuildNote> Notes { get; init; } = [];
+
+    /// <summary>The notes' English, "CODE: sentence", as the tests and support read them.</summary>
+    public IReadOnlyList<string> Problems => Notes.Select(n => n.Text).ToList();
 
     public decimal MinimumShare { get; init; } = 1m;
 
@@ -95,7 +187,11 @@ public sealed class BuildReport
 
     public required IReadOnlyList<PersonBuild> Persons { get; init; }
 
-    public IReadOnlyList<string> Problems { get; init; } = [];
+    /// <summary>What the build said of the period, beyond a person (a line retired, a person with nothing built).</summary>
+    public IReadOnlyList<BuildNote> Notes { get; init; } = [];
+
+    /// <summary>The notes' English, "CODE: sentence".</summary>
+    public IReadOnlyList<string> Problems => Notes.Select(n => n.Text).ToList();
 
     public int Count(LineChange change) => Persons.Sum(p => p.Lines.Count(l => l.Change == change));
 }

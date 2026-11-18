@@ -5,6 +5,13 @@ using System.Xml.Schema;
 
 namespace SatellesTSD.Core.Xbrl;
 
+/// <summary>One schema error: the validator's severity, the line and position in the serialized document, and its own
+/// English (<see cref="Detail"/>, kept for support); <see cref="Text"/> is the line as before.</summary>
+public sealed record XbrlSchemaProblem(XmlSeverityType Severity, int? Line, int? Position, string Detail)
+{
+    public string Text => $"{Severity} at line {Line}, position {Position}: {Detail}";
+}
+
 /// <summary>Validates an instance against the APA-restricted XBRL GL schema set in a folder laid out like the repo's
 /// `schemas/apa-tsd` (its README lists the provenance). The set is compiled once per folder and cached. A schema
 /// failure is what MTA refuses as KR_VALIDATE_XBRL_FILE_3 (BLACK, the whole file), so run this before every upload.</summary>
@@ -30,10 +37,13 @@ public sealed class XbrlGlValidator
 
     public IReadOnlyList<string> ValidateFile(string path) => Validate(File.ReadAllText(path));
 
-    public IReadOnlyList<string> Validate(string xml)
+    public IReadOnlyList<string> Validate(string xml) => Problems(xml).Select(p => p.Text).ToList();
+
+    /// <summary>Every schema error with its line and position as figures, the validator's own English as detail.</summary>
+    public IReadOnlyList<XbrlSchemaProblem> Problems(string xml)
     {
         ArgumentNullException.ThrowIfNull(xml);
-        var problems = new List<string>();
+        var problems = new List<XbrlSchemaProblem>();
         var settings = new XmlReaderSettings
         {
             ValidationType = ValidationType.Schema,
@@ -45,7 +55,7 @@ public sealed class XbrlGlValidator
             ValidationFlags = XmlSchemaValidationFlags.ReportValidationWarnings,
         };
         settings.ValidationEventHandler += (_, e) =>
-            problems.Add($"{e.Severity} at line {e.Exception?.LineNumber}, position {e.Exception?.LinePosition}: {e.Message}");
+            problems.Add(new XbrlSchemaProblem(e.Severity, e.Exception?.LineNumber, e.Exception?.LinePosition, e.Message));
 
         using var text = new StringReader(xml);
         using var reader = XmlReader.Create(text, settings);

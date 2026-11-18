@@ -350,7 +350,7 @@ public class WindowTests
     }
 
     [Fact]
-    public void The_Seaded_menu_chooses_the_two_contracts_rule_with_a_tip_on_each_choice_and_keeps_it_in_the_settings()
+    public void The_Seaded_menu_chooses_the_two_contracts_rule_in_plain_words_and_keeps_it_in_the_settings()
     {
         // decision 209: a Tööleping and a VÕS leping (from 6 October) in force on the 20th, a salary paid that day
         using var fixture = new WindowFixture((store, _, period, _) =>
@@ -364,19 +364,20 @@ public class WindowTests
             fixture.Drive(form =>
             {
                 Assert.Equal((true, false, false), (form.TwoSalaryItem.Checked, form.TwoAskItem.Checked, form.TwoLatestItem.Checked)); // the default
-                Assert.All(new[] { form.TwoContractsMenu, form.TwoSalaryItem, form.TwoAskItem, form.TwoLatestItem }, i => Assert.False(string.IsNullOrWhiteSpace(i.ToolTipText)));
-                Assert.True(form.TwoContractsMenu.DropDown.ShowItemToolTips);
+                // the owner's word: the menu says it plainly, no tips (2026-11-18)
+                Assert.All(new[] { form.TwoContractsMenu, form.TwoSalaryItem, form.TwoAskItem, form.TwoLatestItem }, i => Assert.True(string.IsNullOrEmpty(i.ToolTipText)));
+                Assert.Equal([UiText.TwoContractsSalary, UiText.TwoContractsAsk, UiText.TwoContractsLatest], form.TwoContractsMenu.DropDownItems.Cast<ToolStripItem>().Select(i => i.Text));
                 Assert.Equal("10", Twentieth(form).Cells["type"].Value);
                 Assert.Contains($"{UiText.TwoContractsNote} ", Twentieth(form).Cells["check"].Value?.ToString(), StringComparison.Ordinal); // the two types it was picked from
                 var picked = (ReviewPayment)Twentieth(form).Tag!;
-                Assert.Contains(UiText.TwoContractsPickedTip(picked.ContractTypes, "10"), Twentieth(form).Cells["check"].ToolTipText, StringComparison.Ordinal);
+                Assert.Contains(UiText.TwoContractsPickedTip(picked.ContractTypes, "10"), form.CheckTips.TextOf(Twentieth(form)) ?? "", StringComparison.Ordinal);
 
                 // a type set by hand is the accountant's: the tip no longer says the Seaded rule picked it
                 form.Services!.Workspace.SetTypeCode(picked, "17");
                 form.Reload();
                 Ui.Pump();
                 Assert.Equal("17", Twentieth(form).Cells["type"].Value);
-                Assert.DoesNotContain(UiText.TwoContractsPickedTip(picked.ContractTypes, "17"), Twentieth(form).Cells["check"].ToolTipText, StringComparison.Ordinal);
+                Assert.DoesNotContain(UiText.TwoContractsPickedTip(picked.ContractTypes, "17"), form.CheckTips.TextOf(Twentieth(form)) ?? "", StringComparison.Ordinal);
                 form.Services.Workspace.SetTypeCode((ReviewPayment)Twentieth(form).Tag!, null);
                 form.Reload();
                 Ui.Pump();
@@ -401,6 +402,63 @@ public class WindowTests
                 Assert.Equal("LatestStart", AppSettings.Load(fixture.SettingsPath).TwoContracts);
             });
         });
+    }
+
+    [Fact]
+    public void A_hand_type_whose_taxes_differ_from_the_registers_is_noticed_in_the_check_cell_in_Estonian_and_refuses_nothing()
+    {
+        using var fixture = new WindowFixture(prepare: (store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            workspace.SetTypeCode(workspace.Load(period.Id).Persons[0].Payments.Single(p => !p.IsByHand), "16");
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];
+            Ui.Pump();
+            var row = Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>());
+            var payment = (ReviewPayment)row.Tag!;
+            Assert.Equal(("16", "10"), (payment.TypeCode, payment.DefaultTypeCode));
+            Assert.Empty(payment.Checks);
+            Assert.Contains(ReviewChecks.TypeTaxesDiffer, row.Cells["check"].Value?.ToString(), StringComparison.Ordinal);
+            var tip = UiText.NoticeTip(payment, ReviewChecks.TypeTaxesDiffer);
+            Assert.Contains(tip, form.CheckTips.TextOf(row) ?? "", StringComparison.Ordinal);
+            Assert.Contains("jääb ära: sotsiaalmaks, sotsiaalmaksu miinimum, töötuskindlustusmakse, kogumispension", tip, StringComparison.Ordinal);
+            Assert.NotEqual(Color.MistyRose, row.DefaultCellStyle.BackColor); // a notice, no refusal
+            Assert.Equal(Color.LightYellow, row.Cells["check"].Style.BackColor);
+        }));
+    }
+
+    [Fact]
+    public void A_salary_on_a_free_work_entry_is_noticed_in_the_check_cell_and_the_simulation_says_both_notices()
+    {
+        using var fixture = new WindowFixture(mariType: 501);
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.PersonsGrid.CurrentCell = form.PersonsGrid.Rows[0].Cells[0];
+            Ui.Pump();
+            var row = Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>());
+            var payment = (ReviewPayment)row.Tag!;
+            Assert.Equal("10", payment.TypeCode);
+            Assert.Empty(payment.Checks);
+            Assert.Contains(ReviewChecks.PayOnFreeWork, row.Cells["check"].Value?.ToString(), StringComparison.Ordinal);
+            Assert.Contains(UiText.NoticeTip(payment, ReviewChecks.PayOnFreeWork), form.CheckTips.TextOf(row) ?? "", StringComparison.Ordinal);
+            Assert.NotEqual(Color.MistyRose, row.DefaultCellStyle.BackColor);
+        }));
+
+        // the simulation's review in words lists each notice under its payment, in Estonian
+        SimScenario Scenario(string typeId, string? typeCode) => new(2026, 10,
+            new SimPerson("Mari", "Maasikas", SatellesTSD.Tests.ReviewFixtures.MariCode, FundedPensionMember: false, PensionRate: null),
+            SimRegister.Listed,
+            [new SimEmployment(typeId, new DateOnly(2024, 2, 15))],
+            [new SimRow(new DateOnly(2026, 10, 5), "Mari Maasikas", 905.92m, "palk", TypeCode: typeCode)]);
+        var forced = SatellesTSD.Infrastructure.Simulator.Run(Scenario("1", "16"));
+        Assert.Contains(UiText.NoticeTip(Assert.Single(forced.Review!.Payments), ReviewChecks.TypeTaxesDiffer), UiText.SimReport(forced), StringComparison.Ordinal);
+        var free = SatellesTSD.Infrastructure.Simulator.Run(Scenario("501", null));
+        var report = UiText.SimReport(free);
+        Assert.Contains(UiText.NoticeTip(Assert.Single(free.Review!.Payments), ReviewChecks.PayOnFreeWork), report, StringComparison.Ordinal);
+        Assert.Contains("Tasuta töötamine", report, StringComparison.Ordinal);
+        Assert.DoesNotContain(ReviewChecks.TypeTaxesDiffer, report, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -831,6 +889,63 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_export_asks_first_when_payments_marked_to_declare_are_left_out()
+    {
+        // decision 239: a ticked payment the review refuses goes without a word no more — a question, nothing blocked
+        using var fixture = new WindowFixture((store, _, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.AddHandLine(period.Id, mari.Id, new DateOnly(2026, 11, 2), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+            workspace.SetDeclare(workspace.Load(period.Id).Persons[0].Payments.Single(p => p.IsByHand), true); // another month's: refused
+            new Core.Declare.PeriodDeclarer(store).Build(period.Id); // the lines current: only the left-out payment is asked about
+        });
+        var asked = new List<string>();
+        var answer = false;
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var folders = new List<string>();
+            form.ChoosingFolder = description =>
+            {
+                folders.Add(description);
+                return null; // the folder dialog cancelled: the export stops there
+            };
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            Assert.True(panel.ExportButton.Enabled);
+            var question = UiText.MarkedButLeftOutAtExport(1, 100m);
+            Assert.StartsWith("1 märgitud makse (", UiText.MarkedButLeftOutLog(1, 100m), StringComparison.Ordinal); // one: the singular
+            Assert.StartsWith("2 märgitud makset (", UiText.MarkedButLeftOutLog(2, 100m), StringComparison.Ordinal);
+
+            // answered "no": the folder dialog never opens, nothing goes out
+            panel.ExportButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && asked.Count > 0, what: "the export's question");
+            Ui.Pump();
+            Assert.Equal([question], asked);
+            Assert.Empty(folders);
+            Assert.Empty(form.Services!.Store.Submissions(form.View!.Period.Id));
+            Assert.Equal(PaymentStatus.Draft, form.Services.Store.Payments(form.View.Period.Id).Single().Status); // Mari's salary
+
+            // answered "yes": on to the folder
+            answer = true;
+            panel.ExportButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && folders.Count > 0, what: "the folder dialog");
+            Assert.Equal([question, question], asked);
+            Assert.Equal([UiText.ExportFolder], folders);
+        }, confirm: (question, title) =>
+        {
+            if (title != UiText.Export)
+            {
+                return true;
+            }
+
+            asked.Add(question);
+            return answer;
+        }));
+    }
+
+    [Fact]
     public void The_feedback_cell_and_the_files_list_tell_the_reports_detail_in_their_tooltips()
     {
         using var fixture = new WindowFixture((store, _, period, folder) =>
@@ -863,16 +978,16 @@ public class WindowTests
             Ui.Pump();
             var panel = form.Declaration;
             var cell = panel.LinesGrid.Rows[0].Cells["feedback"];
-            Assert.StartsWith("Warning: KR_TEST_HOIATUS", cell.Value?.ToString(), StringComparison.Ordinal); // the cell keeps its short text
+            Assert.StartsWith("hoiatus: KR_TEST_HOIATUS", cell.Value?.ToString(), StringComparison.Ordinal); // the cell keeps its short text
             var tip = panel.FeedbackTips.TextOf(panel.LinesGrid.Rows[0]) ?? "";
-            Assert.Contains("KR_TEST_HOIATUS (Warning): vaata üle", tip, StringComparison.Ordinal);
+            Assert.Contains("KR_TEST_HOIATUS (hoiatus): vaata üle", tip, StringComparison.Ordinal);
             Assert.Contains("sotsiaalmaks", tip, StringComparison.Ordinal);
             var ktm = Assert.Single(tip.Split(Environment.NewLine), l => l.Contains("tulumaks (kinnipeetud)", StringComparison.Ordinal)); // the server's KTM with our figure beside it
             Assert.Matches(@"tulumaks \(kinnipeetud\): 120[.,]00 \(\d+[.,]\d\d\)$", ktm);
             Assert.DoesNotContain("TSD_KTM", tip, StringComparison.Ordinal);
             Assert.Contains(UiText.NextActionText(Core.Feedback.NextAction.ReviewWarning), tip, StringComparison.Ordinal);
             Assert.DoesNotContain("sotsiaalmaks", cell.ToolTipText, StringComparison.Ordinal); // the grid's own tooltip would cut the text at 256 characters: never given it
-            Assert.Contains("KR_JAOTIS_TEST", panel.SubmissionsList.Items[0].ToolTipText, StringComparison.Ordinal);
+            Assert.Contains("Töötasud (01): hoiatus KR_JAOTIS_TEST — jaotuse märkus", panel.SubmissionsList.Items[0].ToolTipText, StringComparison.Ordinal); // the section and the level in words
             Assert.Equal("korras", panel.SubmissionsList.Items[0].SubItems[3].Text); // MTA's result in Estonian (the fifth audit, item 29)
         }));
     }
@@ -1453,6 +1568,35 @@ public class WindowTests
     }
 
     [Fact]
+    public void A_salary_pattern_payment_outside_the_register_says_so_on_its_unticked_row_and_on_the_person_and_stays_out_of_the_sum()
+    {
+        using var fixture = new WindowFixture(outsider: "Kalle Kask", prepare: (store, company, period, _) =>
+        {
+            var workspace = new ReviewWorkspace(store);
+            var kalle = workspace.AddPerson(company.Id, "Kalle", "Kask", null, null);
+            workspace.SetPerson(workspace.Load(period.Id).Unmatched.Payments.Single(p => p.Payee == "Kalle Kask"), kalle.Id);
+        });
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            var persons = form.PersonsGrid;
+            var kalle = persons.Rows.Cast<DataGridViewRow>().Single(r => r.Tag is ReviewPerson { Person.LastName: "Kask" });
+            persons.CurrentCell = kalle.Cells[0];
+            Ui.Pump();
+            var row = Assert.Single(form.PaymentsGrid.Rows.Cast<DataGridViewRow>());
+            Assert.False((bool)row.Cells["declare"].Value!);
+            Assert.Contains(UiText.OutsideTorNote, row.Cells["check"].Value?.ToString(), StringComparison.Ordinal);
+            Assert.Contains(UiText.OutsideTorTip(false), form.CheckTips.TextOf(row) ?? "", StringComparison.Ordinal);
+
+            // the person's Probleemid says it with the sum; the Deklareerimata sum leaves it out, uncoloured (decision 100)
+            Assert.Contains(Core.Matching.MatchProblem.OutsideTorSalary, kalle.Cells["problems"].Value?.ToString(), StringComparison.Ordinal);
+            Assert.Contains($"{Core.Matching.MatchProblem.OutsideTorSalary}: ", form.ProblemTips.TextOf(kalle), StringComparison.Ordinal);
+            Assert.Null(kalle.Cells["undeclared"].Value);
+            Assert.Null(form.UndeclaredTips.TextOf(kalle));
+            Assert.NotEqual(Color.MistyRose, kalle.DefaultCellStyle.BackColor);
+        }));
+    }
+
+    [Fact]
     public void A_lookup_run_shows_its_progress_and_leaves_no_wait_cursor_on_the_grids()
     {
         var residency = new GatedResidency();
@@ -1533,7 +1677,8 @@ public class WindowTests
             Assert.Equal(asked, (residency.Asked, pension.Asked));
             // a run that asks nobody still writes every person's line with their day, once each, before its closing line
             var again = form.LogList.Items.Cast<object>().Select(i => i.ToString()!).Skip(logged.Count).ToList();
-            Assert.Equal(2, again.Count(l => l.Contains("(seisuga ", StringComparison.Ordinal) && l.Contains("reused", StringComparison.Ordinal)));
+            Assert.Equal(2, again.Count(l => l.Contains("(seisuga ", StringComparison.Ordinal) && l.Contains("residentsus: kasutati ", StringComparison.Ordinal) && l.Contains(" saadud vastust", StringComparison.Ordinal)));
+            Assert.DoesNotContain(again, l => l.Contains("reused", StringComparison.Ordinal)); // the steps in Estonian
             Assert.EndsWith("0 päringut", again[^1], StringComparison.Ordinal);
             pension.Rate = 0.04m; // Pensionikeskus corrects itself
             Mari(form);

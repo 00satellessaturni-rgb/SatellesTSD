@@ -26,6 +26,50 @@ public sealed record LookupProgress(int Done, int Total, PersonLookupOutcome? Ou
 /// <param name="ByHand">The same fact as the accountant set it (none: a pension left unknown by hand).</param>
 public sealed record LookupDisagreement(LookupKind Kind, bool Register, decimal? RegisterRate, bool Derived, bool? ByHand, decimal? ByHandRate);
 
+/// <summary>A step or a problem of a lookup by its code and figures, beside its English text, for the window to word in
+/// Estonian (decision 46: the code is shown verbatim before a problem's words; a step has no code of its own on screen).</summary>
+/// <param name="Code">A step's (<see cref="LookupNote.Asked"/> and the like) or a problem's (<see cref="LookupRunner.Failed"/> and the like).</param>
+/// <param name="Variant">The case of a code of several shapes (SKIPPED's, FAILED's).</param>
+/// <param name="Kind">The register the note is of, when it is of one.</param>
+/// <param name="Value">Residency: a resident (the register's, or the hand's for FAILED's <see cref="LookupNote.HandUsed"/>). Pension: a member.</param>
+/// <param name="Rate">Pension: the member's rate as a fraction, none when unknown.</param>
+/// <param name="Day">The control date the note speaks of.</param>
+/// <param name="At">REUSED: the local time of the answer reused.</param>
+/// <param name="Name">The person named (SKIPPED of a run).</param>
+/// <param name="Failure">FAILED: the register's failure text as stored (English, with its HTTP or page detail), none for no answer.</param>
+/// <param name="Derived">Pension: not asked of Pensionikeskus, "not a member" followed from non-residency.</param>
+/// <param name="ByHand">DISAGREES: the fact as the accountant set it.</param>
+/// <param name="ByHandRate">DISAGREES: the rate as the accountant set it.</param>
+/// <param name="Ended">FAILED's <see cref="LookupNote.MembershipUnknown"/>: the day the contributions end, when the page names it.</param>
+public sealed record LookupNote(string Code, string? Variant = null, LookupKind? Kind = null, bool? Value = null, decimal? Rate = null, DateOnly? Day = null,
+    DateTime? At = null, string? Name = null, string? Failure = null, bool? Derived = null, bool? ByHand = null, decimal? ByHandRate = null, DateOnly? Ended = null)
+{
+    // the steps
+    public const string Asked = "ASKED";
+    public const string Reused = "REUSED";
+    public const string ResidencyKept = "RESIDENCY_KEPT";
+    public const string ResidencyBack = "RESIDENCY_BACK";
+    public const string ResidencySet = "RESIDENCY_SET";
+    public const string ExemptionOff = "EXEMPTION_OFF";
+    public const string PensionDerived = "PENSION_DERIVED";
+    public const string PensionBack = "PENSION_BACK";
+    public const string PensionKept = "PENSION_KEPT";
+    public const string PensionSet = "PENSION_SET";
+
+    /// <summary>The run's own problem: the period has no match run, every person of the company is looked up.</summary>
+    public const string NoRun = "NO_RUN";
+
+    // SKIPPED's variants: no valid code on the person asked; a register person with no code anywhere; a person paid outside the register with none
+    public const string NoCode = "noCode";
+    public const string RegisterNoCode = "registerNoCode";
+    public const string PaidNoCode = "paidNoCode";
+
+    // FAILED's variants: the facts stand; the accountant's own residency is used; the pension's membership on the day is not known
+    public const string FactsStand = "factsStand";
+    public const string HandUsed = "handUsed";
+    public const string MembershipUnknown = "membershipUnknown";
+}
+
 /// <summary>What happened to one person in a run.</summary>
 public sealed record PersonLookupOutcome(Guid PersonId, string PersonalCode, string Name, IReadOnlyList<string> Steps, IReadOnlyList<string> Problems)
 {
@@ -37,9 +81,15 @@ public sealed record PersonLookupOutcome(Guid PersonId, string PersonalCode, str
     /// day), which a line about them names (decision 160). None when nothing was asked (no valid code).</summary>
     public DateOnly? ControlDate { get; init; }
 
+    /// <summary>The steps by their codes and figures, one for one with <see cref="Steps"/>, for the window's Estonian.</summary>
+    public IReadOnlyList<LookupNote> StepNotes { get; init; } = [];
+
+    /// <summary>The problems by their codes and figures, one for one with <see cref="Problems"/>, for the window's Estonian.</summary>
+    public IReadOnlyList<LookupNote> ProblemNotes { get; init; } = [];
+
     public bool Equals(PersonLookupOutcome? other) =>
         other is not null && PersonId == other.PersonId && PersonalCode == other.PersonalCode && Name == other.Name && Steps.SequenceEqual(other.Steps, StringComparer.Ordinal) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal)
-        && Disagreements.SequenceEqual(other.Disagreements) && ControlDate == other.ControlDate;
+        && Disagreements.SequenceEqual(other.Disagreements) && ControlDate == other.ControlDate && StepNotes.SequenceEqual(other.StepNotes) && ProblemNotes.SequenceEqual(other.ProblemNotes);
 
     public override int GetHashCode() => HashCode.Combine(PersonId, PersonalCode, Name, Steps.Count, Problems.Count);
 }
@@ -50,10 +100,28 @@ public sealed record LookupRunReport(DateOnly ControlDate, IReadOnlyList<PersonL
 {
     public int Queries => Persons.Sum(p => p.Steps.Count(s => s.StartsWith("asked", StringComparison.Ordinal)));
 
+    /// <summary>The run's problems by their codes and figures, one for one with <see cref="Problems"/>.</summary>
+    public IReadOnlyList<LookupNote> ProblemNotes { get; init; } = [];
+
     public bool Equals(LookupRunReport? other) =>
-        other is not null && ControlDate == other.ControlDate && Persons.SequenceEqual(other.Persons) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal);
+        other is not null && ControlDate == other.ControlDate && Persons.SequenceEqual(other.Persons) && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal)
+        && ProblemNotes.SequenceEqual(other.ProblemNotes);
 
     public override int GetHashCode() => HashCode.Combine(ControlDate, Persons.Count, Problems.Count);
+}
+
+/// <summary>A run's English texts and their notes, added together so they stay one for one.</summary>
+internal sealed class LookupSaid
+{
+    public List<string> Texts { get; } = [];
+
+    public List<LookupNote> Notes { get; } = [];
+
+    public void Add(LookupNote note, string text)
+    {
+        Notes.Add(note);
+        Texts.Add(text);
+    }
 }
 
 /// <summary>The lookups of a period, as the workbook ran them for every register row with useHttp on: residency from
@@ -225,7 +293,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var period = _store.Companies().SelectMany(c => _store.Periods(c.Id)).FirstOrDefault(p => p.Id == periodId)
             ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
         var controlDate = ControlDateOf(period);
-        var problems = new List<string>();
+        var problems = new LookupSaid();
         var persons = PersonsOf(period, problems);
         progress?.Report(new LookupProgress(0, persons.Count, null));
         var outcomes = new List<PersonLookupOutcome>();
@@ -237,7 +305,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             progress?.Report(new LookupProgress(outcomes.Count, persons.Count, outcome));
         }
 
-        return new LookupRunReport(controlDate, outcomes, problems);
+        return new LookupRunReport(controlDate, outcomes, problems.Texts) { ProblemNotes = problems.Notes };
     }
 
     /// <summary>The lookups for one person.</summary>
@@ -248,15 +316,18 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     public async Task<PersonLookupOutcome> LookUpAsync(Person person, DateOnly controlDate, CancellationToken cancellationToken = default, bool afresh = false, IReadOnlyCollection<LookupKind>? handBack = null)
     {
         ArgumentNullException.ThrowIfNull(person);
-        var steps = new List<string>();
-        var problems = new List<string>();
+        var steps = new LookupSaid();
+        var problems = new LookupSaid();
         var disagreements = new List<LookupDisagreement>();
         var force = _options.Force || afresh;
         var code = person.PersonalCode?.Trim() ?? "";
-        PersonLookupOutcome Outcome() => new(person.Id, code, person.FullName, steps, problems) { Disagreements = disagreements, ControlDate = controlDate };
+        PersonLookupOutcome Outcome() => new(person.Id, code, person.FullName, steps.Texts, problems.Texts)
+        {
+            Disagreements = disagreements, ControlDate = controlDate, StepNotes = steps.Notes, ProblemNotes = problems.Notes,
+        };
         if (!PersonalCode.LooksValid(code))
         {
-            problems.Add($"{Skipped}: no valid personal code; nothing to ask.");
+            problems.Add(new LookupNote(Skipped, LookupNote.NoCode), $"{Skipped}: no valid personal code; nothing to ask.");
             return Outcome() with { ControlDate = null };
         }
 
@@ -266,7 +337,8 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         ResidencyFinding? residency = residencyRecord?.FindingJson is { } rj ? JsonSerializer.Deserialize<ResidencyFinding>(rj, Json) : null;
         if (residency is null && current.ResidencySource != LookupSource.Manual)
         {
-            problems.Add($"{Failed}: residency — {residencyRecord?.Failure ?? "no answer"}; the facts stand as they were.");
+            problems.Add(new LookupNote(Failed, LookupNote.FactsStand, LookupKind.Residency, Failure: residencyRecord?.Failure),
+                $"{Failed}: residency — {residencyRecord?.Failure ?? "no answer"}; the facts stand as they were.");
             return Outcome();
         }
 
@@ -285,21 +357,23 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             isResident = current.Residency == Residency.Resident;
             if (residency is null)
             {
-                problems.Add($"{Failed}: residency — {residencyRecord?.Failure ?? "no answer"}; the accountant's own {current.Residency} is used.");
+                problems.Add(new LookupNote(Failed, LookupNote.HandUsed, LookupKind.Residency, Value: isResident, Failure: residencyRecord?.Failure),
+                    $"{Failed}: residency — {residencyRecord?.Failure ?? "no answer"}; the accountant's own {current.Residency} is used.");
             }
             else if (residency.IsResidentOn(controlDate) != isResident)
             {
-                problems.Add($"{Disagrees}: the register says {(residency.IsResidentOn(controlDate) ? "resident" : "non-resident")} on {controlDate:dd.MM.yyyy}, the accountant set {current.Residency}; the accountant's word stands.");
+                problems.Add(new LookupNote(Disagrees, Kind: LookupKind.Residency, Value: !isResident, Day: controlDate, ByHand: isResident),
+                    $"{Disagrees}: the register says {(residency.IsResidentOn(controlDate) ? "resident" : "non-resident")} on {controlDate:dd.MM.yyyy}, the accountant set {current.Residency}; the accountant's word stands.");
                 disagreements.Add(new LookupDisagreement(LookupKind.Residency, !isResident, null, false, isResident, null));
             }
 
-            steps.Add("residency set by hand, kept");
+            steps.Add(new LookupNote(LookupNote.ResidencyKept), "residency set by hand, kept");
         }
         else
         {
             if (residencyBack)
             {
-                steps.Add("residency given back to the register");
+                steps.Add(new LookupNote(LookupNote.ResidencyBack), "residency given back to the register");
             }
 
             isResident = residency!.IsResidentOn(controlDate);
@@ -330,10 +404,10 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 PensionSource = derivedGone ? LookupSource.Unknown : current.PensionSource,
             };
             _store.UpdatePerson(current);
-            steps.Add($"residency {(isResident ? "resident" : "non-resident")}");
+            steps.Add(new LookupNote(LookupNote.ResidencySet, Value: isResident), $"residency {(isResident ? "resident" : "non-resident")}");
             if (exemptionOff)
             {
-                steps.Add("basic exemption application taken off: a non-resident");
+                steps.Add(new LookupNote(LookupNote.ExemptionOff), "basic exemption application taken off: a non-resident");
             }
         }
 
@@ -346,7 +420,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 ? existing
                 : _store.AddLookup(new LookupRecord(Guid.Empty, current.Id, LookupKind.Pension, LookupSource.Derived, default, controlDate, JsonSerializer.Serialize(derived, Json), null, null, "not asked: a non-resident", code));
 
-            steps.Add("pension not asked: a non-resident");
+            steps.Add(new LookupNote(LookupNote.PensionDerived), "pension not asked: a non-resident");
             ApplyPension(current, derived, LookupSource.Derived, controlDate, CheckedOn(derivedRecord), pensionBack, steps, problems, disagreements);
             return Outcome();
         }
@@ -354,13 +428,17 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var pensionRecord = await RecordedOrAskedAsync(current, LookupKind.Pension, controlDate, force, steps, cancellationToken).ConfigureAwait(false);
         PensionFinding? pensionFinding = pensionRecord?.FindingJson is { } pj ? JsonSerializer.Deserialize<PensionFinding>(pj, Json) : null;
         // an answer that cannot say whether the person is a member on the day is no answer for the day (decision 162)
+        var unknownOnDay = pensionFinding is not null && pensionFinding.MembershipUnknownOn(controlDate);
         var pensionFailure = pensionFinding is null ? pensionRecord?.Failure ?? "no answer"
-            : pensionFinding.MembershipUnknownOn(controlDate)
+            : unknownOnDay
                 ? $"the person has joined but the page names no withholding start{(pensionFinding.ContributionsEnded is { } ended ? $", only that the contributions end on {ended:dd.MM.yyyy}, after {controlDate:dd.MM.yyyy}" : "")}: a member or not on the day is not known"
                 : null;
         if (pensionFailure is not null)
         {
-            problems.Add($"{Failed}: pension — {pensionFailure}; the facts stand as they were.");
+            problems.Add(unknownOnDay
+                    ? new LookupNote(Failed, LookupNote.MembershipUnknown, LookupKind.Pension, Day: controlDate, Ended: pensionFinding!.ContributionsEnded)
+                    : new LookupNote(Failed, LookupNote.FactsStand, LookupKind.Pension, Failure: pensionRecord?.Failure),
+                $"{Failed}: pension — {pensionFailure}; the facts stand as they were.");
             current = Fresh(current);
             if (current.PensionSource == LookupSource.Derived)
             {
@@ -371,7 +449,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             if (derivedGone || current.PensionSource == LookupSource.Derived)
             {
                 // said only now that the answer did not come: with an answer, the facts are known and nothing was reset for long
-                problems.Add($"{Reset}: the pension facts had followed from non-residency; now a resident, they are unknown until Pensionikeskus answers.");
+                problems.Add(new LookupNote(Reset), $"{Reset}: the pension facts had followed from non-residency; now a resident, they are unknown until Pensionikeskus answers.");
             }
 
             return Outcome();
@@ -390,18 +468,18 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     private DateTime Local(DateTime utc) =>
         TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), _clock.LocalTimeZone);
 
-    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, bool handBack, List<string> steps, List<string> problems, List<LookupDisagreement> disagreements)
+    private void ApplyPension(Person current, PensionFinding finding, LookupSource source, DateOnly controlDate, DateOnly checkedOn, bool handBack, LookupSaid steps, LookupSaid problems, List<LookupDisagreement> disagreements)
     {
         var member = finding.MemberOn(controlDate);
         var rate = member ? finding.RateOn(controlDate) : null;
         if (member && rate is null)
         {
-            problems.Add($"{RateUnknown}: a member on {controlDate:dd.MM.yyyy} but no rate row covers the day; the rate stays unknown (never 2 % by default).");
+            problems.Add(new LookupNote(RateUnknown, Day: controlDate), $"{RateUnknown}: a member on {controlDate:dd.MM.yyyy} but no rate row covers the day; the rate stays unknown (never 2 % by default).");
         }
 
         if (current.PensionSource == LookupSource.Manual && handBack)
         {
-            steps.Add("pension given back to the register");
+            steps.Add(new LookupNote(LookupNote.PensionBack), "pension given back to the register");
         }
         else if (current.PensionSource == LookupSource.Manual)
         {
@@ -411,10 +489,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
                 var said = source == LookupSource.Derived
                     ? "as a non-resident, not a member (Pensionikeskus not asked)"
                     : $"Pensionikeskus says {(member ? $"member at {Percent(rate)}" : "not a member")} on {controlDate:dd.MM.yyyy}";
-                problems.Add($"{Disagrees}: {said}, the accountant set {(current.FundedPensionMember == true ? $"member at {Percent(current.PensionRate)}" : "not a member")}; the accountant's word stands.");
+                problems.Add(new LookupNote(Disagrees, Kind: LookupKind.Pension, Value: member, Rate: member ? rate : null, Day: controlDate, Derived: source == LookupSource.Derived,
+                        ByHand: current.FundedPensionMember == true, ByHandRate: current.FundedPensionMember == true ? current.PensionRate : null),
+                    $"{Disagrees}: {said}, the accountant set {(current.FundedPensionMember == true ? $"member at {Percent(current.PensionRate)}" : "not a member")}; the accountant's word stands.");
             }
 
-            steps.Add("pension set by hand, kept");
+            steps.Add(new LookupNote(LookupNote.PensionKept), "pension set by hand, kept");
             return;
         }
 
@@ -426,12 +506,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             PensionSource = source,
             FactsControlDate = controlDate,
         });
-        steps.Add(member ? $"pension member, rate {Percent(rate)}" : "pension not a member");
+        steps.Add(new LookupNote(LookupNote.PensionSet, Value: member, Rate: member ? rate : null), member ? $"pension member, rate {Percent(rate)}" : "pension not a member");
     }
 
     /// <summary>The recorded answer of the register for this control date and this very code, or a fresh one asked and
     /// recorded now (the failure too). A failed answer and an answer of another source (a Derived one) are never reused.</summary>
-    private async Task<LookupRecord?> RecordedOrAskedAsync(Person person, LookupKind kind, DateOnly controlDate, bool force, List<string> steps, CancellationToken cancellationToken)
+    private async Task<LookupRecord?> RecordedOrAskedAsync(Person person, LookupKind kind, DateOnly controlDate, bool force, LookupSaid steps, CancellationToken cancellationToken)
     {
         var source = kind == LookupKind.Residency ? LookupSource.Emta : LookupSource.Pensionikeskus;
         var code = person.PersonalCode!.Trim();
@@ -442,12 +522,12 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
             // a pension answer that cannot tell the day's membership is no answer for the day: asked again, as a failed one is (decision 162)
             && !(kind == LookupKind.Pension && JsonSerializer.Deserialize<PensionFinding>(recorded.FindingJson!, Json) is { } known && known.MembershipUnknownOn(controlDate)))
         {
-            steps.Add($"{kind.ToString().ToLowerInvariant()} answer of {Local(recorded.CheckedAt):dd.MM.yyyy HH:mm} reused");
+            steps.Add(new LookupNote(LookupNote.Reused, Kind: kind, At: Local(recorded.CheckedAt)), $"{kind.ToString().ToLowerInvariant()} answer of {Local(recorded.CheckedAt):dd.MM.yyyy HH:mm} reused");
             return recorded;
         }
 
         await PaceAsync(cancellationToken).ConfigureAwait(false);
-        steps.Add($"asked {kind.ToString().ToLowerInvariant()}");
+        steps.Add(new LookupNote(LookupNote.Asked, Kind: kind), $"asked {kind.ToString().ToLowerInvariant()}");
         LookupRecord record;
         if (kind == LookupKind.Residency)
         {
@@ -486,13 +566,13 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     /// when missing), else every person of the company.</summary>
     /// <summary>The persons to look up, each with the day their facts are checked for (their latest payout of the
     /// month, else the period's last day).</summary>
-    private List<(Person Person, DateOnly ControlDate)> PersonsOf(Period period, List<string> problems)
+    private List<(Person Person, DateOnly ControlDate)> PersonsOf(Period period, LookupSaid problems)
     {
         var persons = new List<(Person, DateOnly)>();
         var run = _store.LoadMatchResult(period.Id);
         if (run is null)
         {
-            problems.Add("The period has no match run; every person of the company is looked up.");
+            problems.Add(new LookupNote(LookupNote.NoRun), "The period has no match run; every person of the company is looked up.");
             // a month paid by lines added by hand alone: they date their persons (decision 168)
             var everyone = _store.Persons(period.CompanyId);
             var byHand = PaidDates(_store, period, null, everyone, new Dictionary<string, Guid>());
@@ -519,7 +599,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
                 if (string.IsNullOrWhiteSpace(card?.PersonalCode))
                 {
-                    problems.Add($"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
+                    problems.Add(new LookupNote(Skipped, LookupNote.RegisterNoCode, Name: matchPerson.Person.FullName), $"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
                     continue;
                 }
 
@@ -550,7 +630,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         foreach (var codeless in stored.Where(p => p.PersonalCode is null && paid.ContainsKey(p.Id) && !registerIds.ContainsValue(p.Id) // a register person without a code was said above
                      && persons.All(listed => listed.Item1.Id != p.Id)))
         {
-            problems.Add($"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask — set the residency on the card.");
+            problems.Add(new LookupNote(Skipped, LookupNote.PaidNoCode, Name: codeless.FullName), $"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask — set the residency on the card.");
         }
 
         return persons;

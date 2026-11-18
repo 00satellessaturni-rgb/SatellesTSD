@@ -111,7 +111,7 @@ public sealed class HistoryDialog : Form
                 version.SubmissionId is { } submission && files.TryGetValue(submission, out var file) ? file : "",
                 version.NetPaid is { } net ? UiText.Money(net) : "",
                 version.Result is { } r ? UiText.Money(r.Gross) : "",
-                rejectedBy is { } by ? UiText.HistoryRejectedBy(by.Version) : feedback is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : "");
+                rejectedBy is { } by ? UiText.HistoryRejectedBy(by.Version) : feedback is { } f ? ReportText.FeedbackCell(f) : "");
             var row = _grid.Rows[index];
             row.Tag = version;
             var tip = feedback is null ? null : UiText.FeedbackDetail(feedback, version.Result);

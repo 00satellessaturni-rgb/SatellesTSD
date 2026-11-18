@@ -21,10 +21,18 @@ public sealed class ImportOutcome
 
     public bool Linked { get; init; }
 
-    /// <summary>Sheet by sheet: what was not recognised and why, a register of another employer, the sheet's problems.</summary>
-    public IReadOnlyList<string> Messages { get; init; } = [];
+    /// <summary>Sheet by sheet: what was not recognised and why, a register of another employer, the sheet's problems — by
+    /// code with the figures, so the window words them in Estonian.</summary>
+    public IReadOnlyList<ImportNote> Notes { get; init; } = [];
+
+    /// <summary>The notes in the Core's English.</summary>
+    public IReadOnlyList<string> Messages => Notes.Select(n => n.English).ToList();
 
     public string? Error { get; init; }
+
+    /// <summary>The refusal behind <see cref="Error"/>, when there was one: its code words it in Estonian in the import log,
+    /// the Core's English kept after it (decision 229, the owner's option A).</summary>
+    public Exception? Refusal { get; init; }
 
     public bool Succeeded => File is not null && Error is null;
 }
@@ -37,7 +45,11 @@ public sealed class RereadOutcome
 
     public ImportFile? File { get; init; }
 
-    public IReadOnlyList<string> Messages { get; init; } = [];
+    /// <summary>What the import log says of the new reading (<see cref="ImportOutcome.Notes"/>).</summary>
+    public IReadOnlyList<ImportNote> Notes { get; init; } = [];
+
+    /// <summary>The notes in the Core's English.</summary>
+    public IReadOnlyList<string> Messages => Notes.Select(n => n.English).ToList();
 
     public int Carried { get; init; }
 
@@ -110,7 +122,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         // are, as it always did); none shown among them is a selection to split
         var chosen = codes.Count == 1 ? codes.Keys.Single()
             : shownRegistryCode is { } shown && codes.ContainsKey(shown.Trim()) ? shown.Trim()
-            : throw new ImportException($"The TÖR sheets name several employers ({string.Join(", ", codes.Keys)}); import one employer's files at a time.");
+            : throw ReaderRefusal.Of(ReaderRefusal.SeveralEmployers, $"The TÖR sheets name several employers ({string.Join(", ", codes.Keys)}); import one employer's files at a time.", string.Join(", ", codes.Keys));
         return new Employer(chosen, codes[chosen] ?? chosen);
     }
 
@@ -137,13 +149,13 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         }
         catch (ImportException e)
         {
-            return new ImportOutcome { FileName = fileName, Error = e.Message };
+            return new ImportOutcome { FileName = fileName, Error = e.Message, Refusal = e };
         }
 
-        var messages = SheetMessages(parsed, company);
+        var notes = SheetNotesOf(parsed, company);
         if (!parsed.HasData)
         {
-            return new ImportOutcome { FileName = fileName, Messages = messages, Error = NothingRecognised };
+            return new ImportOutcome { FileName = fileName, Notes = notes, Error = NothingRecognised, Refusal = ReaderRefusal.Of(ReaderRefusal.NothingRecognised, NothingRecognised) };
         }
 
         ImportFile? file = null;
@@ -169,62 +181,78 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         catch (Exception e) when (e is ImportException or InvalidOperationException or ArgumentException or KeyNotFoundException)
         {
             // the store's refusal is this file's outcome, not the batch's end
-            return new ImportOutcome { FileName = fileName, Kind = parsed.Kind, Messages = messages, Error = e.Message };
+            return new ImportOutcome { FileName = fileName, Kind = parsed.Kind, Notes = notes, Error = e.Message, Refusal = e };
         }
 
-        return new ImportOutcome { FileName = fileName, File = file, Kind = parsed.Kind, AlreadyImported = already, Linked = true, Messages = messages };
+        return new ImportOutcome { FileName = fileName, File = file, Kind = parsed.Kind, AlreadyImported = already, Linked = true, Notes = notes };
     }
 
     /// <summary>What the import log says of a reading (decision 135): the reader's own warnings first; then sheet by sheet
     /// what was not recognised and why, a hidden sheet, a register of another employer, the sheet's problems, every
     /// payment-looking row above the header by name, and the other row problems counted by kind.</summary>
-    private static List<string> SheetMessages(ParsedImport parsed, Company company)
+    private static List<ImportNote> SheetNotesOf(ParsedImport parsed, Company company)
     {
-        var messages = new List<string>();
+        var notes = new List<ImportNote>();
         foreach (var sheet in parsed.Sheets)
         {
             var label = sheet.Name is { Length: > 0 } name ? $"sheet '{name}'" : $"sheet {sheet.Index + 1}";
+            var sheetName = sheet.Name is { Length: > 0 } ? sheet.Name : null;
+            ImportNote Note(string code, string english, IReadOnlyList<string>? args = null, int? count = null, int? rowNo = null) =>
+                new(code, $"{label}: {english}", sheetName, sheet.Index + 1, args ?? [], count, rowNo);
+
             if (!sheet.Recognised)
             {
-                messages.Add($"{label}: {sheet.Message}");
+                notes.Add(sheet.MessageCode switch
+                {
+                    SheetNotes.TorLacks => Note(SheetNotes.TorLacks, sheet.Message ?? "", sheet.MissingHeaders),
+                    SheetNotes.NearestLayout => Note(SheetNotes.NearestLayout, sheet.Message ?? "", [sheet.NearestLayoutId ?? ""]) with { Differences = sheet.HeaderDifferences },
+                    var code => Note(code ?? "", sheet.Message ?? ""), // no code (a sheet classified elsewhere): said in the English alone
+                });
                 continue;
             }
 
             if (sheet.Hidden)
             {
-                messages.Add($"{label}: the sheet is hidden in the workbook; it was read all the same.");
+                notes.Add(Note(SheetNotes.Hidden, "the sheet is hidden in the workbook; it was read all the same."));
             }
 
             if (sheet.Tor is { } tor && TorParser.CheckEmployer(tor, company.RegistryCode) is { } mismatch)
             {
-                messages.Add($"{label}: {mismatch.Message}");
+                notes.Add(Note(mismatch.Code, mismatch.Message, mismatch.Args));
             }
 
             foreach (var problem in sheet.Problems.Where(p => p.RowNo is null))
             {
-                messages.Add($"{label}: {problem.Message}");
+                notes.Add(Note(problem.Code, problem.Message, problem.Args));
             }
 
             // a row above the header that reads as a payment is named one by one — it is the one a hand-made export can hide
             // (decision 135); the other row problems show on their rows in the grid, so they are counted by kind
             foreach (var above in sheet.Problems.Where(p => p.RowNo is not null && p.Code == ImportProblem.AboveHeader))
             {
-                messages.Add($"{label}: {above.Message}");
+                notes.Add(Note(above.Code, above.Message, rowNo: above.RowNo));
             }
 
             var rowProblems = sheet.Problems.Where(p => p.RowNo is not null && p.Code != ImportProblem.AboveHeader).ToList();
             if (rowProblems.Count > 0)
             {
-                var byKind = rowProblems.GroupBy(p => p.Code, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Key} {g.Count()}");
-                messages.Add($"{label}: {rowProblems.Select(p => p.RowNo).Distinct().Count()} row(s) with a problem ({string.Join(", ", byKind)}).");
+                var byKind = rowProblems.GroupBy(p => p.Code, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Key} {g.Count()}").ToList();
+                var rows = rowProblems.Select(p => p.RowNo).Distinct().Count();
+                notes.Add(Note(SheetNotes.RowProblems, $"{rows} row(s) with a problem ({string.Join(", ", byKind)}).", byKind, rows));
             }
         }
 
         // what the reader had to make do with (a quote never closed in a CSV): the file's own word, before any sheet's; the
         // reader names the file, the log does too, so the name is taken off here
         var prefix = parsed.FileName + ": ";
-        messages.InsertRange(0, parsed.Warnings.Select(w => w.StartsWith(prefix, StringComparison.Ordinal) ? w[prefix.Length..] : w));
-        return messages;
+        notes.InsertRange(0, parsed.Warnings.Select(w =>
+        {
+            var english = w.StartsWith(prefix, StringComparison.Ordinal) ? w[prefix.Length..] : w;
+            return parsed.WarningNotes.FirstOrDefault(n => string.Equals(n.English, w, StringComparison.Ordinal)) is { } note
+                ? note with { English = english }
+                : new ImportNote(ImportProblem.ReaderWarning, english, null, 0, []);
+        }));
+        return notes;
     }
 
     /// <summary>Reads a stored file again, with the layouts and the parser in force, and puts the new reading in the old
@@ -238,8 +266,8 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         RequireDraft(period);
         var company = _store.Companies().First(c => c.Id == period.CompanyId);
         var file = _store.PeriodImports(periodId).FirstOrDefault(f => f.Id == fileId)
-            ?? throw new KeyNotFoundException("The file is not among the period's files.");
-        var content = _store.ImportContent(fileId) ?? throw new KeyNotFoundException($"The bytes of {file.FileName} are not in the store.");
+            ?? throw ImportRefusal.Tag(new KeyNotFoundException("The file is not among the period's files."), ImportRefusal.NotListed);
+        var content = _store.ImportContent(fileId) ?? throw ImportRefusal.Tag(new KeyNotFoundException($"The bytes of {file.FileName} are not in the store."), ImportRefusal.BytesMissing, subject: file.FileName);
         ParsedImport parsed;
         try
         {
@@ -247,13 +275,13 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         }
         catch (ImportException e)
         {
-            return new RereadOutcome { FileName = file.FileName, Error = e.Message };
+            return new RereadOutcome { FileName = file.FileName, Error = e.Message, Refusal = e };
         }
 
-        var messages = SheetMessages(parsed, company);
+        var notes = SheetNotesOf(parsed, company);
         if (!parsed.HasData)
         {
-            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = NothingRecognised };
+            return new RereadOutcome { FileName = file.FileName, Notes = notes, Error = NothingRecognised, Refusal = ReaderRefusal.Of(ReaderRefusal.NothingRecognised, NothingRecognised) };
         }
 
         var periods = _store.Periods(period.CompanyId);
@@ -262,7 +290,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         {
             var months = string.Join(", ", locked.Select(MonthOf));
             var refusal = ImportRefusal.Of(ImportRefusal.MonthsPastDraft, $"The file is among the files of {months}, past Draft (exported or declared): its reading stays as their record and is not read again.", locked.Count, months);
-            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = refusal.Message, Refusal = refusal };
+            return new RereadOutcome { FileName = file.FileName, Notes = notes, Error = refusal.Message, Refusal = refusal };
         }
 
         ImportReplacement? replaced = null;
@@ -284,10 +312,10 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         }
         catch (Exception e) when (e is ImportException or InvalidOperationException or ArgumentException or KeyNotFoundException)
         {
-            return new RereadOutcome { FileName = file.FileName, Messages = messages, Error = e.Message, Refusal = e };
+            return new RereadOutcome { FileName = file.FileName, Notes = notes, Error = e.Message, Refusal = e };
         }
 
-        return new RereadOutcome { FileName = file.FileName, File = replaced!.File, Messages = messages, Carried = replaced.Carried, Dropped = replaced.Dropped, DraftsDeleted = draftsDeleted, RunsCleared = cleared };
+        return new RereadOutcome { FileName = file.FileName, File = replaced!.File, Notes = notes, Carried = replaced.Carried, Dropped = replaced.Dropped, DraftsDeleted = draftsDeleted, RunsCleared = cleared };
     }
 
     /// <summary>Takes a file out of the store (decision 132): out of this period's files (the period's decisions on its rows go,
@@ -560,5 +588,5 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
     private Period FindPeriod(Guid periodId) =>
         _store.Companies().SelectMany(c => _store.Periods(c.Id)).FirstOrDefault(p => p.Id == periodId)
-        ?? throw new KeyNotFoundException($"Period {periodId} is not in the store.");
+        ?? throw ImportRefusal.Tag(new KeyNotFoundException($"Period {periodId} is not in the store."), ImportRefusal.PeriodNotFound);
 }

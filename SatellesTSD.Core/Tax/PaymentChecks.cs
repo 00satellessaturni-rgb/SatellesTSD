@@ -3,7 +3,17 @@ using SatellesTSD.Core.Model;
 namespace SatellesTSD.Core.Tax;
 
 /// <summary>A reason a payment cannot be computed or declared as it stands, with a stable code the UI can key on.</summary>
-public sealed record Refusal(string Code, string Message);
+/// <param name="Message">The Core's English (the tests and support read it).</param>
+/// <param name="Args">The figures the window words the refusal with in Estonian, invariant text (a type code, a currency, an
+/// amount "0.00", a rate as a fraction, an enum's name); null for a refusal that has none.</param>
+public sealed record Refusal(string Code, string Message, IReadOnlyList<string>? Args = null)
+{
+    public bool Equals(Refusal? other) =>
+        other is not null && Code == other.Code && Message == other.Message
+        && (Args ?? []).SequenceEqual(other.Args ?? [], StringComparer.Ordinal) && (Args is null) == (other.Args is null);
+
+    public override int GetHashCode() => HashCode.Combine(Code, Message, Args?.Count ?? -1);
+}
 
 /// <summary>The checks the engine, the allocator, the zero-line helper and the line factory enforce by throwing, as a
 /// list a review grid can show per payment. Each refusal mirrors one of those throws; with no refusal, every one of
@@ -84,6 +94,9 @@ public static class PaymentChecks
         facts.Residency == Residency.NonResident && type.TreatyRateAllowed && type.IncomeTaxRate is { } ownRate
         && facts.TreatyIncomeTaxRate is { } treaty && (treaty < 0m || treaty > ownRate || treaty * 100m != Math.Round(treaty * 100m));
 
+    /// <summary>A figure as a refusal carries it for the window (<see cref="Refusal.Args"/>): invariant text.</summary>
+    public static string Invariant(decimal figure) => figure.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     public static IReadOnlyList<Refusal> Check(PaymentType type, PayeeTaxFacts facts, decimal amount, TaxRates rates)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -97,12 +110,12 @@ public static class PaymentChecks
         }
         else if (amount == 0m && !type.ZeroAllowed)
         {
-            refusals.Add(new Refusal(ZeroNotAllowed, $"Payment type {type.Code} does not allow an amount of 0."));
+            refusals.Add(new Refusal(ZeroNotAllowed, $"Payment type {type.Code} does not allow an amount of 0.", [type.Code]));
         }
 
         if ((facts.Residency == Residency.NonResident) != (type.Payee == Residency.NonResident))
         {
-            refusals.Add(new Refusal(TypePayeeMismatch, $"Payment type {type.Code} is for a {type.Payee} payee; this payee is a {facts.Residency}."));
+            refusals.Add(new Refusal(TypePayeeMismatch, $"Payment type {type.Code} is for a {type.Payee} payee; this payee is a {facts.Residency}.", [type.Code, type.Payee.ToString(), facts.Residency.ToString()]));
         }
 
         // a non-resident without the residence country is declared: the country is expected by MTA, not required by the
@@ -117,7 +130,7 @@ public static class PaymentChecks
         {
             refusals.Add(new Refusal(A1CountriesInconsistent, a1 == A1Case.EstonianA1WorkAbroad
                 ? "An Estonian A1 needs the A1 country EE and a work country other than EE (KR_YLD2_09, KR_YLD2_07)."
-                : "A foreign A1 needs an A1 country other than EE and the work country EE (KR_YLD2_07)."));
+                : "A foreign A1 needs an A1 country other than EE and the work country EE (KR_YLD2_07).", [a1.ToString()]));
         }
 
         bool pensionWithheld = type.FundedPension && facts.Residency == Residency.Resident && a1 != A1Case.ForeignA1WorkInEstonia;
@@ -125,17 +138,17 @@ public static class PaymentChecks
         {
             if (facts.FundedPensionMember is null)
             {
-                refusals.Add(new Refusal(PensionNotChecked, $"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar status has not been checked."));
+                refusals.Add(new Refusal(PensionNotChecked, $"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar status has not been checked.", [type.Code]));
             }
             else if (facts.FundedPensionMember == true)
             {
                 if (facts.PensionRate is null)
                 {
-                    refusals.Add(new Refusal(PensionRateUnknown, $"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar rate is unknown."));
+                    refusals.Add(new Refusal(PensionRateUnknown, $"Payment type {type.Code} withholds the funded pension, but the payee's II-pillar rate is unknown.", [type.Code]));
                 }
                 else if (facts.PensionRate <= 0m || facts.PensionRate >= 1m)
                 {
-                    refusals.Add(new Refusal(PensionRateInvalid, $"The II-pillar rate {facts.PensionRate} is not a fraction between 0 and 1."));
+                    refusals.Add(new Refusal(PensionRateInvalid, $"The II-pillar rate {facts.PensionRate} is not a fraction between 0 and 1.", [Invariant(facts.PensionRate.Value)]));
                 }
             }
         }
@@ -150,12 +163,12 @@ public static class PaymentChecks
 
             if (applied < 0m || applied > legal)
             {
-                refusals.Add(new Refusal(ExemptionAboveLegal, $"The exemption on the application ({applied}) must be between 0 and the legal {legal} per month."));
+                refusals.Add(new Refusal(ExemptionAboveLegal, $"The exemption on the application ({applied}) must be between 0 and the legal {legal} per month.", [Invariant(applied), Invariant(legal)]));
             }
 
             if (applied != Math.Round(applied, 2))
             {
-                refusals.Add(new Refusal(ExemptionSubCent, $"The exemption on the application ({applied}) must be a whole number of cents."));
+                refusals.Add(new Refusal(ExemptionSubCent, $"The exemption on the application ({applied}) must be a whole number of cents.", [Invariant(applied)]));
             }
         }
 
@@ -166,17 +179,17 @@ public static class PaymentChecks
             && OutsideEea(facts.ResidenceCountry)
             && EffectiveFlags.Of(type, facts).ExemptionKind != ExemptionKind.None)
         {
-            refusals.Add(new Refusal(ExemptionNotEea, $"The basic exemption is applied, but the country of tax residence on the card ({facts.ResidenceCountry.Trim().ToUpperInvariant()}) is outside the EEA; a non-resident gets the exemption only as an EEA resident with a residency certificate (MTA refuses it, KR_MVT_06). Untick the exemption or correct the country."));
+            refusals.Add(new Refusal(ExemptionNotEea, $"The basic exemption is applied, but the country of tax residence on the card ({facts.ResidenceCountry.Trim().ToUpperInvariant()}) is outside the EEA; a non-resident gets the exemption only as an EEA resident with a residency certificate (MTA refuses it, KR_MVT_06). Untick the exemption or correct the country.", [facts.ResidenceCountry.Trim().ToUpperInvariant()]));
         }
 
         if (TreatyRateRefused(type, facts) && type.IncomeTaxRate is { } ownRate && facts.TreatyIncomeTaxRate is { } treaty)
         {
-            refusals.Add(new Refusal(TreatyRateInvalid, $"The treaty income-tax rate on the card ({treaty * 100m:0.####} %) must be a whole percent between 0 and the type's own {ownRate * 100m:0.##} %."));
+            refusals.Add(new Refusal(TreatyRateInvalid, $"The treaty income-tax rate on the card ({treaty * 100m:0.####} %) must be a whole percent between 0 and the type's own {ownRate * 100m:0.##} %.", [Invariant(treaty * 100m), Invariant(ownRate * 100m)]));
         }
 
         if (facts.SocialTaxMinimumShare <= 0m || facts.SocialTaxMinimumShare > 1m)
         {
-            refusals.Add(new Refusal(MinimumShareInvalid, $"The month share of the minimum obligation ({facts.SocialTaxMinimumShare}) must be above 0 and at most 1."));
+            refusals.Add(new Refusal(MinimumShareInvalid, $"The month share of the minimum obligation ({facts.SocialTaxMinimumShare}) must be above 0 and at most 1.", [Invariant(facts.SocialTaxMinimumShare)]));
         }
 
         if (refusals.Count == 0)

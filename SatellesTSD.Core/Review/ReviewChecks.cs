@@ -13,6 +13,11 @@ public static class ReviewChecks
     public const string ResidencyNotChecked = "RESIDENCY_NOT_CHECKED";
     public const string NoType = "NO_TYPE";
 
+    /// <summary>A salary-pattern payment ("TÖR-väline palgad") to a person the month's register does not list, or of a month
+    /// searched with no register: refused under its own name in place of NO_TYPE, saying what to do. Nothing else changes:
+    /// the category stays codeless, the row undeclared and out of the Deklareerimata sum (decisions 10, 40, 100).</summary>
+    public const string OutsideTor = "OUTSIDE_TOR";
+
     /// <summary>A salary paid on a day two employments of different types are in force, and the Seaded rule says ask (decision 209).</summary>
     public const string TwoContracts = "TWO_CONTRACTS";
     public const string UnknownType = "UNKNOWN_TYPE";
@@ -45,13 +50,15 @@ public static class ReviewChecks
     /// <param name="duplicate">The row is a copy of an earlier source's row (the run's DUPLICATE_ROW): the original counts, this one never.</param>
     /// <param name="twoContracts">The TÖR types in force on the day when the Seaded rule asks for the type (decision 209):
     /// a payment of no type is then asked, TWO_CONTRACTS, not NO_TYPE.</param>
-    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown, IReadOnlyList<string>? twoContracts = null)
+    /// <param name="outsideTor">The payment is of "TÖR-väline palgad" and the person is not in the month's register (or the
+    /// month has none): a payment of no type is then refused as OUTSIDE_TOR, not NO_TYPE.</param>
+    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown, IReadOnlyList<string>? twoContracts = null, OutsideTorReason? outsideTor = null)
     {
         ArgumentNullException.ThrowIfNull(rates);
         var refusals = new List<Refusal>();
         if (!IsEuro(currency))
         {
-            refusals.Add(new Refusal(ForeignCurrency, $"The amount is in {currency!.Trim()}, not in euros; declare the euro amount on a line added by hand."));
+            refusals.Add(new Refusal(ForeignCurrency, $"The amount is in {currency!.Trim()}, not in euros; declare the euro amount on a line added by hand.", [currency.Trim()]));
         }
 
         if (direction == Import.Direction.Credit)
@@ -77,7 +84,7 @@ public static class ReviewChecks
             else if (InvalidCode(person) is { } invalid)
             {
                 // the declaration would name the person by this code (Person.PayeeId takes it before the MRR code)
-                refusals.Add(new Refusal(CodeInvalid, $"The person's code '{invalid}' is not an Estonian personal code (eleven digits with a real birth date); correct it on the card, or clear it and give the MTA non-resident code. A residency set by hand does not stand in for it."));
+                refusals.Add(new Refusal(CodeInvalid, $"The person's code '{invalid}' is not an Estonian personal code (eleven digits with a real birth date); correct it on the card, or clear it and give the MTA non-resident code. A residency set by hand does not stand in for it.", [invalid]));
             }
 
             if (person.ResidencyCheckedOn is null)
@@ -99,12 +106,13 @@ public static class ReviewChecks
         if (typeCode is null)
         {
             refusals.Add(twoContracts is { Count: > 0 }
-                ? new Refusal(TwoContracts, $"Two employments of different types are in force on the payment's day (TÖR {string.Join(", ", twoContracts)}); choose the payment type, or the card's employment type for every payment.")
+                ? new Refusal(TwoContracts, $"Two employments of different types are in force on the payment's day (TÖR {string.Join(", ", twoContracts)}); choose the payment type, or the card's employment type for every payment.", [.. twoContracts])
+                : outsideTor is { } reason ? OutsideTorRefusal(reason)
                 : new Refusal(NoType, "No payment type: the category has no code for this person, or the employment type is unknown."));
         }
         else if (!PaymentTypes.TryGet(typeCode, out var type))
         {
-            refusals.Add(new Refusal(UnknownType, $"Payment type {typeCode} is not in the table."));
+            refusals.Add(new Refusal(UnknownType, $"Payment type {typeCode} is not in the table.", [typeCode]));
         }
         else if (person is not null)
         {
@@ -113,4 +121,67 @@ public static class ReviewChecks
 
         return refusals;
     }
+
+    /// <summary>The OUTSIDE_TOR refusal, worded for a month searched without a register or a person it does not list.</summary>
+    public static Refusal OutsideTorRefusal(OutsideTorReason reason) => new(OutsideTor, reason == OutsideTorReason.NoRegister
+        ? "Salary-pattern payment to a person outside TÖR: the month was searched without a TÖR file. Add the month's TÖR file and search again, or give the row a category (Palgad) or a payment type."
+        : "Salary-pattern payment to a person the month's TÖR does not list: register the work in TÖR and search again, or give the row a category or a payment type.",
+        [reason.ToString()]);
+
+    /// <summary>A notice, not a refusal: a payment type chosen by hand carries other taxes than the type the register's
+    /// employment type gives (a 16 on a TÖR 1 salary drops SM, TK, TTK and KP). The hand type stands (decisions 40, 85).</summary>
+    public const string TypeTaxesDiffer = "TYPE_TAXES_DIFFER";
+
+    /// <summary>A notice, not a refusal: a salary paid on a TÖR 501 Tasuta töötamine entry. It is declared as a salary,
+    /// with no minimum (decision 48).</summary>
+    public const string PayOnFreeWork = "PAY_ON_FREE_WORK";
+
+    /// <summary>The TÖR employment type of work done for free (Tasuta töötamine).</summary>
+    public const string FreeWorkTorType = "501";
+
+    /// <summary>The notices of a declared payment, in a fixed order: shown only, they refuse nothing and change no figure,
+    /// and they are never mixed into the refusals (<see cref="Of"/>).</summary>
+    /// <param name="handTypeCode">The type stored by hand (the overlay's or the hand line's), null when none is stored: a
+    /// type the rules picked (the card's, the Seaded rule's) gives no notice.</param>
+    /// <param name="defaultTypeCode">The type the rules give, null when asked.</param>
+    /// <param name="torTypeId">The TÖR type the default was picked from.</param>
+    public static IReadOnlyList<string> NoticesOf(string? handTypeCode, string? defaultTypeCode, string? torTypeId, bool salary, decimal amount)
+    {
+        var notices = new List<string>();
+        var hand = handTypeCode?.Trim();
+        var byDefault = defaultTypeCode?.Trim();
+        // only a salary's default is the TÖR type's; a coded category's own code (haigus 24, üür 57) is no register's word
+        if (salary && !string.IsNullOrEmpty(hand) && !string.IsNullOrEmpty(byDefault) && !string.Equals(hand, byDefault, StringComparison.Ordinal)
+            && PaymentTypes.TryGet(hand, out var handType) && PaymentTypes.TryGet(byDefault, out var defaultType)
+            && TaxesDiffer(handType!, defaultType!))
+        {
+            notices.Add(TypeTaxesDiffer);
+        }
+
+        if (salary && amount > 0m && torTypeId?.Trim() == FreeWorkTorType)
+        {
+            notices.Add(PayOnFreeWork);
+        }
+
+        return notices;
+    }
+
+    /// <summary>Whether two types carry different taxes, by the matrix columns alone (never the person's facts, so it never throws).</summary>
+    public static bool TaxesDiffer(PaymentType a, PaymentType b)
+    {
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        return a.SocialTax != b.SocialTax || a.SocialTaxMinimum != b.SocialTaxMinimum || a.UnemploymentInsurance != b.UnemploymentInsurance
+            || a.FundedPension != b.FundedPension || a.IncomeTaxRate != b.IncomeTaxRate;
+    }
+}
+
+/// <summary>Why a "TÖR-väline palgad" payment has no register behind it (OUTSIDE_TOR).</summary>
+public enum OutsideTorReason
+{
+    /// <summary>The month was searched with no TÖR file.</summary>
+    NoRegister,
+
+    /// <summary>The month's TÖR does not list the person.</summary>
+    NotListed,
 }

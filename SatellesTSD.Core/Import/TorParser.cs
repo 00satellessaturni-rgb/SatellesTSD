@@ -287,13 +287,13 @@ public static class TorParser
             if (code is null)
             {
                 problem.Add("no personal code");
-                problems.Add(new ImportProblem(rowNo, NoCode, $"Row {rowNo} ({firstName} {lastName}) has no personal code."));
+                problems.Add(new ImportProblem(rowNo, NoCode, $"Row {rowNo} ({firstName} {lastName}) has no personal code.", [firstName, lastName]));
             }
 
             if (firstName.Length == 0 || lastName.Length == 0)
             {
                 problem.Add("name incomplete");
-                problems.Add(new ImportProblem(rowNo, NoName, $"Row {rowNo} ({code}) has no {(firstName.Length == 0 ? "first" : "last")} name."));
+                problems.Add(new ImportProblem(rowNo, NoName, $"Row {rowNo} ({code}) has no {(firstName.Length == 0 ? "first" : "last")} name.", [code ?? "", firstName.Length == 0 ? "first" : "last"]));
             }
 
             var start = ParseDate(sheet, rowNo, col, TorHeaders.StartDate, problem, problems);
@@ -328,24 +328,25 @@ public static class TorParser
         var employers = codes.Count > 0 ? codes : entries.Select(e => e.EmployerName).Where(e => !string.IsNullOrWhiteSpace(e)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (employers.Count > 1)
         {
-            problems.Add(new ImportProblem(null, SeveralEmployers, "The export names several employers: " + string.Join(", ", employers) + "."));
+            problems.Add(new ImportProblem(null, SeveralEmployers, "The export names several employers: " + string.Join(", ", employers) + ".", [string.Join(", ", employers)]));
         }
 
         // without a code the employer checks (the import's, the search's) have nothing to go by: said, not refused (decision 134)
         var codeless = entries.Count(e => string.IsNullOrWhiteSpace(e.EmployerCode));
         if (codes.Count == 0 && entries.Count > 0)
         {
-            problems.Add(new ImportProblem(null, NoEmployerCode, $"The export carries no employer registry code (column '{TorHeaders.EmployerCode}' missing or empty): it cannot be checked against the company, and goes to the company shown."));
+            problems.Add(new ImportProblem(null, NoEmployerCode, $"The export carries no employer registry code (column '{TorHeaders.EmployerCode}' missing or empty): it cannot be checked against the company, and goes to the company shown.", []));
         }
         else if (codeless > 0)
         {
-            problems.Add(new ImportProblem(null, NoEmployerCode, $"{codeless} row(s) carry no employer registry code: they cannot be checked against the company and are taken as its own."));
+            problems.Add(new ImportProblem(null, NoEmployerCode, $"{codeless} row(s) carry no employer registry code: they cannot be checked against the company and are taken as its own.", [codeless.ToString(System.Globalization.CultureInfo.InvariantCulture)]));
         }
 
         if (detection.Unknown.Count > 0)
         {
             problems.Add(new ImportProblem(null, ExtraColumns,
-                "The sheet has columns the register does not write (" + string.Join(", ", detection.Unknown) + "): a copy made by the workbook, or a newer export. Check that it is the register's own file."));
+                "The sheet has columns the register does not write (" + string.Join(", ", detection.Unknown) + "): a copy made by the workbook, or a newer export. Check that it is the register's own file.",
+                [string.Join(", ", detection.Unknown)]));
         }
 
         return new ParsedTor(detection.HeaderRowNo, detection.Headers, entries, problems);
@@ -358,7 +359,7 @@ public static class TorParser
         var foreign = tor.EmployerCodes.Where(c => !string.Equals(c, registryCode.Trim(), StringComparison.Ordinal)).ToList();
         return foreign.Count == 0
             ? null
-            : new ImportProblem(null, EmployerMismatch, $"The export is of employer {string.Join(", ", foreign)}, not of {registryCode}.");
+            : new ImportProblem(null, EmployerMismatch, $"The export is of employer {string.Join(", ", foreign)}, not of {registryCode}.", [string.Join(", ", foreign), registryCode]);
     }
 
     private static Cell CellOf(SheetTable sheet, int rowNo, IReadOnlyDictionary<string, int> columns, string header) =>
@@ -378,7 +379,7 @@ public static class TorParser
         if (value is null)
         {
             problem.Add($"{header} '{cell.Text}' not understood");
-            problems.Add(new ImportProblem(rowNo, ImportProblem.BadDate, $"Row {rowNo}: {header} '{cell.Text}' is not understood."));
+            problems.Add(new ImportProblem(rowNo, ImportProblem.BadDate, $"Row {rowNo}: {header} '{cell.Text}' is not understood.", [header, cell.Text]));
             return null;
         }
 

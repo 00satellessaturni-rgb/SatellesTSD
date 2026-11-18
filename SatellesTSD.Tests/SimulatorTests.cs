@@ -80,6 +80,27 @@ public class SimulatorTests
         Assert.Equal(PaymentTypes.Get("10").Code, line.Line.TypeCode);
     }
 
+    [Fact]
+    public void A_simulated_salary_forced_to_another_taxes_type_or_paid_on_free_work_carries_its_notice_and_the_same_lines()
+    {
+        // a Tööleping salary forced to 16 by the row's own word: income tax only, the notice beside it, no refusal
+        var forced = Simulator.Run(Mari() with { Rows = [new SimRow(new DateOnly(2026, 10, 5), "Mari Maasikas", 905.92m, "palk", TypeCode: "16")] });
+        var payment = Assert.Single(forced.Review!.Payments);
+        Assert.Equal([ReviewChecks.TypeTaxesDiffer], payment.Notices);
+        Assert.Empty(payment.Blockers);
+        var line = Assert.Single(forced.Lines);
+        Assert.Equal("16", line.Line.TypeCode);
+        Assert.Equal((0m, 0m, 0m), (line.Result!.SocialTax, line.Result.UnemploymentEmployer, line.Result.FundedPension));
+
+        // a salary on a 501 entry: the notice, and the very line a Tööleping salary gives
+        var free = Simulator.Run(Mari(typeId: "501"));
+        Assert.Equal([ReviewChecks.PayOnFreeWork], Assert.Single(free.Review!.Payments).Notices);
+        var freeLine = Assert.Single(free.Lines);
+        var contractLine = Assert.Single(Simulator.Run(Mari()).Lines);
+        Assert.Equal(("10", contractLine.Result), (freeLine.Line.TypeCode, freeLine.Result));
+        Assert.Empty(Assert.Single(Simulator.Run(Mari()).Review!.Payments).Notices);
+    }
+
     private static readonly SimRow Salary500 = new(new DateOnly(2026, 10, 5), "Mari Maasikas", 500m, "palk", Category: "Palgad");
 
     [Fact]
@@ -174,6 +195,49 @@ public class SimulatorTests
         Assert.Null(result.Review!.Register);
     }
 
+    private static readonly SimRow OutsideSalary = new(new DateOnly(2026, 10, 5), "Mari Maasikas", 500m, "Septembrikuu palk");
+
+    private static void AssertOutsideTor(SimResult result, OutsideTorReason reason)
+    {
+        Assert.Null(result.Refusal);
+        Assert.Empty(result.Lines);
+        var payment = Assert.Single(result.Review!.Payments);
+        Assert.Equal((ReviewDefaults.OutsideTorCategory, (string?)null, false), (payment.Category, payment.TypeCode, payment.Declare));
+        Assert.Contains(payment.Blockers, b => b.Code == ReviewChecks.OutsideTor);
+        Assert.DoesNotContain(payment.Blockers, b => b.Code == ReviewChecks.NoType);
+        Assert.Equal(reason, payment.OutsideTor);
+        Assert.Contains(result.Review.Problems, p => p.Code == MatchProblem.OutsideTorSalary && p.Message.Contains("500.00", StringComparison.Ordinal));
+        Assert.Empty(result.Review.Undeclared); // decision 100: not in the Deklareerimata sum
+    }
+
+    [Fact]
+    public void Salary_pattern_pay_in_a_month_searched_without_a_register_is_refused_as_outside_tor_whatever_the_cards_type()
+    {
+        // the fifth audit's S15 (f8-02): the card's type for every payment does not make a codeless category a salary
+        var result = Simulator.Run(Mari(SimRegister.NoRegister, salary: 500m) with { Person = Mari().Person with { TorTypeId = "1", TypeFromCard = true }, Rows = [OutsideSalary] });
+        AssertOutsideTor(result, OutsideTorReason.NoRegister);
+        Assert.Contains("without a TÖR file", result.Review!.Payments[0].Blockers.Single(b => b.Code == ReviewChecks.OutsideTor).Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Salary_pattern_pay_to_a_kaasa_person_the_register_does_not_list_is_named_in_the_included_note()
+    {
+        // the fifth audit's S16 (f8-08): the card's Include changes the employment's state only; the note names the payment
+        var result = Simulator.Run(Mari(SimRegister.NotListed, salary: 500m, minimum: true) with { Person = Mari(minimum: true).Person with { Declaration = Core.Store.DeclarationChoice.Include }, Rows = [OutsideSalary] });
+        AssertOutsideTor(result, OutsideTorReason.NotListed);
+        Assert.Contains(result.Build!.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal)
+            && p.Contains("not declared (OUTSIDE_TOR)", StringComparison.Ordinal) && p.Contains("no line for the payment", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Salary_pattern_pay_to_a_person_the_register_does_not_list_is_refused_as_outside_tor()
+    {
+        // the fifth audit's S17 (f8-01): net 500 to a person outside the month's register
+        var result = Simulator.Run(Mari(SimRegister.NotListed, salary: 500m) with { Rows = [OutsideSalary] });
+        AssertOutsideTor(result, OutsideTorReason.NotListed);
+        Assert.Contains("does not list", result.Review!.Payments[0].Blockers.Single(b => b.Code == ReviewChecks.OutsideTor).Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_search_runs_with_the_owners_saved_phrases_when_given()
     {
@@ -195,5 +259,19 @@ public class SimulatorTests
         Assert.Throws<ArgumentException>(() => SimScenario.Parse(json.Replace("\"Employments\": [", "\"Employments\": [ null,", StringComparison.Ordinal)));
         Assert.Throws<ArgumentException>(() => SimScenario.Parse(json.Replace("\"Payee\": \"Mari Maasikas\"", "\"Payee\": null", StringComparison.Ordinal)));
         Assert.Equal(Mari().Rows, SimScenario.Parse(json).Rows);
+    }
+
+    [Fact]
+    public void A_simulated_pensioner_with_the_minimum_on_is_noted_in_the_build()
+    {
+        // decision 237: the card's two ticks stand as given; the build says a state pension's recipient owes no minimum
+        var both = Mari(salary: 500m, minimum: true);
+        var result = Simulator.Run(both with { Person = both.Person with { OnOldAgeOrFlexiblePension = true } });
+        Assert.Null(result.Refusal);
+        Assert.Contains(result.Build!.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
+        Assert.True(result.Build.MinimumShortfall > 0m); // a note, not a refusal: still topped up
+
+        var off = Simulator.Run(both with { Person = both.Person with { OnOldAgeOrFlexiblePension = true, SocialTaxMinimumApplies = false } });
+        Assert.DoesNotContain(off.Build!.Problems, p => p.StartsWith(PeriodDeclarer.MinimumWithPension, StringComparison.Ordinal));
     }
 }

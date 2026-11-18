@@ -151,8 +151,38 @@ public static class ReportText
     public static string? FeedbackText(Declare.DeclaredLine line)
     {
         ArgumentNullException.ThrowIfNull(line);
-        return (line.RefusedFeedback ?? line.LastFeedback) is { } f ? $"{f.Severity}: {string.Join(", ", f.Messages.Select(m => m.Code))}" : null;
+        return (line.RefusedFeedback ?? line.LastFeedback) is { } f ? FeedbackCell(f) : null;
     }
+
+    /// <summary>A report's verdict on a line in short, as the grids and the workbook show it: the severity in words, then
+    /// MTA's rule codes as MTA gives them ("must viga: KR_XBRL_VALJAMAKSED_5").</summary>
+    public static string FeedbackCell(LineFeedback feedback)
+    {
+        ArgumentNullException.ThrowIfNull(feedback);
+        return $"{SeverityText(feedback.Severity)}: {string.Join(", ", feedback.Messages.Select(m => m.Code))}";
+    }
+
+    /// <summary>A verdict's severity in words, never the enum's English name (the store keeps the name): MTA's own colours,
+    /// a warning and an error of no colour said as such.</summary>
+    public static string SeverityText(global::SatellesTSD.Core.Feedback.Severity severity) => severity switch
+    {
+        global::SatellesTSD.Core.Feedback.Severity.None => "korras",
+        global::SatellesTSD.Core.Feedback.Severity.Warning => "hoiatus",
+        global::SatellesTSD.Core.Feedback.Severity.Blue => "sinine viga",
+        global::SatellesTSD.Core.Feedback.Severity.Red => "punane viga",
+        global::SatellesTSD.Core.Feedback.Severity.Error => "viga",
+        global::SatellesTSD.Core.Feedback.Severity.Black => "must viga",
+        _ => severity.ToString(),
+    };
+
+    /// <summary>A report's finding's level in words (errorLevel), never the enum's English name.</summary>
+    public static string LevelText(global::SatellesTSD.Core.Feedback.ValidationLevel level) => level switch
+    {
+        global::SatellesTSD.Core.Feedback.ValidationLevel.Ok => "korras",
+        global::SatellesTSD.Core.Feedback.ValidationLevel.Warning => "hoiatus",
+        global::SatellesTSD.Core.Feedback.ValidationLevel.Error => "viga",
+        _ => "teadmata",
+    };
 
     /// <summary>The note written on the card of a rent payee the register lists for the first time (decision 109).</summary>
     public const string PayeeNowEmployee = "Isik oli enne registrisse kandmist üüri saaja: töötamise liik, SM miinimumkohustus ja maksuvaba tulu avaldus on nüüd pandud nagu registri töötajal — kontrolli kaarti.";

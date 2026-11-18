@@ -38,7 +38,7 @@ public static class Simulator
     public static SimResult Run(SimScenario scenario, string? schemaRoot = null, TimeProvider? clock = null, string? savedCatalog = null)
     {
         ArgumentNullException.ThrowIfNull(scenario);
-        var steps = new List<string>();
+        IReadOnlyList<MatchProblem> runProblems = [];
         using var store = SqliteStore.InMemory();
         if (savedCatalog is not null)
         {
@@ -53,20 +53,20 @@ public static class Simulator
 
         var bytes = Workbook(scenario);
         var imported = pipeline.ImportFile(period.Id, "simulatsioon.xlsx", bytes);
-        steps.AddRange(imported.Messages);
+        var notes = imported.Notes; // the import's own word, worded by the window as the import log words it
         if (!imported.Succeeded)
         {
-            return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = imported.Error ?? "The example could not be read." };
+            return new SimResult { ImportNotes = notes, RunProblems = runProblems, OwnPhrases = ownPhrases, ImportStopped = true, Refusal = imported.Error, RefusalError = imported.Refusal };
         }
 
         try
         {
             var run = pipeline.RunMatch(period.Id);
-            steps.AddRange(run.Problems.Select(p => $"{p.Code}: {p.Message}"));
+            runProblems = run.Problems; // by code: the window words them as the "Otsi maksed" log does
         }
         catch (Exception e) when (e is MatchException or InvalidOperationException)
         {
-            return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
+            return new SimResult { ImportNotes = notes, RunProblems = runProblems, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
         }
 
         var workspace = new ReviewWorkspace(store, rates, clock) { TwoContracts = scenario.TwoContracts };
@@ -78,7 +78,7 @@ public static class Simulator
         catch (Exception e) when (e is ReviewException or ArgumentException or InvalidOperationException)
         {
             // the card or a row's word refused as the review refuses it: said, nothing built
-            return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
+            return new SimResult { ImportNotes = notes, RunProblems = runProblems, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e };
         }
 
         var declarer = new PeriodDeclarer(store, rates, clock) { TwoContracts = scenario.TwoContracts };
@@ -89,7 +89,7 @@ public static class Simulator
         }
         catch (Exception e) when (e is DeclareException or ReviewException or InvalidOperationException)
         {
-            return new SimResult { Steps = steps, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e, Review = ReviewOf(workspace, period.Id, person.Id) };
+            return new SimResult { ImportNotes = notes, RunProblems = runProblems, OwnPhrases = ownPhrases, Refusal = e.Message, RefusalError = e, Review = ReviewOf(workspace, period.Id, person.Id) };
         }
 
         var lines = declarer.Lines(period.Id).Where(l => l.Payment.PersonId == person.Id).Select(l => l.Payment).ToList();
@@ -123,11 +123,12 @@ public static class Simulator
 
         return new SimResult
         {
-            Steps = steps,
+            ImportNotes = notes,
+            RunProblems = runProblems,
             OwnPhrases = ownPhrases,
             Review = ReviewOf(workspace, period.Id, person.Id),
             Build = report.Persons.FirstOrDefault(p => p.PersonId == person.Id),
-            BuildProblems = report.Problems,
+            BuildNotes = report.Notes,
             Lines = lines,
             Totals = DeclarationTotals.Of(lines),
             Xml = xml,

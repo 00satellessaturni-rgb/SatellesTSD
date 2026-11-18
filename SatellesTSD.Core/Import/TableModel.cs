@@ -123,6 +123,10 @@ public enum SourceFormat
 public sealed record SourceWorkbook(string FileName, SourceFormat Format, IReadOnlyList<SheetTable> Sheets, string? Encoding = null, IReadOnlyList<string>? Warnings = null)
 {
     public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+
+    /// <summary>The same warnings by code, with the figures, so the window words them; a note's English is its warning's text
+    /// (a warning without a note is said in the English alone).</summary>
+    public IReadOnlyList<ImportNote> WarningNotes { get; init; } = [];
 }
 
 /// <summary>Reads an Excel file into sheets; the implementation lives in Infrastructure (it needs a package).</summary>

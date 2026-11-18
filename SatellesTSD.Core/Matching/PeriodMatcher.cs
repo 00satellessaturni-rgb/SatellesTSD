@@ -32,7 +32,7 @@ public sealed class PeriodMatcher
         var problems = new List<MatchProblem>();
         foreach (var header in below.Where(r => r.SkipReason == SkipReason.Header))
         {
-            problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{header.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: header.RowNo));
+            problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{header.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: header.RowNo, Args: [source.Name, Num(header.RowNo)]));
         }
 
         var rows = below.Where(r => r.SkipReason != SkipReason.Header).ToList();
@@ -42,9 +42,10 @@ public sealed class PeriodMatcher
         }
 
         var span = rows.Count == 1 ? $"row {rows[0].RowNo}" : $"rows {rows[0].RowNo}–{rows[^1].RowNo}";
+        IReadOnlyList<string> figures = [source.Name, Num(rows[0].RowNo), Num(rows[^1].RowNo), Num(rows.Count)];
         problems.Add(lastNamed == 0
-            ? new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: no row names a payee, so none of its {rows.Count} row(s) were listed — check the layout's payee column.", Source: source.Name, RowNo: rows[0].RowNo)
-            : new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: {rows.Count} row(s) below the last payee row were not listed — a fee or the closing balance may be among them; see the statement.", Source: source.Name, RowNo: rows[0].RowNo));
+            ? new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: no row names a payee, so none of its {rows.Count} row(s) were listed — check the layout's payee column.", Source: source.Name, RowNo: rows[0].RowNo, Variant: MatchProblem.NoPayeeRow, Args: figures)
+            : new MatchProblem(MatchProblem.RowsBelowLastPayee, $"{source.Name} [{span}]: {rows.Count} row(s) below the last payee row were not listed — a fee or the closing balance may be among them; see the statement.", Source: source.Name, RowNo: rows[0].RowNo, Args: figures));
         return problems;
     }
 
@@ -89,7 +90,7 @@ public sealed class PeriodMatcher
                 {
                     copied.Add((row.RowHash, index));
                     duplicates[(source.Name, row.RowNo)] = earlier![index].Reference;
-                    problems.Add(new MatchProblem(MatchProblem.DuplicateRow, $"{reference} is the same payment as {earlier[index].Reference}; listed, not counted.", Source: source.Name, RowNo: row.RowNo));
+                    problems.Add(new MatchProblem(MatchProblem.DuplicateRow, $"{reference} is the same payment as {earlier[index].Reference}; listed, not counted.", Source: source.Name, RowNo: row.RowNo, Args: [reference, earlier[index].Reference]));
                     continue;
                 }
 
@@ -114,7 +115,7 @@ public sealed class PeriodMatcher
         {
             if (_catalog.FiltersFor(source.LayoutId) is null)
             {
-                problems.Add(new MatchProblem(MatchProblem.NoFilters, $"{source.Name}: the layout '{source.LayoutId}' has no category filters; nothing is categorised on it.", Source: source.Name));
+                problems.Add(new MatchProblem(MatchProblem.NoFilters, $"{source.Name}: the layout '{source.LayoutId}' has no category filters; nothing is categorised on it.", Source: source.Name, Args: [source.Name, source.LayoutId]));
             }
         }
 
@@ -123,17 +124,18 @@ public sealed class PeriodMatcher
         {
             if (person.Entries.Count > 1)
             {
-                problems.Add(new MatchProblem(MatchProblem.SeveralEntries, $"{person.Person.FullName}: the register lists the person {person.Entries.Count} times (rows {string.Join(", ", person.Entries.Select(e => e.RowNo))}).", person.Key));
+                problems.Add(new MatchProblem(MatchProblem.SeveralEntries, $"{person.Person.FullName}: the register lists the person {person.Entries.Count} times (rows {string.Join(", ", person.Entries.Select(e => e.RowNo))}).", person.Key,
+                    Args: [person.Person.FullName, Num(person.Entries.Count), string.Join(", ", person.Entries.Select(e => Num(e.RowNo)))]));
             }
 
             if (person.ActiveEntry is null)
             {
-                problems.Add(new MatchProblem(MatchProblem.NoEmploymentInMonth, $"{person.Person.FullName}: no employment of the register covers {year}-{month:00}.", person.Key));
+                problems.Add(new MatchProblem(MatchProblem.NoEmploymentInMonth, $"{person.Person.FullName}: no employment of the register covers {year}-{month:00}.", person.Key, Args: [person.Person.FullName, Num(year), Num(month)]));
             }
 
             if (person.Person.LastName.Length == 0 || person.Person.FirstName.Length == 0)
             {
-                problems.Add(new MatchProblem(MatchProblem.NoName, $"Register row {person.Entries[0].RowNo}: no first or last name; not searched.", person.Key));
+                problems.Add(new MatchProblem(MatchProblem.NoName, $"Register row {person.Entries[0].RowNo}: no first or last name; not searched.", person.Key, Args: [Num(person.Entries[0].RowNo)]));
                 continue;
             }
 
@@ -145,7 +147,7 @@ public sealed class PeriodMatcher
                 {
                     problems.Add(new MatchProblem(MatchProblem.AmbiguousMask,
                         $"{person.Person.FullName}: the masks \"{found.LastMask} {found.FirstMask}\" could also mean {found.ConflictsWith!.FullName}; {found.Dropped.Count} row(s) of {source.Name} left unmatched ({string.Join(", ", found.Dropped.Select(i => source.Rows[i].RowNo))}).",
-                        person.Key, source.Name));
+                        person.Key, source.Name, Args: [person.Person.FullName, found.LastMask, found.FirstMask, found.ConflictsWith!.FullName, Num(found.Dropped.Count), source.Name, string.Join(", ", found.Dropped.Select(i => Num(source.Rows[i].RowNo)))]));
                 }
 
                 for (var i = 0; i < found.Hits.Count; i++)
@@ -177,7 +179,8 @@ public sealed class PeriodMatcher
 
             var ownerName = persons.First(p => p.Key == byWords[0].PersonKey).Person.FullName;
             var shorter = string.Join(", ", byWords.Skip(1).Select(h => persons.First(p => p.Key == h.PersonKey).Person.FullName));
-            problems.Add(new MatchProblem(MatchProblem.NameContained, $"{group.Key.Source} [{group.Key.RowNo}] was found for {ownerName} and for {shorter}, whose name is part of theirs; counted for {ownerName}.", byWords[0].PersonKey, group.Key.Source, group.Key.RowNo));
+            problems.Add(new MatchProblem(MatchProblem.NameContained, $"{group.Key.Source} [{group.Key.RowNo}] was found for {ownerName} and for {shorter}, whose name is part of theirs; counted for {ownerName}.", byWords[0].PersonKey, group.Key.Source, group.Key.RowNo,
+                Args: [group.Key.Source, Num(group.Key.RowNo), ownerName, shorter, Num(byWords.Count - 1)]));
             foreach (var hit in byWords.Skip(1))
             {
                 hits.Remove(hit);
@@ -188,7 +191,7 @@ public sealed class PeriodMatcher
         foreach (var group in hits.GroupBy(h => (h.Source, h.Row.RowNo)).Where(g => g.Count() > 1))
         {
             var persons2 = string.Join(", ", group.Select(h => persons.First(p => p.Key == h.PersonKey).Person.FullName));
-            problems.Add(new MatchProblem(MatchProblem.SharedRow, $"{group.Key.Source} [{group.Key.RowNo}] was found for {persons2}; counted for none of them.", Source: group.Key.Source, RowNo: group.Key.RowNo));
+            problems.Add(new MatchProblem(MatchProblem.SharedRow, $"{group.Key.Source} [{group.Key.RowNo}] was found for {persons2}; counted for none of them.", Source: group.Key.Source, RowNo: group.Key.RowNo, Args: [group.Key.Source, Num(group.Key.RowNo), persons2]));
             foreach (var hit in group)
             {
                 hits[hits.IndexOf(hit)] = hit with { Counted = false, Flags = [.. hit.Flags, MatchProblem.SharedRow] };
@@ -218,13 +221,14 @@ public sealed class PeriodMatcher
                 switch (row.SkipReason)
                 {
                     case SkipReason.Header:
-                        problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{row.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: row.RowNo));
+                        problems.Add(new MatchProblem(MatchProblem.HeaderRow, $"{source.Name} [{row.RowNo}]: a header row inside the data, left out.", Source: source.Name, RowNo: row.RowNo, Args: [source.Name, Num(row.RowNo)]));
                         continue;
                     case SkipReason.NotDone:
                         // said only for a row of the month: an export spans months, and another month's is no business of this one
                         if (InMonth(row, year, month))
                         {
-                            problems.Add(new MatchProblem(MatchProblem.NotDone, $"{source.Name} [{row.RowNo}]: {row.Counterparty} {row.Amount?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} — the transaction's state says the money did not move (reverted, declined, failed or pending); left out, not a payment.", Source: source.Name, RowNo: row.RowNo));
+                            problems.Add(new MatchProblem(MatchProblem.NotDone, $"{source.Name} [{row.RowNo}]: {row.Counterparty} {row.Amount?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)} — the transaction's state says the money did not move (reverted, declined, failed or pending); left out, not a payment.", Source: source.Name, RowNo: row.RowNo,
+                                Args: [source.Name, Num(row.RowNo), row.Counterparty ?? "", row.Amount?.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) ?? ""]));
                         }
 
                         continue;
@@ -247,7 +251,7 @@ public sealed class PeriodMatcher
 
         foreach (var hit in hits.Where(h => h.Flags.Contains(MatchProblem.BadAmount) && h.Verdict.Kind == VerdictKind.Matched))
         {
-            problems.Add(new MatchProblem(MatchProblem.BadAmount, $"{hit.Reference}: the amount could not be read; counted as nothing.", hit.PersonKey, hit.Source, hit.Row.RowNo));
+            problems.Add(new MatchProblem(MatchProblem.BadAmount, $"{hit.Reference}: the amount could not be read; counted as nothing.", hit.PersonKey, hit.Source, hit.Row.RowNo, Args: [hit.Reference]));
         }
 
         return new MatchResult(year, month, persons, sources, hits, problems, _catalog.ToJson());
@@ -278,4 +282,7 @@ public sealed class PeriodMatcher
     }
 
     private static bool InMonth(StatementRow row, int year, int month) => row.Date is { } d && d.Year == year && d.Month == month;
+
+    /// <summary>A whole number as a problem's figures carry it (<see cref="MatchProblem.Args"/>).</summary>
+    internal static string Num(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

@@ -75,10 +75,10 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _simulationButton = new(UiText.Simulation);
     private readonly ToolStripMenuItem _nonResidentsButton = new(UiText.NonResidentsMenu);
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType) { ToolTipText = UiText.DeclareTotalsPerTypeTip }; // one toggle: unticked = each payment its own line
-    private readonly ToolStripMenuItem _twoContractsMenu = new(UiText.TwoContractsMenu) { ToolTipText = UiText.TwoContractsMenuTip };
-    private readonly ToolStripMenuItem _twoSalaryItem = new(UiText.TwoContractsSalary) { ToolTipText = UiText.TwoContractsSalaryTip };
-    private readonly ToolStripMenuItem _twoAskItem = new(UiText.TwoContractsAsk) { ToolTipText = UiText.TwoContractsAskTip };
-    private readonly ToolStripMenuItem _twoLatestItem = new(UiText.TwoContractsLatest) { ToolTipText = UiText.TwoContractsLatestTip };
+    private readonly ToolStripMenuItem _twoContractsMenu = new(UiText.TwoContractsMenu);
+    private readonly ToolStripMenuItem _twoSalaryItem = new(UiText.TwoContractsSalary);
+    private readonly ToolStripMenuItem _twoAskItem = new(UiText.TwoContractsAsk);
+    private readonly ToolStripMenuItem _twoLatestItem = new(UiText.TwoContractsLatest);
     private readonly ToolStripMenuItem _layoutsItem = new(UiText.Layouts);
     private readonly ToolStripMenuItem _phrasesItem = new(UiText.Phrases);
     private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow) { ToolTipText = UiText.LogHeightOneRowTip }; // one toggle: unticked = the default height
@@ -180,7 +180,6 @@ public sealed class MainForm : Form
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
         _twoContractsMenu.DropDownItems.AddRange([_twoSalaryItem, _twoAskItem, _twoLatestItem]);
-        _twoContractsMenu.DropDown.ShowItemToolTips = true;
         settingsMenu.DropDownItems.AddRange([_declareTotalsItem, new ToolStripSeparator(), _twoContractsMenu, new ToolStripSeparator(), _layoutsItem, _phrasesItem]);
         settingsMenu.DropDown.ShowItemToolTips = true;
         _phrasesItem.Click += (_, _) => ShowPhrases();
@@ -208,6 +207,8 @@ public sealed class MainForm : Form
         Disposed += (_, _) => _undeclaredTips.Dispose();
         _problemTips = new GridTips(_personsGrid, "problems"); // the problems' texts, the cell holding the codes only
         Disposed += (_, _) => _problemTips.Dispose();
+        _checkTips = new GridTips(_paymentsGrid, "check"); // the refusals' texts in Estonian: longer than the grid's own tooltip shows whole
+        Disposed += (_, _) => _checkTips.Dispose();
         _updateButton.Click += async (_, _) => await CheckForUpdatesAsync(manual: true);
         _closeButton.Click += (_, _) => Close();
 
@@ -448,6 +449,14 @@ public sealed class MainForm : Form
 
     internal GridTips UndeclaredTips => _undeclaredTips;
 
+    /// <summary>The persons grid's "Probleemid" tooltip: each problem's code and text.</summary>
+    internal GridTips ProblemTips => _problemTips;
+
+    private readonly GridTips _checkTips;
+
+    /// <summary>The payments grid's "Kontroll" tooltip: each refusal's code and text, the notices, the Seaded rule's pick.</summary>
+    internal GridTips CheckTips => _checkTips;
+
     internal ToolStripProgressBar ProgressBar => _progressBar;
 
     internal ToolStripLabel ProgressLabel => _progressLabel;
@@ -455,6 +464,7 @@ public sealed class MainForm : Form
     internal ToolStripButton StopButton => _stopButton;
 
     internal ToolStripMenuItem LookupButton => _lookupButton;
+    internal ToolStripMenuItem MatchButton => _matchButton;
 
     private void Inform(string text, string title)
     {
@@ -482,6 +492,9 @@ public sealed class MainForm : Form
 
     /// <summary>Names a folder in place of the folder dialog (the description shown; null = cancelled): the window tests set it.</summary>
     internal Func<string, string?>? ChoosingFolder;
+
+    /// <summary>Names a feedback report in place of the file dialog (null = cancelled): the window tests set it.</summary>
+    internal Func<string?>? ChoosingFeedback;
 
     /// <summary>The folder the accountant picks, starting from the one last used; null when the dialog is cancelled.</summary>
     private string? ChooseFolder(string description)
@@ -1013,23 +1026,27 @@ public sealed class MainForm : Form
             }
             catch (DeclareException e) when (e.Code == PeriodDeclarer.ModeChanged)
             {
-                // the month is on the server in the other cut: said in the accountant's words, with the way out
-                Log($"{UiText.BuildLines}: {e.Message}");
-                Inform(UiText.DeclareModeRefused, UiText.BuildLines);
+                // the month is on the server in the other cut: said in the accountant's words, with the way out; the log keeps
+                // the Core's text beside it, as Fail does (decision 242)
+                var said = UiText.DeclareRefused(e) ?? UiText.DeclareModeRefused;
+                Log($"{UiText.BuildLines}: {said} ({e.Message})");
+                Inform(said, UiText.BuildLines);
                 return;
             }
             catch (DeclareException e) when (e.Code == PeriodDeclarer.RunStale)
             {
                 // a file linked or unlinked after the search: the lines would miss what the search never saw
-                Log($"{UiText.BuildLines}: {e.Message}");
-                Inform(UiText.RunStaleRefused, UiText.BuildLines);
+                var said = UiText.DeclareRefused(e) ?? UiText.RunStaleRefused;
+                Log($"{UiText.BuildLines}: {said} ({e.Message})");
+                Inform(said, UiText.BuildLines);
                 return;
             }
             catch (DeclareException e) when (e.Code == PeriodDeclarer.RatesMissing)
             {
                 // a year this version has no rates for: said, never computed with another year's figures
-                Log($"{UiText.BuildLines}: {e.Message}");
-                Inform(UiText.RatesMissing, UiText.BuildLines);
+                var said = UiText.DeclareRefused(e) ?? UiText.RatesMissing;
+                Log($"{UiText.BuildLines}: {said} ({e.Message})");
+                Inform(said, UiText.BuildLines);
                 return;
             }
 
@@ -1037,7 +1054,11 @@ public sealed class MainForm : Form
             Log($"{UiText.BuildLines} ({(mode == Core.Declare.DeclarationMode.TotalsPerType ? UiText.ModeTotals : UiText.ModeEach)}): {report.Count(LineChange.New)} uut, {report.Count(LineChange.Replaced)} asendatud, {report.Count(LineChange.Changed)} muudatust (M), {report.Count(LineChange.Cancelled)} tühistust (T), {report.Count(LineChange.Kept)} jäi, {report.Count(LineChange.Deleted)} kustutatud");
             foreach (var person in report.Persons)
             {
-                if (person.Lines.Count > 0 || person.Problems.Count > 0)
+                if (person.PersonId is null && person.Name.Length == 0 && person.Lines.Count > 0)
+                {
+                    Log($"   {UiText.NoPerson}:"); // lines retired whose person built nothing this month
+                }
+                else if (person.Lines.Count > 0 || person.Notes.Count > 0)
                 {
                     var month = person.MinimumDue > 0 ? $"; SM miinimum {UiText.Money(person.MinimumDue)} (osa {person.MinimumShare:0.##}), puudujääk {UiText.Money(person.MinimumShortfall)}" : "";
                     Log($"   {person.Name}: maksuvaba {UiText.Money(person.ExemptionOffered)} → üle {UiText.Money(person.ExemptionLeft)}{month}");
@@ -1045,18 +1066,19 @@ public sealed class MainForm : Form
 
                 foreach (var line in person.Lines)
                 {
-                    Log($"      {line.Key} {UiText.ActionText(line.Action)} {UiText.ChangeText(line.Change)} — {Core.Report.ReportText.SourceText(line.Source)}{(line.Note is null ? "" : $" ({line.Note})")}");
+                    Log($"      {line.Key} {UiText.ActionText(line.Action)} {UiText.ChangeText(line.Change)} — {Core.Report.ReportText.SourceText(line.Source)}{(line.Note is null ? "" : $" ({UiText.LineNoteText(line.Note)})")}");
                 }
 
-                foreach (var problem in person.Problems)
+                // the build's notes in Estonian, the code verbatim before each (decision 46); one not worded in the Core's English
+                foreach (var note in person.Notes)
                 {
-                    Log("      " + problem);
+                    Log("      " + UiText.BuildNoteLine(note));
                 }
             }
 
-            foreach (var problem in report.Problems)
+            foreach (var note in report.Notes)
             {
-                Log("   " + problem);
+                Log("   " + UiText.BuildNoteLine(note));
             }
         });
         ReloadView();
@@ -1090,7 +1112,7 @@ public sealed class MainForm : Form
         }
         catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
         {
-            Log($"{UiText.UndoReopen}: {e.Message}");
+            Log($"{UiText.UndoReopen}: {UiText.UndoReopenDraftsLog(e.DraftLines)} ({e.Message})");
             Inform(UiText.UndoReopenHasDrafts(e.DraftLines.Count), UiText.UndoReopen);
         }
         catch (Exception e)
@@ -1161,6 +1183,18 @@ public sealed class MainForm : Form
         if (_services is null || _view is null)
         {
             return;
+        }
+
+        if (_view.Editable && _view.MarkedButLeftOut is { Count: > 0 } leftOut)
+        {
+            // payments marked to declare that the review refuses (or holds with their type): the file goes without them.
+            // A question, nothing blocked — the rest of the month may be filed on time while one card waits (decision 239)
+            var leftOutSum = Core.Review.Undeclared.SumOf(leftOut);
+            Log($"{UiText.Export}: {UiText.MarkedButLeftOutLog(leftOut.Count, leftOutSum)}");
+            if (!Confirm(UiText.MarkedButLeftOutAtExport(leftOut.Count, leftOutSum), UiText.Export))
+            {
+                return;
+            }
         }
 
         if (ChooseFolder(UiText.ExportFolder) is not { } exportFolder)
@@ -1334,8 +1368,18 @@ public sealed class MainForm : Form
             return;
         }
 
-        using var dialog = new OpenFileDialog { Filter = UiText.FeedbackFilter, InitialDirectory = _settings.ExportFolder ?? "" };
-        if (dialog.ShowDialog(this) != DialogResult.OK)
+        string? chosen;
+        if (ChoosingFeedback is { } choose)
+        {
+            chosen = choose();
+        }
+        else
+        {
+            using var dialog = new OpenFileDialog { Filter = UiText.FeedbackFilter, InitialDirectory = _settings.ExportFolder ?? "" };
+            chosen = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+        }
+
+        if (chosen is not { } path)
         {
             return;
         }
@@ -1346,7 +1390,6 @@ public sealed class MainForm : Form
         }
 
         var services = _services;
-        var path = dialog.FileName;
         await RunBusyAsync(async () =>
         {
             var outcomes = await Task.Run(() => services.Submitter.ReadFeedback(submission.Id, path));
@@ -2109,7 +2152,7 @@ public sealed class MainForm : Form
             var row = _personsGrid.Rows[index];
             row.Tag = person;
             _undeclaredTips.Set(row, UiText.UndeclaredTip(person.Undeclared));
-            _problemTips.Set(row, string.Join(Environment.NewLine, person.Problems.Select(x => $"{x.Code}: {x.Message}")));
+            _problemTips.Set(row, string.Join(Environment.NewLine, person.Problems.Select(UiText.ProblemLine)));
             if (person.IsUnmatched)
             {
                 row.DefaultCellStyle.Font = new Font(_personsGrid.Font, FontStyle.Italic);
@@ -2391,6 +2434,7 @@ public sealed class MainForm : Form
         _filling = true;
         var sort = SortOf(_paymentsGrid);
         _paymentsGrid.Rows.Clear();
+        _checkTips.Clear();
         var payments = ScopedPayments(person);
         if (_view is null || (person is null && CurrentScope.Kind == ScopeSelected))
         {
@@ -2426,6 +2470,18 @@ public sealed class MainForm : Form
                 parts.Add($"{UiText.TwoContractsNote} {string.Join("/", payment.ContractTypes)}");
             }
 
+            // a "TÖR-väline palgad" row of no type to a person outside the register: said on the row even when it is not
+            // ticked (its refusal then stands among the blockers only), with an Estonian tip of what to do
+            var outsideTorTip = payment.OutsideTor is { } outside && payment.Blockers.Any(b => b.Code == Core.Review.ReviewChecks.OutsideTor)
+                ? UiText.OutsideTorTip(outside == Core.Review.OutsideTorReason.NoRegister) : null;
+            if (outsideTorTip is not null && !payment.Declare)
+            {
+                parts.Add(UiText.OutsideTorNote);
+            }
+
+            // notices are shown only: they refuse nothing, colour no row and change no figure
+            parts.AddRange(payment.Notices);
+
             var index = _paymentsGrid.Rows.Add(
                 payment.IsByHand ? UiText.ByHand : payment.Reference,
                 payment.Date is { } d ? d.ToDateTime(TimeOnly.MinValue) : null,
@@ -2443,8 +2499,12 @@ public sealed class MainForm : Form
                 string.Join("; ", parts));
             var row = _paymentsGrid.Rows[index];
             row.Tag = payment;
-            row.Cells["check"].ToolTipText = string.Join(Environment.NewLine, payment.Checks.Select(c => $"{c.Code}: {c.Message}")
-                .Concat(PickedByRule(payment) ? [UiText.TwoContractsPickedTip(payment.ContractTypes, payment.TypeCode)] : []));
+            // each refusal by its code in Estonian (the Core's English for one not worded); shown by the grid's own tips,
+            // which show a long text whole (the grid's tooltip would cut it)
+            _checkTips.Set(row, string.Join(Environment.NewLine, payment.Checks.Select(UiText.RefusalLine)
+                .Concat(outsideTorTip is not null && !payment.Declare ? [outsideTorTip] : [])
+                .Concat(PickedByRule(payment) ? [UiText.TwoContractsPickedTip(payment.ContractTypes, payment.TypeCode)] : [])
+                .Concat(payment.Notices.Select(code => UiText.NoticeTip(payment, code)))));
             if (payment.DirectionAssumed)
             {
                 row.Cells["dc"].ToolTipText = UiText.DirectionAssumedTip;
@@ -2468,6 +2528,10 @@ public sealed class MainForm : Form
             else if (payment.Checks.Count > 0)
             {
                 row.DefaultCellStyle.BackColor = Color.MistyRose;
+            }
+            else if (payment.Notices.Count > 0)
+            {
+                row.Cells["check"].Style.BackColor = Color.LightYellow; // a notice, no refusal: only its cell is marked
             }
 
             if (payment.HasOverride)
@@ -2616,7 +2680,7 @@ public sealed class MainForm : Form
             }
             catch (ReviewException ex) when (UiText.AmountRefused(ex, payment.IsByHand, unsplit: payment.Part == 0) is { } words)
             {
-                Fail(new ReviewException(ex.Code, words, ex.Figure)); // the refusal in the window's own words
+                Fail(new ReviewException(ex.Code, words, ex.Figure, ex.Subject, ex.Variant), words, ex.Message); // the refusal in the window's own words, never re-worded by the card's
             }
             catch (Exception ex)
             {
@@ -2804,22 +2868,23 @@ public sealed class MainForm : Form
                 try
                 {
                     return f.Bytes is null
-                        ? new ImportOutcome { FileName = f.Name, Error = f.Error }
+                        ? new ImportOutcome { FileName = f.Name, Error = UiText.FileUnreadable(f.Error ?? "") }
                         : services.Pipeline.ImportFile(periodId, f.Name, f.Bytes);
                 }
                 catch (Exception e)
                 {
-                    return new ImportOutcome { FileName = f.Name, Error = e.Message };
+                    return new ImportOutcome { FileName = f.Name, Error = e.Message, Refusal = e };
                 }
             }).ToList());
             foreach (var outcome in outcomes)
             {
+                // a refusal the window words is said in Estonian, the Core's English after it (decision 229, option A)
                 Log(outcome.Succeeded
-                    ? $"{outcome.FileName}: {(outcome.AlreadyImported ? "juba imporditud, seotud perioodiga" : "imporditud")} ({outcome.Kind})"
-                    : $"{outcome.FileName}: {outcome.Error}");
-                foreach (var message in outcome.Messages)
+                    ? UiText.ImportedLine(outcome.FileName, outcome.AlreadyImported, outcome.Kind)
+                    : UiText.ImportRefusedLine(outcome.FileName, outcome.Refusal is { } refusal ? UiText.Worded(refusal) : null, outcome.Error));
+                foreach (var note in outcome.Notes)
                 {
-                    Log("   " + message);
+                    Log("   " + UiText.SheetNoteLine(note)); // in Estonian by its code, the English for one not worded
                 }
             }
         });
@@ -2851,7 +2916,7 @@ public sealed class MainForm : Form
             Log($"{UiText.RunMatch}: {result.Persons.Count} isikut, {result.Sources.Count} allikat, {result.Hits.Count} rida, {result.Problems.Count} probleemi");
             foreach (var problem in result.Problems)
             {
-                Log($"   {problem.Code}: {problem.Message}");
+                Log("   " + UiText.ProblemLine(problem)); // the code verbatim, the Estonian after it (decision 46)
             }
         });
         ReloadView();
@@ -2900,7 +2965,7 @@ public sealed class MainForm : Form
                 LogOutcome(outcome);
             }
 
-            foreach (var problem in report.Problems)
+            foreach (var problem in UiText.LookupProblemLines(report))
             {
                 Log("   " + problem);
             }
@@ -3032,7 +3097,7 @@ public sealed class MainForm : Form
     private void LogOutcome(PersonLookupOutcome outcome)
     {
         Log(UiText.LookupLine(outcome));
-        foreach (var problem in outcome.Problems)
+        foreach (var problem in UiText.LookupProblemLines(outcome))
         {
             Log("   " + problem);
         }
@@ -3482,11 +3547,16 @@ public sealed class MainForm : Form
         _log.TopIndex = Math.Max(0, _log.Items.Count - 1);
     }
 
-    private void Fail(Exception e)
+    /// <param name="worded">The refusal already in the window's own words (the amount's, by its case), taken as it is: never
+    /// worded again by its code alone.</param>
+    /// <param name="english">The Core's English of a refusal re-made with <paramref name="worded"/>, for the log.</param>
+    private void Fail(Exception e, string? worded = null, string? english = null)
     {
         // a refusal the window words itself is said in Estonian (decision 183); the log keeps the Core's text beside it
-        var worded = UiText.Worded(e);
-        Log($"{UiText.Problem}: {worded ?? e.Message}{(worded is null ? "" : $" ({e.Message})")}");
+        worded ??= UiText.Worded(e);
+        english ??= e.Message;
+        // the Core's text is not said twice where the Estonian already carries it (Windows' own reason, say)
+        Log($"{UiText.Problem}: {worded ?? english}{(worded is null || worded.Contains(english, StringComparison.Ordinal) ? "" : $" ({english})")}");
         if (Failing is { } take)
         {
             take(e);

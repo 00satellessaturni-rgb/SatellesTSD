@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Xml.Linq;
+using SatellesTSD.Core.Declare;
 using SatellesTSD.Core.Model;
 
 namespace SatellesTSD.Core.Feedback;
@@ -39,7 +40,7 @@ public static class FeedbackReader
 
         if (reports.Count == 0)
         {
-            throw new InvalidDataException("The ZIP holds no .xml report.");
+            throw SubmissionRefusal.Of(new InvalidDataException("The ZIP holds no .xml report."), SubmissionRefusal.ZipEmpty);
         }
 
         return reports;
@@ -48,10 +49,10 @@ public static class FeedbackReader
     public static FeedbackReport Read(XDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        var root = document.Root ?? throw new InvalidDataException("The report has no root element.");
+        var root = document.Root ?? throw SubmissionRefusal.Of(new InvalidDataException("The report has no root element."), SubmissionRefusal.NoRoot);
         if (root.Name.LocalName != "processing")
         {
-            throw new InvalidDataException($"Expected a <processing> root, found <{root.Name.LocalName}>.");
+            throw SubmissionRefusal.Of(new InvalidDataException($"Expected a <processing> root, found <{root.Name.LocalName}>."), SubmissionRefusal.NotReport, root.Name.LocalName);
         }
 
         var ns = root.Name.Namespace;
@@ -68,7 +69,7 @@ public static class FeedbackReader
         var sections = root.Elements(ns + "entryHeader").Select(h => ReadSection(h, ns)).ToList();
         if (sections.Count == 0)
         {
-            throw new InvalidDataException($"The report (result \"{resultRaw}\") has no entryHeader; the schema requires at least one.");
+            throw SubmissionRefusal.Of(new InvalidDataException($"The report (result \"{resultRaw}\") has no entryHeader; the schema requires at least one."), SubmissionRefusal.NoEntry, resultRaw);
         }
 
         return new FeedbackReport(result, resultRaw, sections);
@@ -107,7 +108,7 @@ public static class FeedbackReader
 
     private static LineRef ReadLineRef(XElement reference, XNamespace ns)
     {
-        var id = Text(reference.Element(ns + "lineInternalId")) ?? throw new InvalidDataException("A lineReference has no lineInternalId.");
+        var id = Text(reference.Element(ns + "lineInternalId")) ?? throw SubmissionRefusal.Of(new InvalidDataException("A lineReference has no lineInternalId."), SubmissionRefusal.LineNoId);
         var counterText = Text(reference.Element(ns + "lineNumberCounter"));
         int? counter = counterText is not null && int.TryParse(counterText, out var c) ? c : null;
         return new LineRef(id, counter);

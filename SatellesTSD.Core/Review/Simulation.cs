@@ -112,12 +112,25 @@ public sealed record SimScenario(
 /// stopped before the build (the import or the search refused).</summary>
 public sealed class SimResult
 {
-    public IReadOnlyList<string> Steps { get; init; } = [];
+    /// <summary>What the import said of the example's sheets, by code (the window words them as the import log does); the
+    /// steps after them are the search's.</summary>
+    public IReadOnlyList<Import.ImportNote> ImportNotes { get; init; } = [];
+
+    /// <summary>What the search said ("CODE: sentence", the Core's English); <see cref="RunProblems"/> holds the same problems
+    /// by their codes and figures, which the window words.</summary>
+    public IReadOnlyList<string> Steps => RunProblems.Select(p => $"{p.Code}: {p.Message}").ToList();
+
+    /// <summary>What the search said of the example, by code (the window words them as the "Otsi maksed" log does).</summary>
+    public IReadOnlyList<Matching.MatchProblem> RunProblems { get; init; } = [];
+
+    /// <summary>The run stopped at the import: the example could not be read (<see cref="Refusal"/> and
+    /// <see cref="RefusalError"/> say why, when the import said).</summary>
+    public bool ImportStopped { get; init; }
 
     public string? Refusal { get; init; }
 
-    /// <summary>The exception behind <see cref="Refusal"/> when one was thrown (the window words it as the app does); null
-    /// when the import refused the example.</summary>
+    /// <summary>The exception behind <see cref="Refusal"/> when one was thrown or the import refused by code (the window words
+    /// it as the app does); null otherwise.</summary>
     public Exception? RefusalError { get; init; }
 
     /// <summary>Whether the search ran with the owner's saved phrases rather than the built-in ones (decision 202).</summary>
@@ -127,7 +140,11 @@ public sealed class SimResult
 
     public PersonBuild? Build { get; init; }
 
-    public IReadOnlyList<string> BuildProblems { get; init; } = [];
+    /// <summary>What the build said of the period beyond the person (<see cref="BuildReport.Notes"/>).</summary>
+    public IReadOnlyList<BuildNote> BuildNotes { get; init; } = [];
+
+    /// <summary>The period notes' English, "CODE: sentence".</summary>
+    public IReadOnlyList<string> BuildProblems => BuildNotes.Select(n => n.Text).ToList();
 
     public IReadOnlyList<StoredPayment> Lines { get; init; } = [];
 

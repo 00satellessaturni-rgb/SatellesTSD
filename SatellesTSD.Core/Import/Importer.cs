@@ -35,6 +35,16 @@ public sealed record ImportedSheet(
     public bool Recognised => Kind != SheetKind.Unrecognised;
 
     public IReadOnlyList<ImportProblem> Problems => Statement?.Problems ?? Tor?.Problems ?? [];
+
+    /// <summary>The code of <see cref="Message"/> (<see cref="SheetNotes"/>: empty, no layout, a TÖR lacking columns, the
+    /// nearest layout); null for a recognised sheet.</summary>
+    public string? MessageCode { get; init; }
+
+    /// <summary>SHEET_TOR_LACKS: the TÖR headers the sheet lacks.</summary>
+    public IReadOnlyList<string> MissingHeaders { get; init; } = [];
+
+    /// <summary>SHEET_NEAREST_LAYOUT: <see cref="Differences"/> as figures, one for one.</summary>
+    public IReadOnlyList<HeaderDifference> HeaderDifferences { get; init; } = [];
 }
 
 /// <summary>A source file read and classified, ready for the accountant's eye and the store.</summary>
@@ -42,6 +52,9 @@ public sealed record ImportedSheet(
 public sealed record ParsedImport(string FileName, SourceFormat Format, string Sha256, long Size, string? Encoding, IReadOnlyList<ImportedSheet> Sheets, IReadOnlyList<string>? Warnings = null)
 {
     public IReadOnlyList<string> Warnings { get; init; } = Warnings ?? [];
+
+    /// <summary>The reader's warnings by code, with the figures (<see cref="SourceWorkbook.WarningNotes"/>).</summary>
+    public IReadOnlyList<ImportNote> WarningNotes { get; init; } = [];
 
     public IReadOnlyList<ImportedSheet> Recognised => Sheets.Where(s => s.Recognised).ToList();
 
@@ -95,12 +108,12 @@ public sealed class Importer
         var sha256 = Sha256Of(content);
         return format switch
         {
-            SourceFormat.Xlsx or SourceFormat.Xls => Classify((_excelReader ?? throw new ImportException($"{fileName} is an Excel file and no Excel reader is configured.")).Read(fileName, content), sha256, content.LongLength),
+            SourceFormat.Xlsx or SourceFormat.Xls => Classify((_excelReader ?? throw ReaderRefusal.Of(ReaderRefusal.NoExcelReader, $"{fileName} is an Excel file and no Excel reader is configured.")).Read(fileName, content), sha256, content.LongLength),
             SourceFormat.Csv => ReadCsv(fileName, content, csvEncoding, sha256),
             // told apart from a web page, with the same advice (the fifth audit, item 22)
-            SourceFormat.Html when FileSniffer.IsSpreadsheetXml(content) => throw new ImportException($"{fileName} is an Excel 2003 XML spreadsheet; open it in Excel and save it as .xlsx first."),
-            SourceFormat.Html => throw new ImportException($"{fileName} is a web page saved under an Excel name; open it in Excel and save it as .xlsx first."),
-            _ => throw new ImportException($"{fileName} is neither an Excel file nor text."),
+            SourceFormat.Html when FileSniffer.IsSpreadsheetXml(content) => throw ReaderRefusal.Of(ReaderRefusal.SpreadsheetXml, $"{fileName} is an Excel 2003 XML spreadsheet; open it in Excel and save it as .xlsx first."),
+            SourceFormat.Html => throw ReaderRefusal.Of(ReaderRefusal.WebPage, $"{fileName} is a web page saved under an Excel name; open it in Excel and save it as .xlsx first."),
+            _ => throw ReaderRefusal.Of(ReaderRefusal.UnknownFormat, $"{fileName} is neither an Excel file nor text."),
         };
     }
 
@@ -125,7 +138,7 @@ public sealed class Importer
     {
         ArgumentNullException.ThrowIfNull(workbook);
         var sheets = workbook.Sheets.Select(Classify).ToList();
-        return new ParsedImport(workbook.FileName, workbook.Format, sha256, size, workbook.Encoding, sheets, workbook.Warnings);
+        return new ParsedImport(workbook.FileName, workbook.Format, sha256, size, workbook.Encoding, sheets, workbook.Warnings) { WarningNotes = workbook.WarningNotes };
     }
 
     public ImportedSheet Classify(SheetTable sheet)
@@ -133,7 +146,7 @@ public sealed class Importer
         ArgumentNullException.ThrowIfNull(sheet);
         if (sheet.LastRow == 0)
         {
-            return new ImportedSheet(sheet.Index, sheet.Name, SheetKind.Unrecognised, null, null, "The sheet is empty.", null, [], sheet.Hidden);
+            return new ImportedSheet(sheet.Index, sheet.Name, SheetKind.Unrecognised, null, null, "The sheet is empty.", null, [], sheet.Hidden) { MessageCode = SheetNotes.Empty };
         }
 
         var tor = TorParser.Detect(sheet, out var missing, _headerSearchRows);
@@ -153,7 +166,13 @@ public sealed class Importer
             : detection.NearestLayoutId is null
                 ? "No statement layout has this header row."
                 : $"Nearest layout '{detection.NearestLayoutId}': " + string.Join("; ", detection.Differences);
-        return new ImportedSheet(sheet.Index, sheet.Name, SheetKind.Unrecognised, null, null, message, detection.NearestLayoutId, detection.Differences, sheet.Hidden);
+        var code = missing.Count > 0 ? SheetNotes.TorLacks : detection.NearestLayoutId is null ? SheetNotes.NoLayout : SheetNotes.NearestLayout;
+        return new ImportedSheet(sheet.Index, sheet.Name, SheetKind.Unrecognised, null, null, message, detection.NearestLayoutId, detection.Differences, sheet.Hidden)
+        {
+            MessageCode = code,
+            MissingHeaders = missing.ToList(),
+            HeaderDifferences = code == SheetNotes.NearestLayout ? detection.HeaderDifferences : [],
+        };
     }
 
     public static string Sha256Of(byte[] content) => Convert.ToHexStringLower(SHA256.HashData(content));

@@ -23,7 +23,7 @@ public sealed class ExcelTableReader : ITableReader
         var format = FileSniffer.Sniff(content);
         if (format is not (SourceFormat.Xlsx or SourceFormat.Xls))
         {
-            throw new ImportException($"{fileName} is not an Excel workbook ({format}).");
+            throw ReaderRefusal.Of(ReaderRefusal.NotExcel, $"{fileName} is not an Excel workbook ({format}).", format.ToString());
         }
 
         using var stream = new MemoryStream(content, writable: false);
@@ -34,7 +34,7 @@ public sealed class ExcelTableReader : ITableReader
         }
         catch (Exception e) when (e is not ImportException)
         {
-            throw new ImportException($"{fileName} could not be opened as an Excel workbook: {e.Message}", e);
+            throw ReaderRefusal.Of(ReaderRefusal.ExcelUnopened, $"{fileName} could not be opened as an Excel workbook: {e.Message}", detail: e.Message, inner: e);
         }
 
         using (reader)
@@ -74,7 +74,7 @@ public sealed class ExcelTableReader : ITableReader
             catch (Exception e) when (e is not ImportException)
             {
                 // a damaged sheet is this file's failure, named as such, so the other files of a batch are still imported
-                throw new ImportException($"{fileName} could not be read (sheet {index + 1}): {e.Message}", e);
+                throw ReaderRefusal.Of(ReaderRefusal.SheetUnreadable, $"{fileName} could not be read (sheet {index + 1}): {e.Message}", (index + 1).ToString(CultureInfo.InvariantCulture), e.Message, e);
             }
 
             return new SourceWorkbook(fileName, format, sheets);

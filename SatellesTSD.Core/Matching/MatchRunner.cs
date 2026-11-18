@@ -10,6 +10,12 @@ public sealed class MatchRunner(IStore store)
 {
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
 
+    /// <summary>The run refused: no file is linked to the period.</summary>
+    public const string NoFiles = "NO_FILES";
+
+    /// <summary>The run refused: the period's files hold more than one register sheet (the count is the refusal's subject).</summary>
+    public const string SeveralTorSheets = "SEVERAL_TOR_SHEETS";
+
     /// <summary>The catalog in force: the built-in one with the owner's saved phrases over it (decision 202), or an owner's
     /// saved catalog whole, else the built-in one.</summary>
     public MatchCatalog Catalog()
@@ -29,7 +35,7 @@ public sealed class MatchRunner(IStore store)
         var files = _store.PeriodImports(periodId);
         if (files.Count == 0)
         {
-            throw new MatchException("No file is linked to the period; import the register and the statements first.");
+            throw PhrasesRefusal.Of(NoFiles, "No file is linked to the period; import the register and the statements first."); // a code the window words (decision 46)
         }
 
         var torSheets = new List<ImportSheet>();
@@ -51,7 +57,7 @@ public sealed class MatchRunner(IStore store)
 
         if (torSheets.Count > 1)
         {
-            throw new MatchException($"The period's files hold {torSheets.Count} register sheets; a run takes one (unlink the others).");
+            throw PhrasesRefusal.Of(SeveralTorSheets, $"The period's files hold {torSheets.Count} register sheets; a run takes one (unlink the others).", PeriodMatcher.Num(torSheets.Count));
         }
 
         var tor = torSheets.SingleOrDefault();
@@ -68,7 +74,8 @@ public sealed class MatchRunner(IStore store)
             var rows = strangers.Select(e => e.RowNo).OrderBy(n => n).ToList();
             var rowText = string.Join(", ", rows.Take(10)) + (rows.Count > 10 ? $" and {rows.Count - 10} more" : "");
             problems.Add(new MatchProblem(MatchProblem.OtherEmployer,
-                $"Register row{(rows.Count == 1 ? "" : "s")} {rowText} {(rows.Count == 1 ? "is" : "are")} of {(employers.Count == 1 ? "another employer" : "other employers")} ({string.Join("; ", employers)}), not of {company.RegistryCode}: left out, not this company's persons."));
+                $"Register row{(rows.Count == 1 ? "" : "s")} {rowText} {(rows.Count == 1 ? "is" : "are")} of {(employers.Count == 1 ? "another employer" : "other employers")} ({string.Join("; ", employers)}), not of {company.RegistryCode}: left out, not this company's persons.",
+                Args: [string.Join(", ", rows.Take(10).Select(PeriodMatcher.Num)), PeriodMatcher.Num(Math.Max(0, rows.Count - 10)), PeriodMatcher.Num(rows.Count), string.Join("; ", employers), company.RegistryCode]));
         }
 
         var entries = all.Except(strangers).ToList();

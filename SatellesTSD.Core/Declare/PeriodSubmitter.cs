@@ -43,6 +43,32 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     public const string SchemasMissing = "SCHEMAS_MISSING";
     public const string SourceApplication = "SatellesTSD";
 
+    // the cases of a code, in DeclareException.Variant, for the window's own wording
+    /// <summary>CORRECTION_REASON_NEEDED: no reason named at all.</summary>
+    public const string ReasonNone = "none";
+    /// <summary>CORRECTION_REASON_NEEDED: a code that is no PARANDUSPOHJUS (the subject).</summary>
+    public const string ReasonUnknown = "unknown";
+    /// <summary>CORRECTION_REASON_NEEDED: no reason for a section the file carries (the section).</summary>
+    public const string ReasonMissing = "missing";
+    /// <summary>CORRECTION_REASON_NEEDED: the reason (the subject) does not fit the section.</summary>
+    public const string ReasonMisfit = "misfit";
+    /// <summary>INVALID_FILE: the file's own check (the problems).</summary>
+    public const string FileStructure = "structure";
+    /// <summary>INVALID_FILE: MTA's schema (the schema problems).</summary>
+    public const string FileSchema = "schema";
+    /// <summary>WRONG_STATE: a withdrawal while the period is not Exported (the subject: the state).</summary>
+    public const string StateWithdraw = "withdraw";
+    /// <summary>WRONG_STATE: a withdrawal of a file not the latest (the subject: the latest file's name).</summary>
+    public const string StateWithdrawNotLatest = "withdrawNotLatest";
+    /// <summary>WRONG_STATE: marked uploaded while not Exported (the subject: the state).</summary>
+    public const string StateUpload = "upload";
+    /// <summary>WRONG_STATE: marked confirmed while neither Exported nor Uploaded (the subject: the state).</summary>
+    public const string StateConfirm = "confirm";
+    /// <summary>WRONG_STATE: reopened while a Draft.</summary>
+    public const string StateReopen = "reopen";
+    /// <summary>WRONG_STATE and LINES_PENDING: a reopen undone that cannot be (the subject: the state), or drafts that differ from the server.</summary>
+    public const string StateUndoReopen = "undoReopen";
+
     public static readonly IReadOnlyList<string> CorrectionReasons = ["PARANDUSPOHJUS_1", "PARANDUSPOHJUS_2", "PARANDUSPOHJUS_3", "PARANDUSPOHJUS_4"];
 
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -89,18 +115,24 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             }
             catch (LineKeyException e)
             {
-                throw new DeclareException(LinesStale, $"Line {draft.LineNumber} ({draft.Action}) no longer fits what stands beneath it ({e.Code}); build the lines again before exporting.");
+                throw new DeclareException(LinesStale, $"Line {draft.LineNumber} ({draft.Action}) no longer fits what stands beneath it ({e.Code}); build the lines again before exporting.")
+                {
+                    Subject = draft.LineNumber,
+                    Variant = draft.Action.ToString(),
+                    Section = draft.Section,
+                    Detail = e.Code,
+                };
             }
         }
 
         if (period.ConfirmedAt is not null && correctionReasons is null)
         {
-            throw new DeclareException(ReasonNeeded, "The declaration was confirmed; a file that changes it names the reason (PARANDUSPOHJUS_1..4).");
+            throw new DeclareException(ReasonNeeded, "The declaration was confirmed; a file that changes it names the reason (PARANDUSPOHJUS_1..4).") { Variant = ReasonNone };
         }
 
         if (correctionReasons?.Values.FirstOrDefault(r => !CorrectionReasons.Contains(r, StringComparer.Ordinal)) is { } unknown)
         {
-            throw new DeclareException(ReasonNeeded, $"'{unknown}' is not a PARANDUSPOHJUS code.");
+            throw new DeclareException(ReasonNeeded, $"'{unknown}' is not a PARANDUSPOHJUS code.") { Variant = ReasonUnknown, Subject = unknown };
         }
 
         // a reason per section, as MTA takes it: each section the file carries has one, and one that fits it
@@ -112,11 +144,20 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             {
                 if (!correctionReasons.TryGetValue(group.Key, out var named))
                 {
-                    throw new DeclareException(ReasonNeeded, $"No reason is named for section {group.Key}; the file carries lines of it, and each section it carries names its reason.");
+                    throw new DeclareException(ReasonNeeded, $"No reason is named for section {group.Key}; the file carries lines of it, and each section it carries names its reason.")
+                    {
+                        Variant = ReasonMissing,
+                        Section = group.Key,
+                    };
                 }
 
                 reason = ReasonFor(group.Key, named)
-                    ?? throw new DeclareException(ReasonNeeded, $"{named} does not fit section {group.Key}; the file carries lines of it, so name a reason that fits that section.");
+                    ?? throw new DeclareException(ReasonNeeded, $"{named} does not fit section {group.Key}; the file carries lines of it, so name a reason that fits that section.")
+                    {
+                        Variant = ReasonMisfit,
+                        Subject = named,
+                        Section = group.Key,
+                    };
             }
 
             sections.Add(new SectionEntries(group.Key, reason, group.Select(p => p.Line).ToList()));
@@ -126,10 +167,14 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var uniqueId = Declaration.MakeUniqueId(company.RegistryCode, now.DateTime);
         var declaration = new Declaration(company.RegistryCode, period.Year, period.Month, DateOnly.FromDateTime(now.DateTime), uniqueId, company.Name, SourceApplication, null, sections,
             PayerCodes.DescriptionOf(company.RegistryCode, company.PayerCodeType)).WithCounters();
-        var problems = DeclarationValidator.Validate(declaration);
+        var problems = DeclarationValidator.Problems(declaration);
         if (problems.Count > 0)
         {
-            throw new DeclareException(InvalidFile, "The file cannot be written: " + string.Join("; ", problems));
+            throw new DeclareException(InvalidFile, "The file cannot be written: " + string.Join("; ", problems.Select(p => p.Message)))
+            {
+                Variant = FileStructure,
+                Problems = problems,
+            };
         }
 
         var xml = XbrlGlWriter.Serialize(declaration);
@@ -140,25 +185,42 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException or IOException or InvalidOperationException)
         {
-            throw new DeclareException(SchemasMissing, $"MTA's schemas are not where the window expects them ({schemaRoot}); the file cannot be checked, so it is not written. {e.Message}");
+            throw new DeclareException(SchemasMissing, $"MTA's schemas are not where the window expects them ({schemaRoot}); the file cannot be checked, so it is not written. {e.Message}")
+            {
+                Subject = schemaRoot,
+                Detail = e.Message,
+            };
         }
 
         if (validator is not null)
         {
-            var schemaProblems = validator.Validate(xml);
+            var schemaProblems = validator.Problems(xml);
             if (schemaProblems.Count > 0)
             {
-                throw new DeclareException(InvalidFile, "The file fails MTA's schema: " + string.Join("; ", schemaProblems));
+                throw new DeclareException(InvalidFile, "The file fails MTA's schema: " + string.Join("; ", schemaProblems.Select(p => p.Text)))
+                {
+                    Variant = FileSchema,
+                    SchemaProblems = schemaProblems,
+                };
             }
         }
 
         // where each line sits in this file, for the store: a feedback report is checked against it (decision 153)
         var placed = declaration.Sections.SelectMany(s => s.Lines.Select(l => (Key: (s.Section, l.LineNumber), l.Counter))).ToDictionary(x => x.Key, x => x.Counter);
         var counters = drafts.Where(d => placed.ContainsKey((d.Section, d.LineNumber))).ToDictionary(d => d.Id, d => placed[(d.Section, d.LineNumber)]);
-        Directory.CreateDirectory(folder);
         var fileName = $"tsd-{company.RegistryCode}-{period.Year:0000}-{period.Month:00}-{now:yyyyMMdd-HHmmss}.xml";
         var path = Path.Combine(folder, fileName);
-        XbrlGlWriter.Save(declaration, path);
+        try
+        {
+            Directory.CreateDirectory(folder);
+            XbrlGlWriter.Save(declaration, path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // the system's own refusal (a share offline, no rights), its type and text kept; the window words it by the code
+            SubmissionRefusal.Of(e, SubmissionRefusal.WriteFailed, folder);
+            throw;
+        }
         Submission submission = null!;
         try
         {
@@ -186,13 +248,21 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var period = FindPeriod(submission.PeriodId);
         if (period.State != PeriodState.Exported)
         {
-            throw new DeclareException(WrongState, $"The period is {period.State}; only a file not yet marked uploaded is taken back.");
+            throw new DeclareException(WrongState, $"The period is {period.State}; only a file not yet marked uploaded is taken back.")
+            {
+                Variant = StateWithdraw,
+                Subject = period.State.ToString(),
+            };
         }
 
         var latest = _store.Submissions(period.Id).OrderBy(s => s.CreatedAt).Last();
         if (latest.Id != submissionId)
         {
-            throw new DeclareException(WrongState, $"Only the latest file ({latest.FileName}) is taken back; an earlier one is history.");
+            throw new DeclareException(WrongState, $"Only the latest file ({latest.FileName}) is taken back; an earlier one is history.")
+            {
+                Variant = StateWithdrawNotLatest,
+                Subject = latest.FileName,
+            };
         }
 
         _store.InTransaction(() =>
@@ -260,7 +330,11 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var period = FindPeriod(periodId);
         if (period.State != PeriodState.Exported)
         {
-            throw new DeclareException(WrongState, $"The period is {period.State}; only an exported file is uploaded.");
+            throw new DeclareException(WrongState, $"The period is {period.State}; only an exported file is uploaded.")
+            {
+                Variant = StateUpload,
+                Subject = period.State.ToString(),
+            };
         }
 
         _store.SetPeriodState(periodId, PeriodState.Uploaded, _clock.GetUtcNow().UtcDateTime);
@@ -275,7 +349,11 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var period = FindPeriod(periodId);
         if (period.State is not (PeriodState.Uploaded or PeriodState.Exported))
         {
-            throw new DeclareException(WrongState, $"The period is {period.State}; a confirmation follows an upload.");
+            throw new DeclareException(WrongState, $"The period is {period.State}; a confirmation follows an upload.")
+            {
+                Variant = StateConfirm,
+                Subject = period.State.ToString(),
+            };
         }
 
         var lines = _store.Payments(periodId);
@@ -331,7 +409,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var period = FindPeriod(periodId);
         if (period.State == PeriodState.Draft)
         {
-            throw new DeclareException(WrongState, "The period is a Draft already.");
+            throw new DeclareException(WrongState, "The period is a Draft already.") { Variant = StateReopen, Subject = period.State.ToString() };
         }
 
         _store.SetPeriodState(periodId, PeriodState.Draft, _clock.GetUtcNow().UtcDateTime);
@@ -355,7 +433,11 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         var period = FindPeriod(periodId);
         if (!CanUndoReopen(periodId))
         {
-            throw new DeclareException(WrongState, $"The period is {period.State}; only a confirmed period reopened with no file exported since goes back to confirmed.");
+            throw new DeclareException(WrongState, $"The period is {period.State}; only a confirmed period reopened with no file exported since goes back to confirmed.")
+            {
+                Variant = StateUndoReopen,
+                Subject = period.State.ToString(),
+            };
         }
 
         var drafts = _store.Payments(periodId).Where(p => p.Status == PaymentStatus.Draft).ToList();
@@ -363,6 +445,7 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         {
             throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) differ from the server: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them as a correction.")
             {
+                Variant = StateUndoReopen,
                 DraftLines = drafts.Select(p => p.LineNumber).ToList(),
             };
         }
@@ -374,7 +457,23 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     public IReadOnlyList<FeedbackOutcome> ReadFeedback(Guid submissionId, string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var reports = FeedbackReader.LoadAll(path);
+        IReadOnlyList<FeedbackReport> reports;
+        try
+        {
+            reports = FeedbackReader.LoadAll(path);
+        }
+        catch (Exception e) when (SubmissionRefusal.CodeOf(e) is null && e is System.Xml.XmlException or InvalidDataException)
+        {
+            // not XML, or a damaged ZIP: the .NET text kept as the detail and the message, the type kept
+            SubmissionRefusal.Of(e, SubmissionRefusal.Unreadable, detail: e.Message);
+            throw;
+        }
+        catch (Exception e) when (SubmissionRefusal.CodeOf(e) is null && e is IOException or UnauthorizedAccessException)
+        {
+            // in use, no access, gone: the system's own reason, never „not a report“
+            SubmissionRefusal.Of(e, SubmissionRefusal.FileUnopened, detail: e.Message);
+            throw;
+        }
         var outcomes = new List<FeedbackOutcome>();
         foreach (var report in reports)
         {

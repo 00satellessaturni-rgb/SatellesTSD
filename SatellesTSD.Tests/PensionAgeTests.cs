@@ -50,6 +50,18 @@ public class PensionAgeTests
         Assert.True((later with { PensionAgeYear = 2026 }).FactsFor(2026, 10).PensionAgeThisYear);
     }
 
+    [Fact]
+    public void The_shared_reading_takes_the_cards_year_over_the_code_and_the_code_without_one()
+    {
+        // one reading for the store and the card's exemption box, so the two cannot drift apart (decision 208)
+        Assert.Equal(2030, SatellesTSD.Core.Store.Person.PensionAgeYearOf(2030, Born1950));
+        Assert.Equal(2013, SatellesTSD.Core.Store.Person.PensionAgeYearOf(null, Born1950));
+        Assert.Equal(2026, SatellesTSD.Core.Store.Person.PensionAgeYearOf(null, BornJuly1961));
+        Assert.Null(SatellesTSD.Core.Store.Person.PensionAgeYearOf(null, Born1962));
+        Assert.Null(SatellesTSD.Core.Store.Person.PensionAgeYearOf(null, null));
+        Assert.Equal(2028, SatellesTSD.Core.Store.Person.PensionAgeYearOf(2028, null));
+    }
+
     [Theory]
     [InlineData(2026, BornJuly1961, 7, false)] // the month the age is reached still withholds
     [InlineData(2026, BornJuly1961, 8, true)] // from the next month on, not

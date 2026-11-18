@@ -81,12 +81,28 @@ public class PeriodPipelineTests
             var outcome = pipeline.ImportFile(period.Id, "x.csv", Encoding.UTF8.GetBytes("a;b;c\n1;2;3\n"));
             Assert.False(outcome.Succeeded);
             Assert.Equal(PeriodPipeline.NothingRecognised, outcome.Error);
+            Assert.Equal(ReaderRefusal.NothingRecognised, ReaderRefusal.CodeOf(outcome.Refusal)); // worded in Estonian by its code (decision 229, option A)
             Assert.Contains(outcome.Messages, m => m.Contains("layout", StringComparison.OrdinalIgnoreCase));
             Assert.Empty(store.Imports(company.Id));
 
             var html = pipeline.ImportFile(period.Id, "x.xlsx", Encoding.UTF8.GetBytes("<html><body>x</body></html>"));
             Assert.Contains("web page", html.Error);
+            Assert.Equal(ReaderRefusal.WebPage, ReaderRefusal.CodeOf(html.Refusal));
+            Assert.Equal(html.Error, html.Refusal!.Message); // the Core's English unchanged
             Assert.Empty(store.Imports(company.Id));
+
+            // a file stored and read again with a layout that no longer knows its header row: nothing recognised, the code said
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            var bytes = Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(), ["EE497700771001131757", 1, new DateTime(2026, 10, 20), "EE12", "Mari Maasikas", "D", -100d, null, "2026102000000009", "lisatasu", "EUR", 48712219406d]);
+            var stored = pipeline.ImportFile(period.Id, "lhv.xlsx", bytes);
+            Assert.True(stored.Succeeded, stored.Error);
+            Assert.Null(stored.Refusal);
+            var renamed = lhv with { Headers = lhv.Headers.Select(h => h == lhv.Roles.Account ? "Konto (muudetud)" : h).ToList(), Roles = lhv.Roles with { Account = "Konto (muudetud)" } };
+            var changed = new PeriodPipeline(store, new Importer(LayoutCatalog.Default.WithOverrides([renamed]), new ExcelTableReader()));
+            var reread = changed.RereadFile(period.Id, stored.File!.Id);
+            Assert.False(reread.Succeeded);
+            Assert.Equal(PeriodPipeline.NothingRecognised, reread.Error);
+            Assert.Equal(ReaderRefusal.NothingRecognised, ReaderRefusal.CodeOf(reread.Refusal));
         }
     }
 
@@ -314,6 +330,7 @@ public class PeriodPipelineTests
             var said = Assert.Single(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread);
             Assert.Contains("row(s) 2 moved no money", said.Message, StringComparison.Ordinal); // the reverted row, named; the resend not
             Assert.Contains("Loe uuesti", said.Message, StringComparison.Ordinal);
+            Assert.Equal(("2", (string?)null), (said.Subject, said.Variant)); // the figures the window words it with: the rows, the file can be read again
 
             // a layout an older build stored with a blank entry among its states (the save refuses it now): the review still
             // loads and the blank entry names nothing (the review of the fifth audit, item 6)
