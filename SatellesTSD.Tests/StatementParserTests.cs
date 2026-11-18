@@ -248,6 +248,60 @@ public class StatementParserTests
         Assert.Equal(new DateOnly(2026, 10, 15), parsed.LastDate);
     }
 
+    public static TheoryData<string, Cell> ExcelTurnedDescriptions => new()
+    {
+        { "10.2026", Cell.Date(new DateTime(2026, 10, 1)) },          // et-EE Excel makes month.year a date
+        { "31.10", Cell.Date(new DateTime(2026, 10, 31)) },           // and day.month too
+        { "31.10", Cell.Number(31.1m) },                              // en-US Excel makes it a number
+        { "2026-10-31 10:15", Cell.Date(new DateTime(2026, 10, 31, 10, 15, 0)) },
+        { "12345678901234567890", Cell.Number(12345678901234600000m) }, // a double keeps fifteen digits
+        { "12345678901234567890", Cell.Of("1.2345678901234568E+19") },
+        { "1365,1370", Cell.Number(1365.137m) },                      // today's case stays equal
+        { "0123", Cell.Number(123m) },
+        { "12.0", Cell.Number(12m) },
+    };
+
+    [Theory]
+    [MemberData(nameof(ExcelTurnedDescriptions))]
+    public void A_description_excel_turned_into_a_date_or_a_rounded_number_hashes_like_the_banks_text(string csvText, Cell excelCell)
+    {
+        // the fifth audit, item 7
+        var lhv = Catalog.Find("lhv-et-short")!;
+        var fromCsv = Tables.Sheet(lhv.Headers.ToArray(),
+            Tables.Row("EE497700771001131757", "14136", "2026-10-01", "EE615100005100117393", "Aktsiaselts Onninen", "D", "-201.09", "638379446", "2026092863975588", csvText, "EUR", "", "OKOYEE2XXXX", "", "1563975588"));
+        var fromXlsx = Tables.Typed(lhv.Headers.Select(Cell.Of).ToArray(),
+            [Cell.Of("EE497700771001131757"), Cell.Number(14136m), Cell.Date(new DateTime(2026, 10, 1)), Cell.Of("EE615100005100117393"), Cell.Of("Aktsiaselts Onninen"), Cell.Of("D"), Cell.Number(-201.09m), Cell.Number(638379446m), Cell.Number(2026092863975590m), excelCell, Cell.Of("EUR"), Cell.Empty, Cell.Of("OKOYEE2XXXX"), Cell.Empty, Cell.Number(1563975588m)]);
+
+        var a = StatementParser.Parse(fromCsv, StatementParser.Detect(fromCsv, Catalog).Match!).Rows[0];
+        var b = StatementParser.Parse(fromXlsx, StatementParser.Detect(fromXlsx, Catalog).Match!).Rows[0];
+        Assert.Equal(a.RowHash, b.RowHash);
+    }
+
+    [Fact]
+    public void A_description_with_a_letter_or_a_short_digit_run_still_tells_rows_apart()
+    {
+        // the fifth audit, item 7: only what Excel may have changed is left out
+        var lhv = Catalog.Find("lhv-et-short")!;
+        string HashWith(string description)
+        {
+            var sheet = Tables.Sheet(lhv.Headers.ToArray(),
+                Tables.Row("EE497700771001131757", "14136", "2026-10-01", "EE615100005100117393", "Aktsiaselts Onninen", "D", "-201.09", "", "", description, "EUR"));
+            return StatementParser.Parse(sheet, StatementParser.Detect(sheet, Catalog).Match!).Rows[0].RowHash;
+        }
+
+        Assert.NotEqual(HashWith("Palk 10.2026"), HashWith("Palk 11.2026"));
+        Assert.Equal(HashWith("0123"), HashWith("123"));
+        Assert.NotEqual(HashWith("123"), HashWith("124"));
+        Assert.Equal(HashWith("10.2026"), HashWith("11.2026")); // the cost: digits and separators alone say nothing kept for certain
+
+        Assert.Equal("\u0001", StatementParser.DescriptionForm("2026-10-31T10:15:00"));
+        Assert.Equal("\u0001", StatementParser.DescriptionForm("1.2345678901234568E+27"));
+        Assert.Equal("\u0001", StatementParser.DescriptionForm("1234567890123456"));
+        Assert.Equal("123456789012345", StatementParser.DescriptionForm("123456789012345"));
+        Assert.Equal("arve 1", StatementParser.DescriptionForm("Arve 1").ToLowerInvariant());
+        Assert.Equal("", StatementParser.DescriptionForm(null));
+    }
+
     [Fact]
     public void The_row_fingerprint_is_the_same_from_the_banks_csv_text_and_from_an_excel_copy()
     {
@@ -524,6 +578,37 @@ public class StatementParserTests
 
         // a layout naming not-done states without a State column is refused
         Assert.Contains((source1 with { Roles = source1.Roles with { State = null } }).Problems(), p => p.Contains("StatesNotDone", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_stored_layout_with_a_blank_state_or_an_unusable_date_pattern_still_reads_its_sheet()
+    {
+        // the fifth audit, item 6: a layout stored before the save refused such entries never throws on a row
+        var source1 = Catalog.Find("source1")! with { StatesNotDone = ["PENDING", null!, "  "], DateFormats = ["%", "yyyy-MM-dd HH:mm:ss\\"] };
+        var catalog = LayoutCatalog.Default.WithOverrides([source1]);
+        var stateAt = source1.ColumnOf(source1.Roles.State) - 1;
+        string[] Row(string id, string state, string completed)
+        {
+            var row = new string[source1.Headers.Count];
+            Array.Fill(row, "");
+            row[1] = completed;
+            row[2] = id;
+            row[stateAt] = state;
+            row[5] = "Mari Maasikas";
+            row[11] = "EUR";
+            row[12] = "905.92";
+            row[13] = "EUR";
+            row[14] = "-905.92";
+            row[21] = "LT601234567890123456";
+            return row;
+        }
+
+        var sheet = Tables.Sheet(source1.Headers.ToArray(), Row("ID-1", "PENDING", "2026-10-05 08:00:00"), Row("ID-2", "COMPLETED", "2026-10-07 08:00:00"));
+        var detected = StatementParser.Detect(sheet, catalog);
+        Assert.Equal("source1", detected.Match!.Layout.Id);
+        var parsed = StatementParser.Parse(sheet, detected.Match!);
+        Assert.Equal([SkipReason.NotDone, null], parsed.Rows.Select(r => r.SkipReason));
+        Assert.Equal([new DateOnly(2026, 10, 5), new DateOnly(2026, 10, 7)], parsed.Rows.Select(r => r.Date));
     }
 
     [Fact]

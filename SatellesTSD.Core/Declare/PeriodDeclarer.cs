@@ -88,19 +88,20 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// <summary>Whether a payment the review refused is still this month's pay of a type that carries the minimum: the
     /// person was paid, so the month is not one without pay (decision 207). A payment of no type or an unknown one cannot
     /// be told to be such pay.</summary>
-    private static bool IsMonthsMinimumPay(ReviewPayment payment) =>
+    private static bool IsMonthsMinimumPay(ReviewPayment payment, Person person, int year) =>
         payment.Amount > 0m && !payment.Checks.Any(c => NotThisMonthsPay.Contains(c.Code))
-        && (payment.TypeCode is { } code ? PaymentTypes.TryGet(code, out var type) && type!.SocialTaxMinimum
+        && (payment.TypeCode is { } code ? PaymentTypes.TryGet(code, out var type) && CarriesMinimumFor(type!, person, year) // under the person's A1 case (the fifth audit, item 15)
             : payment.Checks.Any(c => c.Code == ReviewChecks.TwoContracts)); // a salary asked for its type is pay all the same (decision 209)
 
     /// <summary>The share of the month the minimum is measured by (decision 89): the days covered by the person's register
     /// rows of the month whose employment type carries the minimum — the entry standing for the month among them when its
     /// own type does, else the person's other rows (a board seat or a VÕS row newer than the Tööleping stands for the
     /// month; the Tööleping carries the minimum) — so a contract ended on the 15th and the next begun on the 16th make a
-    /// whole month; the standing entry alone when no row carries it. Every row's days of pause (from "Peatamise alguse
-    /// aeg" to "Peatamise lõpu aeg", or on) are left out, the standing entry's included; a paused row that does not say
-    /// since when adds nothing; the standing entry declared "kaasa" counts every day as if valid. A day two rows cover
-    /// counts once.</summary>
+    /// whole month; the standing entry alone when no row carries it. Each row counts the days it is in force by decision
+    /// 181's rule (<see cref="TorEntry.InForceOn"/>): its days of pause (from "Peatamise alguse aeg" to "Peatamise lõpu
+    /// aeg", or on) are left out, a paused row that does not say since when, an ended row that names no end and a row in a
+    /// state the app does not know add nothing; the standing entry declared "kaasa" counts every day as if valid. A day two
+    /// rows cover counts once.</summary>
     /// <param name="treatPausedAsValid">The person card's "kaasa": the entry standing for the month counts its days as if
     /// valid, its pause included.</param>
     public static decimal MonthShare(TorEntry? entry, IReadOnlyList<TorEntry> others, int year, int month, bool treatPausedAsValid = false)
@@ -115,17 +116,17 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var last = first.AddMonths(1).AddDays(-1);
         var covered = new bool[last.Day];
         (DateOnly Start, DateOnly End) Span(TorEntry e) => (e.StartDate is { } s && s > first ? s : first, e.EndDate is { } x && x < last ? x : last);
-        void Mark(TorEntry e, bool skipPause)
+        void Mark(TorEntry e, bool asValid)
         {
             var (start, end) = Span(e);
             for (var day = start; day <= end; day = day.AddDays(1))
             {
-                if (skipPause && e.PauseStart is { } from && day >= from && (e.PauseEnd is not { } to || day <= to))
+                // by its dates and its state, as the zero line asks it (decision 181): an ended row with no end date, or a
+                // state the app does not know, counts no day (the fifth audit, item 16); "kaasa" counts every day
+                if (asValid || e.InForceOn(day))
                 {
-                    continue;
+                    covered[day.Day - 1] = true;
                 }
-
-                covered[day.Day - 1] = true;
             }
         }
 
@@ -137,21 +138,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         // the rows the minimum is measured by: those whose type carries it — the standing entry among them when its own
         // does, else the person's other rows (a board seat or a VÕS row newer than the Tööleping stands for the month, the
-        // Tööleping carries the minimum) — and, where no row carries it, the standing entry alone. A paused row counts
-        // its days outside the pause, and nothing when it does not say since when; the standing entry declared "kaasa"
-        // counts every day as if valid.
+        // Tööleping carries the minimum) — and, where no row carries it, the standing entry alone. Each counts the days it
+        // is in force (a paused row its days outside the pause, an ended row its days up to its end, none without one); the
+        // standing entry declared "kaasa" counts every day as if valid.
         var rows = new[] { entry }.Concat(others).ToList(); // the entry may be among the others too: a day marked twice is marked once
         var carriers = rows.Where(r => Carries(r.TypeId) && Span(r).Start <= Span(r).End).ToList(); // only rows that cover a day of the month
         foreach (var row in carriers.Count > 0 ? carriers : [entry])
         {
-            var asValid = treatPausedAsValid && (ReferenceEquals(row, entry) || row == entry);
-            var paused = row.StateId == TorStates.Paused && !asValid;
-            if (paused && row.PauseStart is null)
-            {
-                continue;
-            }
-
-            Mark(row, skipPause: paused);
+            Mark(row, asValid: treatPausedAsValid && (ReferenceEquals(row, entry) || row == entry));
         }
 
         var days = covered.Count(c => c);
@@ -369,7 +363,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             if (payment.Checks.Count > 0)
             {
                 problems.Add($"{Refused}: {payment.Reference}: {string.Join(", ", payment.Checks.Select(c => c.Code))}");
-                if (IsMonthsMinimumPay(payment))
+                if (IsMonthsMinimumPay(payment, person, period.Year))
                 {
                     minimumHeldBy.Add(payment.Reference);
                 }
@@ -383,7 +377,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     // the type whose standing totals line adds the payment up is held as well, whatever type the payment
                     // has now (moved to another, or none): that line stands as it is until the payment is put right or
                     // taken out of the declaration (decision 79, amended by decision 199)
-                    refusedTypes.UnionWith(TypesAddingUp(person.Id, payment.Reference, bySource));
+                    refusedTypes.UnionWith(TypesAddingUp(person.Id, payment, bySource));
                 }
 
                 if (bySource.TryGetValue(source, out var stale) && stale.Status == PaymentStatus.Draft)
@@ -397,7 +391,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     // only a line on the server stands for the refused payment: a key refused black holds nothing, so it
                     // neither counts as kept nor carries the month's minimum (decision 200)
                     lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = payment.Reference, Note = Refused });
-                    keptMinimum |= CarriesMinimum(kept);
+                    keptMinimum |= CarriesMinimum(kept, person, period.Year);
                     NotePool(kept, keptPools);
                 }
 
@@ -424,7 +418,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     // a refused payment in the type: what stands for the type, stands — as a refused payment's own line
                     // does in the other cut — until the payment is put right or taken out of the declaration
                     claimed.Add(source);
-                    if (byType.TryGetValue(typeCode, out var heldPay) && PaymentTypes.TryGet(typeCode, out var heldType) && heldType!.SocialTaxMinimum)
+                    if (byType.TryGetValue(typeCode, out var heldPay) && PaymentTypes.TryGet(typeCode, out var heldType) && CarriesMinimumFor(heldType!, person, period.Year))
                     {
                         minimumHeldBy.AddRange(heldPay.Where(p => p.Amount > 0m).Select(p => p.Reference)); // held, not unpaid (decisions 199, 207)
                     }
@@ -438,7 +432,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     else if (bySource.TryGetValue(source, out var kept) && kept.OnServer)
                     {
                         lines.Add(new BuiltLine { Key = kept.LineNumber, Section = kept.Section, Action = kept.Action, Change = LineChange.Kept, Source = kept.SourceRef ?? "", Note = Refused });
-                        keptMinimum |= CarriesMinimum(kept);
+                        keptMinimum |= CarriesMinimum(kept, person, period.Year);
                         NotePool(kept, keptPools);
                     }
 
@@ -448,7 +442,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 var type = PaymentTypes.Get(typeCode);
                 var payments = byType[typeCode].OrderBy(p => p.Date).ThenBy(p => p.Reference, StringComparer.Ordinal).ToList();
                 monthPayments.Add(new MonthPayment(source, type, payments.Sum(p => p.Amount), AmountIsNet: true, payments.Max(p => p.Date!.Value)));
-                references[source] = (TotalsRef(typeCode, payments.Select(p => p.Reference)), null, null);
+                references[source] = (TotalsRef(typeCode, payments.Select(TotalsToken)), null, null);
             }
         }
         else
@@ -487,7 +481,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // cannot be computed, the line factory's refusal) withdraws it instead, and says that (the fifth audit, item 2)
         string? zeroNote = null;
         var zeroNoteAt = 0;
-        if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => m.Type.SocialTaxMinimum) && zeroTypeId is not null
+        if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
             && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed
             && CarriesMinimumFor(zeroType, person, period.Year)) // the person's A1 case applied: a foreign A1 carries no Estonian social tax, so no minimum and no zero line
@@ -536,7 +530,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         if (include && !InForce(entry))
         {
             // the card's choice is said, and so is why it made no zero line where one was looked for
-            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => m.Type.SocialTaxMinimum)
+            var unmet = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year))
                 ? zeroTypeId is null ? " No zero line: no employment type is known (neither the register nor the card's TÖR type)."
                 : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? $" No zero line: employment type {zeroTypeId} carries no minimum."
                 : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? " No zero line: the person's A1 case carries no Estonian social tax."
@@ -620,17 +614,20 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         }
         else if (share == 0m)
         {
-            // the employment is paused for every day of the month (or its pause has no start): no day counts, no minimum
-            // is owed — the engine takes a whole share with the minimum switched off, never a share of nothing
+            // the employment is paused for every day of the month (or its pause has no start), or in force on no day of it
+            // (an ended row that names no end, a state the app does not know — the fifth audit, item 16): no day counts, no
+            // minimum is owed — the engine takes a whole share with the minimum switched off, never a share of nothing
             var owed = facts.SocialTaxMinimumApplies;
             facts = person.FactsFor(period.Year, period.Month, 1m) with { SocialTaxMinimumApplies = false };
             if (owed)
             {
-                problems.Add($"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.");
+                problems.Add(entry is { StateId: TorStates.Paused }
+                    ? $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay."
+                    : $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (an ended row with no end date, or kande olek '{entry?.StateId}' the app does not know); the minimum is not owed on this pay.");
             }
         }
 
-        if (minimumHeldBy.Count > 0 && !keptMinimum && facts.SocialTaxMinimumApplies && monthPayments.Any(m => m.Type.SocialTaxMinimum))
+        if (minimumHeldBy.Count > 0 && !keptMinimum && facts.SocialTaxMinimumApplies && monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)))
         {
             // refused pay carries the month's minimum beside these payments: topped up here, the minimum would be declared on
             // them as if the refused pay did not exist, and again on it once it is put right — it waits (decision 207)
@@ -910,9 +907,10 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     }
 
     /// <summary>Whether a standing line (not its cancellation) is of a type that carries the minimum — so that the
-    /// month's minimum is already on it, topped up there or owed through it.</summary>
-    private static bool CarriesMinimum(StoredPayment line) =>
-        line.Action != LineAction.T && line.Line.TypeCode is { } code && PaymentTypes.TryGet(code, out var type) && type!.SocialTaxMinimum;
+    /// month's minimum is already on it, topped up there or owed through it — under the person's A1 case as the card says
+    /// it now, as the zero line asks it (the fifth audit, item 15).</summary>
+    private static bool CarriesMinimum(StoredPayment line, Person person, int year) =>
+        line.Action != LineAction.T && line.Line.TypeCode is { } code && PaymentTypes.TryGet(code, out var type) && CarriesMinimumFor(type!, person, year);
 
     /// <summary>The source a standing line stands for: its bank row, its hand line (or its part of a split row, known by
     /// its own line with the row beside it, decision 150), the month's minimum of its person, or the person's payments of
@@ -930,6 +928,29 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
     /// <summary>The source text of a totals line: "totals:&lt;type&gt;:&lt;reference; reference; …&gt;".</summary>
     public static string TotalsRef(string typeCode, IEnumerable<string> references) => $"{TotalsSource}:{typeCode}:{string.Join("; ", references)}";
+
+    /// <summary>How a payment is named in a totals line's source text: by its reference, and a hand line by its own review
+    /// line as well ("by hand #&lt;id&gt;"), since every hand line's reference is the same — else a refused hand line would
+    /// hold every type with some hand line in it (the fifth audit, item 5).</summary>
+    public static string TotalsToken(ReviewPayment payment)
+    {
+        ArgumentNullException.ThrowIfNull(payment);
+        return payment.IsByHand && payment.LineId is { } id ? $"{ReviewWorkspace.ByHandSource} #{id:N}" : payment.Reference;
+    }
+
+    /// <summary>Whether a totals line's references add the payment up: by its token; a line written before hand lines had
+    /// one (a bare "by hand") holds every hand line of the person, as it did.</summary>
+    public static bool AddsUp(IReadOnlyCollection<string> references, ReviewPayment payment)
+    {
+        ArgumentNullException.ThrowIfNull(references);
+        ArgumentNullException.ThrowIfNull(payment);
+        return references.Contains(TotalsToken(payment), StringComparer.Ordinal)
+            || (payment.IsByHand && references.Contains(ReviewWorkspace.ByHandSource, StringComparer.Ordinal));
+    }
+
+    /// <summary>A token as the accountant reads it: a hand line's id left out.</summary>
+    public static string ShownToken(string token) =>
+        token.StartsWith(ReviewWorkspace.ByHandSource + " #", StringComparison.Ordinal) ? ReviewWorkspace.ByHandSource : token;
 
     /// <summary>The type and the payments' references of a totals line's source text; null for any other source.</summary>
     public static (string TypeCode, string References)? TotalsOf(string? sourceRef)
@@ -949,8 +970,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// <summary>The types of a person whose totals line on the server adds up the payment — the stored line or, beneath a
     /// draft, the version on the server — named by the payment's reference in its source text. A draft alone, or a line
     /// refused black, holds nothing: nothing of it stands at MTA, and the build would otherwise drop the draft at one run and
-    /// draft it anew at the next.</summary>
-    private IEnumerable<string> TypesAddingUp(Guid personId, string reference, Dictionary<string, StoredPayment> bySource)
+    /// draft it anew at the next. A hand line is named by its own token (<see cref="AddsUp"/>).</summary>
+    private IEnumerable<string> TypesAddingUp(Guid personId, ReviewPayment payment, Dictionary<string, StoredPayment> bySource)
     {
         var prefix = $"{TotalsSource}:{personId:N}:";
         foreach (var (key, line) in bySource)
@@ -962,7 +983,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
             var standing = line.Status == PaymentStatus.Draft ? HistoryStanding(line) : line;
             if (standing is { OnServer: true } s && s.Action != LineAction.T && TotalsOf(s.SourceRef) is { } totals
-                && totals.References.Split("; ").Contains(reference, StringComparer.Ordinal))
+                && AddsUp(totals.References.Split("; "), payment))
             {
                 yield return key[prefix.Length..];
             }

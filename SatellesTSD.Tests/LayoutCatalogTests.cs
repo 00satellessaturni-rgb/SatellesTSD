@@ -188,6 +188,31 @@ public class LayoutCatalogTests
     }
 
     [Fact]
+    public void A_layout_with_an_unusable_date_pattern_or_a_blank_state_is_refused_on_save_only()
+    {
+        // the fifth audit, item 6: the save refuses it, the read of a stored layout or snapshot does not
+        var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+        foreach (var format in new[] { "%", "dd.MM.yyyy\\", null!, "" })
+        {
+            var bad = lhv with { DateFormats = ["dd.MM.yyyy", format] };
+            Assert.Contains(bad.EntryProblems(), p => p.Contains("date format", StringComparison.Ordinal));
+            Assert.Contains(bad.SaveProblems(), p => p.Contains("date format", StringComparison.Ordinal));
+            Assert.Empty(bad.Problems()); // the gate of a stored layout stays open
+            Assert.NotNull(LayoutCatalog.FromJson(LayoutCatalog.ToJson(bad)));
+        }
+
+        Assert.Empty((lhv with { DateFormats = ["dd.MM.yyyy", "yyyyMMdd", "MM/dd/yyyy"] }).EntryProblems());
+
+        var source1 = LayoutCatalog.Default.Find("source1")!;
+        var blankState = source1 with { StatesNotDone = ["PENDING", null!] };
+        Assert.Contains(blankState.EntryProblems(), p => p.Contains("StatesNotDone", StringComparison.Ordinal));
+        Assert.Empty(blankState.Problems());
+        Assert.NotEmpty((source1 with { StatesNotDone = ["PENDING", "  "] }).EntryProblems());
+
+        Assert.All(LayoutCatalog.Default.Layouts, l => Assert.Empty(l.EntryProblems()));
+    }
+
+    [Fact]
     public void A_layouts_file_parses_into_a_catalog()
     {
         var json = LayoutCatalog.ToJson(LayoutCatalog.Default.Layouts.Take(2));

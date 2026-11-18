@@ -64,6 +64,14 @@ public sealed class UpdateDialog : Form
     /// window as after a hand-over — two programs on one store help nobody (decision 157).</summary>
     public bool LeftRunning { get; private set; }
 
+    /// <summary>The check the window made before installing, when it made one: the main window shows it in place of the
+    /// offer it opened on — withdrawn, overtaken, or the folder gone since (the fifth audit, item 25).</summary>
+    public UpdateCheck? FreshCheck { get; private set; }
+
+    /// <summary>The version a way back left on disk: what the exe put back says (it may be a release another window
+    /// installed after this one started), else the running one (the fifth audit, item 23).</summary>
+    internal static string KeptText(Version? onDisk, Version current) => $"{UiText.UpdateKept} {(onDisk ?? current).ToString(3)}.";
+
     // the window tests drive the stage machine through these, without a release to install
     internal void SimulateWorking() => SetStage(Stage.Working);
     internal void SimulateHandOver() => HandOver();
@@ -174,6 +182,7 @@ public sealed class UpdateDialog : Form
             // the offer may have changed since the window opened: withdrawn, or overtaken
             _status.Text = UiText.UpdateChecking;
             var fresh = await Updater.CheckAsync(_folder, _current);
+            FreshCheck = fresh;
             if (fresh.State != UpdateState.Available)
             {
                 Failed(fresh.State == UpdateState.UpToDate ? UiText.UpdateNoLongerOffered : $"{UiText.UpdatesFailed} {fresh.Detail}");
@@ -348,7 +357,7 @@ public sealed class UpdateDialog : Form
         {
             Updater.Revert(_exePath, _previous, _release);
             _previous = null; // put back once; a second failure has nothing more to restore
-            Failed($"{reason}\n{UiText.UpdateKept} {_current.ToString(3)}.\n{UiText.UpdateStoreNote}");
+            Failed($"{reason}\n{KeptText(Updater.DiskVersion(_exePath), _current)}\n{UiText.UpdateStoreNote}");
         }
         catch (UpdateException e)
         {

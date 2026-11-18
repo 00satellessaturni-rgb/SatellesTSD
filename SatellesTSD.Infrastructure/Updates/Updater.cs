@@ -95,6 +95,9 @@ public static class Updater
     public const string ProductName = "SatellesTSD";
     public const string SchemasFolder = "schemas";
 
+    /// <summary>The mark the swap leaves in a previous folder when the program it set aside had no schemas folder.</summary>
+    internal const string NoSchemasMark = "no-schemas";
+
     /// <summary>Beside the exe, hidden: the download, the unpacked release, the previous version (kept, one, for going
     /// back by hand) and a note of a build that did not start.</summary>
     public const string StagingFolderName = ".SatellesTSD-update";
@@ -725,6 +728,11 @@ public static class Updater
                 Directory.Move(schemas, previousSchemas);
                 steps.Push(() => Directory.Move(previousSchemas, schemas));
             }
+            else
+            {
+                // the program ran with no schemas (an exe copied on its own): the way back knows it lost none
+                File.WriteAllText(Path.Combine(previous, NoSchemasMark), "");
+            }
 
             Directory.Move(newSchemas, schemas);
             return previous;
@@ -775,6 +783,15 @@ public static class Updater
         ArgumentNullException.ThrowIfNull(release);
         var programFolder = Path.GetDirectoryName(exePath)!;
         var schemas = Path.Combine(programFolder, SchemasFolder);
+        var previousExe = Path.Combine(previousFolder, ExeName);
+        if (!File.Exists(previousExe) || (!Directory.Exists(Path.Combine(previousFolder, SchemasFolder, "apa-tsd")) && !File.Exists(Path.Combine(previousFolder, NoSchemasMark))))
+        {
+            // a previous version that lost its schemas would leave the program unable to check an export, and it must never
+            // be said as put back: the new one stays whole, nothing is moved (the fifth audit, item 17). One that never had
+            // any (the swap marked it) goes back as it was.
+            throw new UpdateException(UpdateException.RevertFailed, $"the previous version in {previousFolder} is incomplete (no {ExeName} or no {SchemasFolder}\\apa-tsd); the new version stays in place.");
+        }
+
         var failed = Path.Combine(StagingFolder(exePath), $"failed-{DateTime.Now:yyyyMMdd-HHmmss-fff}");
         try
         {
@@ -1069,11 +1086,16 @@ public static class Updater
                 TryDeleteFolder(folder);
             }
 
-            // the names carry the time they were set aside, so the newest sorts last
+            // the names carry the time they were set aside, so the newest sorts last; one whose program still runs (the old
+            // window of an update now starting, which may yet put it back) is never touched, whatever its name says — a
+            // clock set back must not take the schemas the way back needs (the fifth audit, item 17)
             var previous = Directory.GetDirectories(staging, "previous-*").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
             foreach (var folder in previous.Take(Math.Max(0, previous.Count - 1)))
             {
-                TryDeleteFolder(folder);
+                if (!InUse(Path.Combine(folder, ExeName)))
+                {
+                    TryDeleteFolder(folder);
+                }
             }
 
             // the lock file alone (gone when the lock is let go) does not keep the folder
@@ -1131,6 +1153,28 @@ public static class Updater
 
                 Thread.Sleep(250);
             }
+        }
+    }
+
+    /// <summary>Whether the file is held — a running program's image cannot be opened for writing.</summary>
+    private static bool InUse(string file)
+    {
+        if (!File.Exists(file))
+        {
+            return false;
+        }
+
+        try
+        {
+            using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+            }
+
+            return false;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return true; // held, or not ours to touch: kept
         }
     }
 

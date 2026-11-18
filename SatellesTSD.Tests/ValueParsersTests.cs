@@ -294,6 +294,31 @@ public class ValueParsersTests
     }
 
     [Theory]
+    [InlineData("%", false)]
+    [InlineData("\\", false)]
+    [InlineData("dd.MM.yyyy\\", false)]
+    [InlineData("", false)]
+    [InlineData("  ", false)]
+    [InlineData(null, false)]
+    [InlineData("dd.MM.yyyy", true)]
+    [InlineData("yyyyMMdd", true)]
+    public void A_date_pattern_is_usable_only_when_dotnet_can_try_it_with_every_time_tail(string? pattern, bool usable)
+    {
+        Assert.Equal(usable, DateText.IsUsablePattern(pattern)); // the fifth audit, item 6
+    }
+
+    [Fact]
+    public void A_stored_pattern_dotnet_cannot_use_is_skipped_and_the_defaults_still_read_the_date()
+    {
+        // the fifth audit, item 6: a layout stored before the save refused it never throws on a row
+        Assert.Equal(new DateTime(2026, 10, 31), DateText.ParseText("31.10.2026", ["%"]));
+        Assert.Equal(new DateTime(2026, 10, 31), DateText.ParseText("31.10.2026", ["dd.MM.yyyy\\"]));
+        Assert.Equal(new DateTime(2026, 10, 31), DateText.ParseText("31.10.2026", [null!, ""]));
+        Assert.Equal(new DateTime(2026, 10, 31), DateText.ParseText("31.10.2026 kell", ["dd.MM.yyyy\\"])); // the bare-date fallback too
+        Assert.Equal(new DateTime(2026, 10, 31), DateText.Parse(Cell.Of("31.10.2026"), ["%"]));
+    }
+
+    [Theory]
     [InlineData(new byte[] { 0x50, 0x4B, 0x03, 0x04, 0, 0 }, SourceFormat.Xlsx)]
     [InlineData(new byte[] { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0 }, SourceFormat.Xls)]
     [InlineData(new byte[] { 0xEF, 0xBB, 0xBF, (byte)'K', (byte)';' }, SourceFormat.Csv)]
@@ -306,6 +331,26 @@ public class ValueParsersTests
     public void A_files_format_is_told_by_its_bytes(byte[] bytes, SourceFormat expected)
     {
         Assert.Equal(expected, FileSniffer.Sniff(bytes));
+    }
+
+    [Fact]
+    public void An_excel_2003_xml_spreadsheet_is_markup_told_apart_from_a_web_page()
+    {
+        // the fifth audit, item 22
+        const string head = "<?xml version=\"1.0\"?>\r\n<?mso-application progid=\"Excel.Sheet\"?>\r\n<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\">";
+        var utf8 = Encoding.UTF8.GetBytes(head);
+        var withBom = Encoding.UTF8.GetPreamble().Concat(utf8).ToArray();
+        var utf16 = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(head)).ToArray();
+        var rootOnly = Encoding.UTF8.GetBytes("<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\">");
+        foreach (var bytes in new[] { utf8, withBom, utf16, rootOnly })
+        {
+            Assert.Equal(SourceFormat.Html, FileSniffer.Sniff(bytes)); // the format stays markup: a refused file is never stored
+            Assert.True(FileSniffer.IsSpreadsheetXml(bytes));
+        }
+
+        Assert.False(FileSniffer.IsSpreadsheetXml(Encoding.UTF8.GetBytes("<html><table><tr><td>Kliendi konto</td></tr></table></html>")));
+        Assert.False(FileSniffer.IsSpreadsheetXml(Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes("<html>")).ToArray()));
+        Assert.False(FileSniffer.IsSpreadsheetXml([]));
     }
 
     [Fact]

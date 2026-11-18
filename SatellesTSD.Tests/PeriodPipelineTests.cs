@@ -315,6 +315,13 @@ public class PeriodPipelineTests
             Assert.Contains("row(s) 2 moved no money", said.Message, StringComparison.Ordinal); // the reverted row, named; the resend not
             Assert.Contains("Loe uuesti", said.Message, StringComparison.Ordinal);
 
+            // a layout an older build stored with a blank entry among its states (the save refuses it now): the review still
+            // loads and the blank entry names nothing (the review of the fifth audit, item 6)
+            var older = card with { StatesNotDone = [.. card.StatesNotDone!, null!, "  "] };
+            store.ExecuteRaw("INSERT INTO statement_layout (id, json, updated_at) VALUES ($id, $json, '2026-11-01T00:00:00Z')", ("$id", older.Id), ("$json", LayoutCatalog.ToJson(older)));
+            Assert.Contains("row(s) 2 moved no money", Assert.Single(new ReviewWorkspace(store, TaxRates.Year2026).Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread).Message, StringComparison.Ordinal);
+            store.DeleteLayout(older.Id);
+
             var rows = store.StatementRows(store.Sheets(file.Id).Single().Id).OrderBy(r => r.Row.RowNo).ToList();
             Assert.Equal(rows[0].Row.RowHash, rows[1].Row.RowHash);
             store.SaveReviewLine(ReviewLine.ForRow(period.Id, rows[0].Id) with { Declare = false, Note = "tagasi saadetud" });
@@ -333,6 +340,28 @@ public class PeriodPipelineTests
             now.RunMatch(period.Id);
             Assert.DoesNotContain(workspace.Load(period.Id).Unmatched.Problems, p => p.Code == MatchProblem.StateUnread);
             Assert.Contains(store.LoadMatchResult(period.Id)!.Problems, p => p.Code == MatchProblem.NotDone && p.RowNo == newRows[0].Row.RowNo);
+        }
+    }
+
+    [Fact]
+    public void An_excel_copy_whose_description_became_a_date_is_the_same_payment_as_the_banks_csv_row()
+    {
+        // the fifth audit, item 7: Excel made the description "10.2026" a date; the copy is still told
+        var (store, _, period) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            Assert.True(pipeline.ImportFile(period.Id, "palgad.xlsx", ReviewFixtures.Workbook()).Succeeded);
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            var csv = Encoding.UTF8.GetBytes(string.Join(",", lhv.Headers) + "\n" + "EE497700771001131757,9,2026-10-20,EE12,Mari Maasikas,D,-100,,,10.2026,EUR\n");
+            var copy = Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(), ["EE497700771001131757", 9, new DateTime(2026, 10, 20), "EE12", "Mari Maasikas", "D", -100d, null, null, new DateTime(2026, 10, 1), "EUR"]);
+            Assert.True(pipeline.ImportFile(period.Id, "lhv.csv", csv).Succeeded);
+            Assert.True(pipeline.ImportFile(period.Id, "lhv-koopia.xlsx", copy).Succeeded);
+
+            pipeline.RunMatch(period.Id);
+            var result = store.LoadMatchResult(period.Id)!;
+            Assert.Single(result.Problems, p => p.Code == MatchProblem.DuplicateRow && p.RowNo == 2);
+            Assert.Single(result.Hits, h => h.PersonKey is not null && Math.Abs(h.Row.Amount ?? 0) == 100m);
         }
     }
 
@@ -495,6 +524,90 @@ public class PeriodPipelineTests
     }
 
     [Fact]
+    public void A_file_a_month_on_the_server_let_go_earlier_is_kept_when_removed_through_another_month()
+    {
+        // the fifth audit, item 12: "Eemalda perioodist" in October after "Ava parandamiseks", the same bytes read into
+        // November, then "Eemalda fail" there — October's lines on the server still add up the file's rows
+        var (store, company, october) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            byte[] Export(DateTime day, double amount, string id) => Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(),
+                ["EE497700771001131757", 1, day, "EE12", "Mari Maasikas", "D", amount, null, id, "palk", "EUR", double.Parse(ReviewFixtures.MariCode, System.Globalization.CultureInfo.InvariantCulture)]);
+            var file = pipeline.ImportFile(october.Id, "palgad.xlsx", ReviewFixtures.Workbook()).File!;
+            var secondBytes = Export(new DateTime(2026, 10, 20), -100d, "2026102000000009");
+            var second = pipeline.ImportFile(october.Id, "lhv-2.xlsx", secondBytes).File!;
+            pipeline.RunMatch(october.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(october.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            new PeriodDeclarer(store, TaxRates.Year2026).Build(october.Id, DeclarationMode.TotalsPerType);
+            var lines = store.Payments(october.Id);
+            Assert.Contains(lines, l => l.SourceRef!.Contains("LHV pank *1757 #2 [2]", StringComparison.Ordinal));
+            store.AddSubmission(october.Id, "tsd.xml", "uid-1", lines.Select(l => l.Id).ToList(), DateTime.UtcNow); // on the server; October is a Draft again
+
+            // while October lists both, an overlapping export read for November goes from November: October's own files
+            // account for every name its lines carry
+            var november = store.GetOrCreatePeriod(company.Id, 2026, 11);
+            var overlapping = pipeline.ImportFile(november.Id, "lhv-hiljem.xlsx", Export(new DateTime(2026, 10, 25), -50d, "2026102500000010")).File!;
+            pipeline.RemoveFile(november.Id, overlapping.Id);
+            Assert.DoesNotContain(store.Imports(company.Id), f => f.Id == overlapping.Id);
+
+            // October lets the second half go, the same bytes are read into November and removed there: refused, rolled back
+            store.ClearMatchRun(october.Id);
+            pipeline.UnlinkFile(october.Id, second.Id);
+            var relinked = pipeline.ImportFile(november.Id, "lhv-2.xlsx", secondBytes);
+            Assert.True(relinked.AlreadyImported);
+            Assert.Equal(second.Id, relinked.File!.Id);
+            var refused = Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(november.Id, second.Id));
+            Assert.Equal(ImportRefusal.Totals, ImportRefusal.CodeOf(refused));
+            Assert.Contains(store.Imports(company.Id), f => f.Id == second.Id);
+            Assert.Contains(store.PeriodImports(november.Id), f => f.Id == second.Id); // the unlink undone with it
+        }
+    }
+
+    [Fact]
+    public void The_first_of_two_files_of_one_name_let_go_is_kept_though_the_other_now_bears_its_bare_name()
+    {
+        // the review of the fifth audit, item 12: once the first file goes, the second is named "LHV pank *1757" too and
+        // would explain the first file's names by row number alone
+        var (store, company, october) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            var lhv = LayoutCatalog.Default.Find("lhv-et-short")!;
+            byte[] Export(DateTime day, double amount, string id) => Tables.Xlsx("LHV", lhv.Headers.ToArray<object?>(),
+                ["EE497700771001131757", 1, day, "EE12", "Mari Maasikas", "D", amount, null, id, "palk", "EUR", double.Parse(ReviewFixtures.MariCode, System.Globalization.CultureInfo.InvariantCulture)]);
+            var firstBytes = ReviewFixtures.Workbook();
+            var first = pipeline.ImportFile(october.Id, "palgad.xlsx", firstBytes).File!;
+            // the second export: eight October fees to the bank, then the salary on its row 10 — so its rows 2..9 are payments
+            // of the month that would explain the first file's names by number alone, and no name of its own falls on the first's rows
+            object?[][] secondRows = [lhv.Headers.ToArray<object?>(),
+                .. Enumerable.Range(1, 8).Select(i => new object?[] { "EE497700771001131757", 1, new DateTime(2026, 10, 1 + i), "EE99", "Pank AS", "D", -0.5d, null, $"20261001000000{i:00}", "Teenustasu", "EUR" }),
+                ["EE497700771001131757", 1, new DateTime(2026, 10, 20), "EE12", "Mari Maasikas", "D", -100d, null, "2026102000000009", "palk", "EUR", double.Parse(ReviewFixtures.MariCode, System.Globalization.CultureInfo.InvariantCulture)]];
+            var second = pipeline.ImportFile(october.Id, "lhv-2.xlsx", Tables.Xlsx("LHV", secondRows)).File!;
+            pipeline.RunMatch(october.Id);
+            var workspace = new ReviewWorkspace(store, TaxRates.Year2026);
+            workspace.SavePerson(workspace.Load(october.Id).Persons[0].Person! with { FundedPensionMember = false }, confirmResidency: true);
+            new PeriodDeclarer(store, TaxRates.Year2026).Build(october.Id, DeclarationMode.TotalsPerType);
+            var lines = store.Payments(october.Id);
+            Assert.Contains(lines, l => l.SourceRef!.Contains("LHV pank *1757 [2]", StringComparison.Ordinal)); // the first file's row, by the bare name
+            Assert.Contains(lines, l => l.SourceRef!.Contains("LHV pank *1757 #2 [10]", StringComparison.Ordinal));
+            store.AddSubmission(october.Id, "tsd.xml", "uid-1", lines.Select(l => l.Id).ToList(), DateTime.UtcNow);
+
+            // October lets the first file go and keeps the second; the first's bytes read into November and removed there
+            store.ClearMatchRun(october.Id);
+            pipeline.UnlinkFile(october.Id, first.Id);
+            var november = store.GetOrCreatePeriod(company.Id, 2026, 11);
+            Assert.True(pipeline.ImportFile(november.Id, "palgad.xlsx", firstBytes).AlreadyImported);
+            var refused = Assert.Throws<InvalidOperationException>(() => pipeline.RemoveFile(november.Id, first.Id));
+            Assert.Equal(ImportRefusal.Totals, ImportRefusal.CodeOf(refused));
+            Assert.Contains(store.Imports(company.Id), f => f.Id == first.Id);
+            Assert.Contains(store.Imports(company.Id), f => f.Id == second.Id);
+        }
+    }
+
+    [Fact]
     public void A_file_is_taken_out_of_the_store_from_the_one_period_that_lists_it_or_from_no_period_at_all()
     {
         var (store, company, period) = Setup();
@@ -615,6 +728,13 @@ public class PeriodPipelineTests
             Assert.Equal(LayoutsRefusal.NoLayout, Code("null")); // a bare null is no layout, not a crash
             Assert.Equal(LayoutsRefusal.NullEntry, Code("[null]"));
             Assert.Equal(LayoutsRefusal.Unusable, Code(LayoutCatalog.ToJson([renamed with { Headers = [] }])));
+            // a date pattern .NET cannot use and a blank state are refused on the save, the stored read stays open (the fifth audit, item 6)
+            Assert.Equal(LayoutsRefusal.Unusable, Code(LayoutCatalog.ToJson([renamed with { DateFormats = ["%"] }])));
+            Assert.Contains("date format", LayoutsRefusal.DetailOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed with { DateFormats = ["%"] }])))));
+            var withState = renamed with { Roles = renamed.Roles with { State = renamed.Roles.Description }, StatesNotDone = ["X", null!] };
+            Assert.Equal(LayoutsRefusal.Unusable, Code(LayoutCatalog.ToJson([withState])));
+            Assert.Contains("StatesNotDone", LayoutsRefusal.DetailOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([withState])))));
+            Assert.Equal("lhv-et-short", LayoutsRefusal.SubjectOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed with { DateFormats = ["%"] }])))));
             Assert.Equal(LayoutsRefusal.RepeatedId, Code(LayoutCatalog.ToJson([renamed, renamed])));
             Assert.Equal(LayoutsRefusal.Collides, Code(LayoutCatalog.ToJson([renamed, LayoutCatalog.Default.Find("swedbank-et")! with { Id = "swed-copy" }])));
             Assert.Equal("lhv-et-short", LayoutsRefusal.SubjectOf(Assert.Throws<ImportException>(() => pipeline.ImportLayouts(LayoutCatalog.ToJson([renamed with { Headers = [] }])))));
@@ -808,6 +928,16 @@ public class PeriodPipelineTests
             {
                 var refusal = Assert.Throws<MatchException>(() => pipeline.ImportPhrases(json));
                 Assert.Equal(code, PhrasesRefusal.CodeOf(refusal));
+                if (code == PhrasesRefusal.BadCell)
+                {
+                    // the pattern's problem goes with the refusal as a kind, for the window to word (the fifth audit, item 27)
+                    Assert.Equal(new PatternProblem(PatternProblemKind.Unclosed, "*[a-*", 2), PhrasesRefusal.ProblemOf(refusal));
+                }
+                else
+                {
+                    Assert.Null(PhrasesRefusal.ProblemOf(refusal));
+                }
+
                 Assert.Equal("*dividen*,*kasumiosa*", new MatchRunner(store).Catalog().FilterSets["standard"]["Dividendid"]);
                 Assert.Equal(palgad, new MatchRunner(store).Catalog().FilterSets["standard"]["Palgad"]);
             }

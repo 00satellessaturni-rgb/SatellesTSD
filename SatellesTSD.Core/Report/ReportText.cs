@@ -86,8 +86,10 @@ public static class ReportText
     public const string Version = "Versioon";
     public const string Minimum = "miinimum";
 
-    /// <summary>A totals line's source: "koond, liik 10: LHV pank *1757 [2]; käsitsi".</summary>
-    public static string TotalsSource(string typeCode, string references) => $"koond, liik {typeCode}: {references.Replace(Review.ReviewWorkspace.ByHandSource, ByHandSource, StringComparison.Ordinal)}";
+    /// <summary>A totals line's source: "koond, liik 10: LHV pank *1757 [2]; käsitsi" — a hand line's id, which tells hand
+    /// lines apart in the source text (the fifth audit, item 5), is never shown.</summary>
+    public static string TotalsSource(string typeCode, string references) =>
+        $"koond, liik {typeCode}: {string.Join("; ", references.Split("; ").Select(r => Declare.PeriodDeclarer.ShownToken(r) == Review.ReviewWorkspace.ByHandSource ? ByHandSource : r))}";
 
     /// <summary>What a line stands for, in the accountant's words: the minimum, a hand line, a totals line, a bank row.</summary>
     public static string SourceText(string? sourceRef) =>

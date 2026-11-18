@@ -204,6 +204,12 @@ public class OwnerToolsWindowTests
                 dialog.OpenButton.PerformClick();
                 Assert.Equal((1, "Näidis"), (dialog.ResidencyBox.SelectedIndex, dialog.FirstNameBox.Text));
                 Assert.Empty(warnings);
+                // the earlier run's output goes with the scenario it was run on (the fifth audit, item 26)
+                Assert.Null(dialog.Result);
+                Assert.Equal((0, "", ""), (dialog.LinesGrid.Rows.Count, dialog.ReviewText, dialog.XmlText));
+                dialog.RunButton.PerformClick();
+                Ui.Pump();
+                Assert.NotNull(dialog.Result);
 
                 // a file of another kind, a day it cannot read: said, nothing run
                 var other = Path.Combine(fixture.ExportFolder, "muu.json");
@@ -212,9 +218,23 @@ public class OwnerToolsWindowTests
                 dialog.OpenButton.PerformClick();
                 Assert.Equal(UiText.SimNotAScenario, Assert.Single(warnings));
                 var result = dialog.Result;
+                Assert.NotNull(result); // a file refused leaves the results as they were
+                var day = dialog.RowsGrid.Rows[0].Cells["date"].Value;
                 dialog.RowsGrid.Rows[0].Cells["date"].Value = "32.13.2026";
                 dialog.RunButton.PerformClick();
                 Assert.Equal(UiText.SimNotADay(UiText.SimDate, "32.13.2026"), warnings[^1]);
+                Assert.Same(result, dialog.Result);
+
+                // an amount typed that is no figure is said as one, not as a row left incomplete (the fifth audit, item 28)
+                dialog.RowsGrid.Rows[0].Cells["date"].Value = day;
+                dialog.RowsGrid.Rows[0].Cells["amount"].Value = "1.000,50";
+                dialog.RunButton.PerformClick();
+                Assert.Equal(UiText.SimNotANumber(UiText.Amount, "1.000,50"), warnings[^1]);
+                Assert.DoesNotContain(UiText.SimRowIncomplete(1), warnings[^1], StringComparison.Ordinal);
+                Assert.Same(result, dialog.Result);
+                dialog.RowsGrid.Rows[0].Cells["amount"].Value = "";
+                dialog.RunButton.PerformClick();
+                Assert.Equal(UiText.SimRowIncomplete(1), warnings[^1]);
                 Assert.Same(result, dialog.Result);
 
                 // a hand-edited file with an empty row; a pension year that is no year
@@ -225,6 +245,11 @@ public class OwnerToolsWindowTests
                 Assert.Equal(UiText.SimNotAScenario, warnings[^1]);
                 dialog.OpeningFile = () => path;
                 dialog.OpenButton.PerformClick();
+                Assert.Null(dialog.Result);
+                dialog.RunButton.PerformClick();
+                Ui.Pump();
+                result = dialog.Result;
+                Assert.NotNull(result);
                 dialog.PensionAgeYearBox.Text = "99999999999";
                 dialog.RunButton.PerformClick();
                 Assert.Equal(UiText.SimPensionYearInvalid, warnings[^1]);
@@ -233,6 +258,45 @@ public class OwnerToolsWindowTests
                 dialog.Close();
             };
             Assert.True(form.SimulationButton.Enabled);
+            form.SimulationButton.PerformClick();
+            Ui.Pump();
+            Assert.NotNull(shown);
+            Assert.Empty(fixture.Failures);
+        }));
+    }
+
+    [Fact]
+    public void The_simulation_says_a_year_without_rates_as_the_main_window_does()
+    {
+        // the build's refusals the main window words itself are worded once, for every place that shows one (the fifth audit, item 19)
+        Assert.Equal(UiText.RatesMissing, UiText.Worded(new Core.Declare.DeclareException(Core.Declare.PeriodDeclarer.RatesMissing, "x")));
+        Assert.Equal(UiText.RunStaleRefused, UiText.Worded(new Core.Declare.DeclareException(Core.Declare.PeriodDeclarer.RunStale, "x")));
+        Assert.Equal(UiText.DeclareModeRefused, UiText.Worded(new Core.Declare.DeclareException(Core.Declare.PeriodDeclarer.ModeChanged, "x")));
+        Assert.Null(UiText.Worded(new Core.Declare.DeclareException("SOMETHING_ELSE", "x")));
+
+        using var fixture = new WindowFixture();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            SimulationDialog? shown = null;
+            form.SimulationOpening = dialog =>
+            {
+                shown = dialog;
+                dialog.StartPosition = FormStartPosition.Manual;
+                dialog.Location = new Point(-4000, -4000);
+                dialog.Show();
+                Ui.Pump();
+                var warnings = new List<string>();
+                dialog.Warning = warnings.Add;
+                dialog.Fill(SimulationDialog.Example(2025, 10));
+                dialog.RunButton.PerformClick();
+                Ui.Pump();
+                Assert.Empty(warnings);
+                Assert.Contains("PEATUS: " + UiText.RatesMissing, dialog.ReviewText, StringComparison.Ordinal);
+                Assert.Equal(UiText.RatesMissing, dialog.XmlText);
+                Assert.DoesNotContain("This version knows", dialog.ReviewText, StringComparison.Ordinal);
+                Assert.Empty(fixture.Failures);
+                dialog.Close();
+            };
             form.SimulationButton.PerformClick();
             Ui.Pump();
             Assert.NotNull(shown);

@@ -796,8 +796,14 @@ public class ReviewWorkspaceTests
             Assert.Empty(Salary(workspace.Load(period.Id)).Checks);
 
             var fresh = () => store.Persons(mari.CompanyId).Single(p => p.Id == mari.Id);
-            workspace.SavePerson(fresh() with { BasicExemptionApplied = false, BasicExemptionMonthly = 300m }); // a new person has the exemption applied by default
+            // a figure without the application, from elsewhere than the save (an older version stored it so): the check says it
+            store.UpdatePerson(fresh() with { BasicExemptionApplied = false, BasicExemptionMonthly = 300m }); // a new person has the exemption applied by default
             Assert.Equal([PaymentChecks.ExemptionWithoutApplication], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
+
+            // the save drops the figure without the application, and so heals such a person (the fifth audit, item 20)
+            workspace.SavePerson(fresh() with { BasicExemptionApplied = false, BasicExemptionMonthly = 300m });
+            Assert.Equal((false, (decimal?)null), (fresh().BasicExemptionApplied, fresh().BasicExemptionMonthly));
+            Assert.DoesNotContain(PaymentChecks.ExemptionWithoutApplication, Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
 
             workspace.SavePerson(fresh() with { BasicExemptionApplied = true, FundedPensionMember = true, PensionRate = null });
             Assert.Equal([PaymentChecks.PensionRateUnknown], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
@@ -1245,6 +1251,54 @@ public class ReviewWorkspaceTests
             var apart = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId);
             Assert.True(apart.Payments.Single(p => !p.IsByHand).DefaultDeclare);
             Assert.DoesNotContain(apart.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+        }
+    }
+
+    [Fact]
+    public void A_twin_rows_tick_untick_tick_stays_ticked()
+    {
+        // the fifth audit, item 11: the third tick equalled the default shown while a word was stored, was stored as no word,
+        // and the pairing came back and undid it
+        var (store, _, period, workspace) = RunWithRenter(renterCode: RenterCode);
+        using (store)
+        {
+            var kati = Assert.Single(workspace.Load(period.Id).Persons, p => p.Person?.LastName == "Kask");
+            workspace.AddHandLine(period.Id, kati.PersonId, new DateOnly(2026, 10, 15), 400m, "KATI KASK", "üür, käsitsi", "Üür");
+            (ReviewPerson Person, ReviewPayment Row) Load()
+            {
+                var person = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati.PersonId);
+                return (person, Assert.Single(person.Payments, p => !p.IsByHand));
+            }
+
+            var (_, row) = Load();
+            Assert.Equal((false, false, true), (row.DefaultDeclare, row.Declare, row.HandLineTwin));
+
+            workspace.SetDeclare(row, true);
+            var (_, ticked) = Load();
+            Assert.Equal((true, true), (ticked.Declare, ticked.HandLineTwin));
+
+            workspace.SetDeclare(ticked, false);
+            var (unPerson, unticked) = Load();
+            Assert.False(unticked.Declare);
+            Assert.DoesNotContain(unPerson.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            workspace.SetDeclare(unticked, true);
+            var (againPerson, again) = Load();
+            Assert.True(again.Declare);
+            Assert.DoesNotContain(againPerson.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+            Assert.Contains(store.ReviewLines(period.Id), l => l.RowId == again.RowId && l.Declare == true); // stored, not deleted
+
+            // no word: the row is the hand-line rule's again
+            workspace.SetDeclare(again, null);
+            var (clearedPerson, cleared) = Load();
+            Assert.Equal((false, false), (cleared.DefaultDeclare, cleared.Declare));
+            Assert.Contains(clearedPerson.Problems, p => p.Code == MatchProblem.PayeeHandLine);
+
+            // an ordinary row still folds a word equal to the default into no word
+            var salary = workspace.Load(period.Id).Persons.SelectMany(p => p.Payments).Single(p => !p.IsByHand && p.Payee == "Mari Maasikas");
+            Assert.False(salary.HandLineTwin);
+            workspace.SetDeclare(salary, salary.DefaultDeclare);
+            Assert.DoesNotContain(store.ReviewLines(period.Id), l => l.RowId == salary.RowId);
         }
     }
 

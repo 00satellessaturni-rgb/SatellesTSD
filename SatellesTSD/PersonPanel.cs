@@ -91,6 +91,7 @@ public sealed class PersonPanel : UserControl
         Row(UiText.A1, _a1);
         Row(UiText.A1Country, _a1Country);
         Row(UiText.WorkCountry, _workCountry);
+        Row(new Label { Text = UiText.A1CountriesHint, AutoSize = true, ForeColor = Color.DimGray }, span: true);
         Row(UiText.TreatyRate + ", %", _treatyRate);
         Row(UiText.TorType, _torType);
         Row(_typeFromCard, span: true);
@@ -130,6 +131,24 @@ public sealed class PersonPanel : UserControl
 
             _exemptionTakenOff = false; // the box touched: the accountant's own word from here
         };
+        _a1.SelectedIndexChanged += (_, _) =>
+        {
+            if (_filling)
+            {
+                return;
+            }
+
+            // the A1 case decides one of its countries: Estonia's A1 is EE, a foreign A1's work is in Estonia
+            // (KR_YLD2_07/09); only an empty box is filled, never one typed in (the fifth audit, items 14 and 21)
+            if (_a1.SelectedIndex == (int)A1Case.EstonianA1WorkAbroad && _a1Country.Text.Length == 0)
+            {
+                _a1Country.Text = "EE";
+            }
+            else if (_a1.SelectedIndex == (int)A1Case.ForeignA1WorkInEstonia && _workCountry.Text.Length == 0)
+            {
+                _workCountry.Text = "EE";
+            }
+        };
         _save.Click += (_, _) => Save();
         _revert.Click += (_, _) => Present(_person, _editable);
         _lookUp.Click += (_, _) => { if (_person is not null) { LookUpRequested?.Invoke(_person); } };
@@ -165,6 +184,12 @@ public sealed class PersonPanel : UserControl
     internal TextBox FirstNameBox => _first;
 
     internal TextBox MrrBox => _mrr;
+
+    internal ComboBox A1Box => _a1;
+
+    internal TextBox A1CountryBox => _a1Country;
+
+    internal TextBox WorkCountryBox => _workCountry;
 
     public bool ConfirmResidency => _confirmResidency.Checked;
 
@@ -311,7 +336,10 @@ public sealed class PersonPanel : UserControl
             OnOldAgeOrFlexiblePension = _onPension.Checked,
             PensionAgeYear = pensionAgeYear,
             BasicExemptionApplied = _exemptionApplied.Checked,
-            BasicExemptionMonthly = ExemptionToStore(exemption, pensionAgeYear),
+            // the person's own figure goes with the application: unticked, nothing of it is stored (a figure without one
+            // refuses every payment, EXEMPTION_WITHOUT_APPLICATION); the box keeps its text, so a re-tick before the save
+            // gives it back (the fifth audit, item 20)
+            BasicExemptionMonthly = _exemptionApplied.Checked ? ExemptionToStore(exemption, pensionAgeYear) : null,
             SocialTaxMinimumApplies = _minimum.Checked,
             Declaration = (DeclarationChoice)Math.Max(0, _declaration.SelectedIndex),
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),

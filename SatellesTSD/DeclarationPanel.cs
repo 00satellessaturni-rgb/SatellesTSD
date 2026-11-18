@@ -55,6 +55,9 @@ public sealed class DeclarationPanel : UserControl
 
     public event Action? ReopenRequested;
 
+    /// <summary>The reopen undone: the button reads "Loobu parandamisest" while nothing was sent since the confirmation.</summary>
+    public event Action? UndoReopenRequested;
+
     public event Action<StoredPayment, bool>? ResolveRequested;
 
     /// <summary>The selected key's every version wanted (the history dialog).</summary>
@@ -136,7 +139,7 @@ public sealed class DeclarationPanel : UserControl
         _uploaded.Click += (_, _) => UploadedRequested?.Invoke();
         _feedback.Click += (_, _) => { if (SelectedSubmission is { } s) { FeedbackRequested?.Invoke(s); } };
         _confirmed.Click += (_, _) => ConfirmedRequested?.Invoke();
-        _reopen.Click += (_, _) => ReopenRequested?.Invoke();
+        _reopen.Click += (_, _) => (_reopen.Text == UiText.UndoReopen ? UndoReopenRequested : ReopenRequested)?.Invoke();
         _accept.Click += (_, _) => { if (SelectedLine is { } l) { ResolveRequested?.Invoke(l.Payment, true); } };
         _reject.Click += (_, _) => { if (SelectedLine is { } l) { ResolveRequested?.Invoke(l.Payment, false); } };
         _history.Click += (_, _) => { if (SelectedLine is { } l) { HistoryRequested?.Invoke(l); } };
@@ -235,7 +238,7 @@ public sealed class DeclarationPanel : UserControl
         foreach (var submission in submissions)
         {
             var item = new ListViewItem([submission.FileName, submission.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", CultureInfo.InvariantCulture), submission.UniqueId,
-                submission.Result?.ToString() ?? "", submission.FeedbackSource ?? ""]) { Tag = submission, ToolTipText = string.Join(Environment.NewLine, submission.General.Select(UiText.GeneralText)) };
+                submission.Result is { } result ? UiText.ProcessingResultText(result) : "", submission.FeedbackSource ?? ""]) { Tag = submission, ToolTipText = string.Join(Environment.NewLine, submission.General.Select(UiText.GeneralText)) };
             _submissions.Items.Add(item);
         }
 
@@ -267,7 +270,11 @@ public sealed class DeclarationPanel : UserControl
         _export.Enabled = draft && lines.Any(l => l.Payment.Status == PaymentStatus.Draft);
         _uploaded.Enabled = state == PeriodState.Exported;
         _confirmed.Enabled = state is PeriodState.Uploaded or PeriodState.Exported;
-        _reopen.Enabled = state is not null && !draft;
+        // a month reopened with nothing sent since its confirmation: the same button undoes the reopen, so the row of
+        // buttons stays as it is (the fifth audit, item 8; PeriodSubmitter.CanUndoReopen is the same test)
+        var undo = draft && _view?.Period.ConfirmedAt is { } confirmed && !_submissionList.Any(s => s.CreatedAt > confirmed);
+        _reopen.Text = undo ? UiText.UndoReopen : UiText.Reopen;
+        _reopen.Enabled = undo || (state is not null && !draft);
         EnableSubmissionButtons();
         EnableLineButtons();
     }

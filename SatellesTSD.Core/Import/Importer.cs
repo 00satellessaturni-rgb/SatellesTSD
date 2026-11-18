@@ -97,6 +97,8 @@ public sealed class Importer
         {
             SourceFormat.Xlsx or SourceFormat.Xls => Classify((_excelReader ?? throw new ImportException($"{fileName} is an Excel file and no Excel reader is configured.")).Read(fileName, content), sha256, content.LongLength),
             SourceFormat.Csv => ReadCsv(fileName, content, csvEncoding, sha256),
+            // told apart from a web page, with the same advice (the fifth audit, item 22)
+            SourceFormat.Html when FileSniffer.IsSpreadsheetXml(content) => throw new ImportException($"{fileName} is an Excel 2003 XML spreadsheet; open it in Excel and save it as .xlsx first."),
             SourceFormat.Html => throw new ImportException($"{fileName} is a web page saved under an Excel name; open it in Excel and save it as .xlsx first."),
             _ => throw new ImportException($"{fileName} is neither an Excel file nor text."),
         };

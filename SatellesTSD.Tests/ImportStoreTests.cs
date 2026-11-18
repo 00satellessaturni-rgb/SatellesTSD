@@ -77,6 +77,31 @@ public class ImportStoreTests
     }
 
     [Fact]
+    public void A_stored_rows_fingerprint_is_worked_out_again_from_its_stored_values_when_read()
+    {
+        // the fifth audit, item 7: a row stored before the fingerprint's rule changed meets its copy read after it
+        var (store, company, _) = Setup();
+        using (store)
+        {
+            var bytes = MixedWorkbook();
+            var parsed = Importer.Read("palgad.xlsx", bytes);
+            var file = store.AddImport(company.Id, parsed, bytes);
+            var sheet = store.Sheets(file.Id).Single(s => s.Kind == SheetKind.Statement);
+            var before = store.StatementRows(sheet.Id);
+            Assert.All(before.Where(r => r.Row.RowHash.Length > 0), r => Assert.Equal(StatementParser.HashOf(r.Row), r.Row.RowHash));
+            var payeeless = before.Where(r => r.Row.RowHash.Length == 0).Select(r => r.Id).ToList();
+            Assert.NotEmpty(payeeless);
+
+            store.ExecuteRaw("UPDATE statement_row SET row_hash = 'old' WHERE row_hash <> ''");
+            var after = store.StatementRows(sheet.Id);
+            Assert.Equal(before.Select(r => r.Row.RowHash), after.Select(r => r.Row.RowHash)); // the stale value is not read back
+            Assert.DoesNotContain(after, r => r.Row.RowHash == "old");
+            Assert.All(after.Where(r => payeeless.Contains(r.Id)), r => Assert.Equal("", r.Row.RowHash)); // stored without one, read without one
+            Assert.Equal(before[0].Row.RowHash, store.StatementRow(before[0].Id)!.Row.RowHash);
+        }
+    }
+
+    [Fact]
     public void A_stored_paused_entry_reads_its_pause_from_the_kept_cells_and_header_row()
     {
         var (store, company, _, file) = ReviewFixtures.Setup(mariPaused: true);
@@ -545,6 +570,28 @@ public class ImportStoreTests
 
             var broken = added with { Roles = added.Roles with { Amount = "Puudub" } };
             Assert.Throws<ImportException>(() => store.SaveLayout(broken));
+        }
+    }
+
+    [Fact]
+    public void A_layout_stored_by_an_older_build_with_an_unusable_date_pattern_still_loads_and_can_be_deleted()
+    {
+        // the fifth audit, item 6: the save refuses it now, but one already stored must not stop the start or its own deletion
+        var (store, _, _) = Setup();
+        using (store)
+        {
+            var mine = new StatementLayout("my-bank", "My Bank", LayoutKind.Bank, ["Nimi", "Summa", "Kuupäev", "DC"], new LayoutRoles(null, "Kuupäev", "Nimi", "Summa", null, "DC"), DebitMarker: "D")
+                with { DateFormats = ["%", "dd.MM.yyyy\\"] };
+            Assert.Contains("date format", Assert.Throws<ImportException>(() => store.SaveLayout(mine)).Message);
+            Assert.Contains("date format", Assert.Throws<ImportException>(() => store.SaveLayouts([mine])).Message);
+            Assert.Empty(store.Layouts());
+
+            store.ExecuteRaw("INSERT INTO statement_layout (id, json, updated_at) VALUES ($id, $json, '2026-11-01T00:00:00Z')",
+                ("$id", mine.Id), ("$json", LayoutCatalog.ToJson(mine)));
+            Assert.Equal(["my-bank"], store.Layouts().Select(l => l.Id));
+            Assert.NotNull(LayoutCatalog.Default.WithOverrides(store.Layouts()).Find("my-bank"));
+            store.DeleteLayout("my-bank");
+            Assert.Empty(store.Layouts());
         }
     }
 

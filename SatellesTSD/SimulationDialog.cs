@@ -333,9 +333,17 @@ public sealed class SimulationDialog : Form
             var said = problems.Count;
             var date = Day(row.Cells["date"].Value, UiText.SimDate, problems);
             var amountText = (row.Cells["amount"].Value as string)?.Trim();
-            if (date is null || !ParseNumber(amountText, out var amount))
+            var read = ParseNumber(amountText, out var amount);
+            if (!read && !string.IsNullOrEmpty(amountText))
             {
-                if (problems.Count == said || date is not null)
+                // typed, but no figure: said as the card's fields say it (the fifth audit, item 28)
+                problems.Add(UiText.SimNotANumber(UiText.Amount, amountText));
+            }
+
+            if (date is null || !read)
+            {
+                // a cell left empty is said as the row being incomplete; one that did not read was said above
+                if (problems.Count == said || (date is null && string.IsNullOrWhiteSpace(row.Cells["date"].Value as string)))
                 {
                     problems.Add(UiText.SimRowIncomplete(row.Index + 1));
                 }
@@ -431,17 +439,23 @@ public sealed class SimulationDialog : Form
         }
         catch (Exception e)
         {
-            // nothing of an earlier run stays on the screen as if it were this one's
-            Result = null;
-            _lines.Rows.Clear();
-            _review.Text = "";
-            _xml.Text = "";
+            ClearResult();
             Tell(UiText.Worded(e) ?? e.Message);
         }
         finally
         {
             UseWaitCursor = false;
         }
+    }
+
+    /// <summary>Nothing of an earlier run stays on the screen as if it were the scenario's now shown — after a failed run,
+    /// and after a scenario file opened (the fifth audit, item 26).</summary>
+    private void ClearResult()
+    {
+        Result = null;
+        _lines.Rows.Clear();
+        _review.Text = "";
+        _xml.Text = "";
     }
 
     private void ShowResult(SimResult result)
@@ -453,7 +467,7 @@ public sealed class SimulationDialog : Form
             _lines.Rows.Add(
                 line.LineNumber, UiText.ActionText(line.Action), line.Line.TypeCode, line.Line.DocumentDate is { } day ? DayText(day) : "",
                 Money(r?.Net ?? line.NetPaid), Money(r?.Gross ?? line.Line.Amount), Money(r?.IncomeTax), Money(r?.ExemptionUsed), Money(r?.SocialTax),
-                Money(r?.SocialTaxMinimumIncrease), Money(r?.UnemploymentEmployee), Money(r?.UnemploymentEmployer), Money(r?.FundedPension), line.SourceRef ?? "");
+                Money(r?.SocialTaxMinimumIncrease), Money(r?.UnemploymentEmployee), Money(r?.UnemploymentEmployer), Money(r?.FundedPension), Core.Report.ReportText.SourceText(line.SourceRef));
         }
 
         _review.Text = UiText.SimReport(result);
@@ -495,6 +509,7 @@ public sealed class SimulationDialog : Form
         try
         {
             Fill(SimScenario.Parse(File.ReadAllText(path)));
+            ClearResult(); // a file refused leaves the fields and the results as they were
         }
         catch (ArgumentException)
         {

@@ -167,6 +167,21 @@ public class UpdaterTests : IDisposable
     }
 
     [Fact]
+    public void A_program_that_ran_without_schemas_is_put_back_as_it_was()
+    {
+        // the review of the fifth audit, item 17: the completeness check refuses only schemas lost, not schemas never had
+        Directory.Delete(Path.Combine(_program, "schemas"), true);
+        var (_, release) = Publish("0.11.0");
+        var folder = Updater.Unpack(Updater.Download(_releases, release, _exe, null, CancellationToken.None), _exe);
+        var previous = Updater.Swap(_exe, folder);
+        Assert.False(Directory.Exists(Path.Combine(previous, "schemas")));
+
+        Updater.Revert(_exe, previous, release);
+        Assert.Equal("exe 0.10.0", File.ReadAllText(_exe));
+        Assert.True(Updater.FailedHere(_exe, release));
+    }
+
+    [Fact]
     public void The_swap_renames_the_running_program_aside_and_the_way_back_restores_it()
     {
         var (_, release) = Publish("0.11.0");
@@ -206,6 +221,42 @@ public class UpdaterTests : IDisposable
         Assert.Empty(Directory.GetFiles(staging, "download-*.zip"));
         Assert.Equal(previous, Assert.Single(Directory.GetDirectories(staging, "previous-*")));
         Assert.True(Updater.FailedHere(_exe, release));
+    }
+
+    [Fact]
+    public void The_tidying_never_touches_a_previous_folder_whose_program_runs_and_the_way_back_refuses_one_without_its_schemas()
+    {
+        var (_, release) = Publish("0.11.0");
+        var previous = Updater.Swap(_exe, Updater.Unpack(Updater.Download(_releases, release, _exe, null, CancellationToken.None), _exe));
+        var staging = Updater.StagingFolder(_exe);
+        var ahead = Path.Combine(staging, "previous-20991231-000000-000"); // set aside while the clock read 2099
+        Directory.CreateDirectory(Path.Combine(ahead, "schemas", "apa-tsd", "xbrl"));
+        File.WriteAllText(Path.Combine(ahead, Updater.ExeName), "exe 0.9.0");
+        File.WriteAllText(Path.Combine(ahead, "schemas", "apa-tsd", "xbrl", "x.xsd"), "x");
+
+        // the old window still runs from the folder just set aside: its name sorts first, yet it is not touched
+        using (new FileStream(Path.Combine(previous, Updater.ExeName), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+        {
+            Updater.CleanUp(_exe);
+            Assert.True(Directory.Exists(previous));
+            Assert.True(Directory.Exists(ahead));
+            Assert.Equal("old", File.ReadAllText(Path.Combine(previous, "schemas", "apa-tsd", "xbrl", "old.xsd")));
+        }
+
+        // once it has closed, the tidying goes by the names again: the later name is kept
+        Updater.CleanUp(_exe);
+        Assert.False(Directory.Exists(previous));
+        Assert.Equal(ahead, Assert.Single(Directory.GetDirectories(staging, "previous-*")));
+
+        // a previous folder without its schemas is never put back: nothing is moved, the new version stays whole
+        var (_, next) = Publish("0.12.0");
+        var kept = Updater.Swap(_exe, Updater.Unpack(Updater.Download(_releases, next, _exe, null, CancellationToken.None), _exe));
+        Directory.Delete(Path.Combine(kept, "schemas"), true);
+        Assert.Equal(UpdateException.RevertFailed, Assert.Throws<UpdateException>(() => Updater.Revert(_exe, kept, next)).Code);
+        Assert.Equal("exe 0.12.0", File.ReadAllText(_exe));
+        Assert.Equal("new 0.12.0", File.ReadAllText(Path.Combine(_program, "schemas", "apa-tsd", "xbrl", "new.xsd")));
+        Assert.False(Updater.FailedHere(_exe, next));
+        Assert.Empty(Directory.GetDirectories(staging, "failed-*"));
     }
 
     [Fact]

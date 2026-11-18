@@ -177,6 +177,7 @@ internal static class UiText
     public const string A1Foreign = "välisriigi A1, töö Eestis";
     public const string A1Country = "A1 riik";
     public const string WorkCountry = "Töö riik";
+    public const string A1CountriesHint = "Eesti A1: A1 riik EE, töö riik välismaal. Välisriigi A1: A1 riik välisriik, töö riik EE.";
     public const string TreatyRate = "Maksulepingu TM määr";
     public const string TorType = "TÖR töötamise liik";
     public const string TypeFromCard = "Kaardi töötamise liik kõigile maksetele (registri asemel)";
@@ -443,7 +444,7 @@ internal static class UiText
             Core.Store.LayoutsRefusal.NotJson => $"Fail ei ole loetav paigutuste JSON{(subject is null ? "" : $" (rida {subject})")}.",
             Core.Store.LayoutsRefusal.NoLayout => "Failis ei ole ühtegi paigutust.",
             Core.Store.LayoutsRefusal.NullEntry => "Failis on paigutuste seas tühi kirje (null).",
-            Core.Store.LayoutsRefusal.Unusable => $"Paigutust ei saa kasutada ({subject}): igal paigutusel peab olema ID, pank, päised ja kuupäeva, saaja ja summa veerg päiste seas.",
+            Core.Store.LayoutsRefusal.Unusable => $"Paigutust ei saa kasutada ({subject}): igal paigutusel peab olema ID, pank, päised ja kuupäeva, saaja ja summa veerg päiste seas; kuupäevamustrid peavad olema kasutatavad ja olekute loendis ei tohi olla tühja kirjet.",
             Core.Store.LayoutsRefusal.RepeatedId => $"Failis on sama ID mitu korda ({subject}): üks paigutus ühe ID kohta.",
             Core.Store.LayoutsRefusal.Collides => "Paigutuse päiserida on juba teisel paigutusel: faili lehte ei saaks neist eristada. Muuda päiseid või kasuta sisseehitatud paigutuse ID-d.",
             _ => null,
@@ -469,6 +470,13 @@ internal static class UiText
     public const string ReadFeedback = "Loe tagasiside…";
     public const string MarkConfirmed = "Märgi kinnitatuks";
     public const string Reopen = "Ava parandamiseks";
+    // the reopen undone while nothing was sent since the confirmation (the fifth audit, item 8)
+    public const string UndoReopen = "Loobu parandamisest";
+    public const string UndoReopenConfirm = "Loobuda parandamisest? Read koostatakse uuesti; kui midagi ei ole vaja saata, on periood taas kinnitatud (e-MTA kinnitus jääb kehtima).";
+    public const string UndoReopenDone = "Loobu parandamisest: periood on taas kinnitatud.";
+
+    public static string UndoReopenHasDrafts(int count) => $"Ülevaatus erineb e-MTA-s olevast: {count} rida tuleb saata parandusena. Periood jääb mustandiks; ekspordi read või muuda ülevaatus tagasi ja vajuta uuesti „{UndoReopen}“.";
+
     public const string ResolveAccepted = "Kinnita rida käsitsi";
     public const string ResolveRejected = "Lükka rida tagasi";
     public const string Calculator = "Kalkulaator…";
@@ -574,7 +582,18 @@ internal static class UiText
     }
 
     /// <summary>A refusal the window words itself (the card's save, a file's removal), or null: the exception's own text then.</summary>
-    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : PhrasesRefused(refusal) ?? LayoutsRefused(refusal) ?? FileRefused(refusal);
+    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review)
+        : DeclareRefused(refusal) ?? PhrasesRefused(refusal) ?? LayoutsRefused(refusal) ?? FileRefused(refusal);
+
+    /// <summary>A refusal of the build the main window words itself — the simulation says it as „Koosta read“ does, in
+    /// Estonian (the fifth audit, item 19); null for any other.</summary>
+    public static string? DeclareRefused(Exception refusal) => refusal is Core.Declare.DeclareException declare ? declare.Code switch
+    {
+        Core.Declare.PeriodDeclarer.RatesMissing => RatesMissing,
+        Core.Declare.PeriodDeclarer.RunStale => RunStaleRefused,
+        Core.Declare.PeriodDeclarer.ModeChanged => DeclareModeRefused,
+        _ => null,
+    } : null;
 
     /// <summary>A refusal of the category phrases' file, in Estonian by its code (decision 202); null for any other.</summary>
     public static string? PhrasesRefused(Exception refusal)
@@ -586,12 +605,19 @@ internal static class UiText
             PhrasesRefusal.NotPhrases => $"Fail ei ole kategooriate fraaside fail (\"kind\": \"{MatchCatalog.PhrasesKind}\" ja \"sets\").",
             PhrasesRefusal.UnknownSet => $"Failis on filtrikomplekt „{subject}“, mida rakendus ei tunne. Komplektid on sisseehitatud; alustage salvestatud failist.",
             PhrasesRefusal.UnknownCategory => $"Failis on kategooria, mida rakendus ei tunne ({subject}). Kategooriad on sisseehitatud; nime saab muuta ainult fraasides.",
-            PhrasesRefusal.BadCell when subject is not null => $"Fraasid ei ole loetavad ({subject}): {refusal.Message[(refusal.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}",
-            PhrasesRefusal.BadCell => "Fraasid ei ole loetavad: " + refusal.Message,
+            // the pattern's problem worded here from its kind, never the Core's English (the fifth audit, item 27)
+            PhrasesRefusal.BadCell when subject is not null && PhrasesRefusal.ProblemOf(refusal) is { } problem => $"Fraasid ei ole loetavad ({subject}): {PatternProblemText(problem)}",
+            PhrasesRefusal.BadCell => "Fraasid ei ole koos sisseehitatud kataloogiga kasutatavad.",
             _ => null,
         };
         return said is null ? null : said + " Midagi ei salvestatud.";
     }
+
+    public static string PatternProblemText(PatternProblem problem) => problem.Kind switch
+    {
+        PatternProblemKind.Unclosed => $"mustris „{problem.Pattern}“ jääb {problem.Position}. märgil olev „[“ sulgemata.",
+        _ => $"mustris „{problem.Pattern}“ on vahemik {problem.Range} kirjutatud tagurpidi (suurem märk enne väiksemat).",
+    };
 
     public const string Phrases = "Kategooriate fraasid…";
     public const string PhrasesTitle = "Kategooriate fraasid";
@@ -605,10 +631,11 @@ internal static class UiText
     public const string PhrasesFilter = "Fraaside fail (*.json)|*.json|Kõik failid (*.*)|*.*";
     public const string PhrasesBuiltIn = "Kehtivad sisseehitatud fraasid.";
     public const string PhrasesOwn = "Kehtivad omad fraasid (imporditud failist).";
-    public const string PhrasesResetConfirm = "Taastada sisseehitatud fraasid? Omad fraasid kustutatakse; kuu otsing kasutab neid järgmisel „Sobita“ käivitamisel.";
+    // the month's search named by the command's own name, so it can be found (the fifth audit, item 18)
+    public const string PhrasesResetConfirm = $"Taastada sisseehitatud fraasid? Omad fraasid kustutatakse; kuu otsing kasutab neid järgmisel „{RunMatch}“ käivitamisel.";
     public static string PhrasesSaved(string path) => $"{PhrasesTitle}: salvestatud {path}";
-    public static string PhrasesImported(int changed) => $"{PhrasesTitle}: imporditud, muudetud lahtreid {changed}. Kuu otsing kasutab uusi fraase järgmisel „Sobita“ käivitamisel.";
-    public const string PhrasesResetDone = PhrasesTitle + ": taastatud sisseehitatud fraasid. Kuu otsing kasutab neid järgmisel „Sobita“ käivitamisel.";
+    public static string PhrasesImported(int changed) => $"{PhrasesTitle}: imporditud, muudetud lahtreid {changed}. Kuu otsing kasutab uusi fraase järgmisel „{RunMatch}“ käivitamisel.";
+    public const string PhrasesResetDone = $"{PhrasesTitle}: taastatud sisseehitatud fraasid. Kuu otsing kasutab neid järgmisel „{RunMatch}“ käivitamisel.";
     public const string CutChangedSinceBuild = "Deklaratsiooni lõige on pärast „Koosta read“ muudetud (Seaded): mustandid on teises lõikes. Eksportida need siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string RunStaleReport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: aruanne ei sisalda kõiki makseid. Koostada aruanne siiski?";
     public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 või _6 (võti ei ole serveris)";
@@ -843,7 +870,7 @@ internal static class UiText
 
         if (result.Build is { } build)
         {
-            text.AppendLine().AppendLine($"SM miinimum: kohustus {Euro(build.MinimumDue)} (kuu osa {build.MinimumShare.ToString("0.####", et)}), puudu {Euro(build.MinimumShortfall)}{(build.TopUpKey is { } key ? $", lisarida {key}" : "")}.");
+            text.AppendLine().AppendLine($"SM miinimum: kohustus {Euro(build.MinimumDue)} (kuu osa {build.MinimumShare.ToString("0.####", et)}), puudu {Euro(build.MinimumShortfall)}{(build.TopUpKey is { } key ? $", lisarida {Core.Report.ReportText.SourceText(key)}" : "")}.");
             text.AppendLine($"Maksuvaba: pakutud {Euro(build.ExemptionOffered)}, alles {Euro(build.ExemptionLeft)}.");
         }
 
@@ -873,6 +900,16 @@ internal static class UiText
     public const string Compute = "Arvuta";
     public const string EmployerCost = "Tööandja kulu";
     public const string MinimumShare = "Kuu osa (päevad/30)";
+    // the calculator's pension-age tick and what it cannot use, said before anything is computed (the fifth audit, item 13)
+    public const string PensionAgeThisYearTick = "Pensioniealine sel aastal (MVT_650)";
+
+    public static string CalculatorExemptionOutOfRange(decimal legal) => $"{ExemptionMonthly} peab olema 0 kuni {Money(legal)} (seaduse järgi).";
+
+    public static string CalculatorShareInvalid(string text) => $"{MinimumShare}: „{text}“ ei ole arv vahemikus üle 0 kuni 1.";
+
+    public const string CalculatorExemptionWithoutApplication = $"{ExemptionMonthly} on antud, kuid „{ExemptionApplied}“ ei ole märgitud: märgi avaldus või tühjenda summa.";
+
+    public static string CalculatorExemptionSubCent(string text) => $"{ExemptionMonthly}: „{text}“ peab olema täissentides.";
 
     public static string PaymentStatusText(PaymentStatus status) => Core.Report.ReportText.PaymentStatusText(status);
 
@@ -928,6 +965,28 @@ internal static class UiText
     /// <summary>A report's finding that points at no line: about the file, or a whole section.</summary>
     public static string GeneralText(Core.Feedback.GeneralValidation general) =>
         $"{general.EntryNumber ?? "fail"}: {general.Validation.Level} {general.Validation.Code} — {general.Validation.Description}";
+
+    // MTA's answers in Estonian, never the enum's English name (the fifth audit, item 29)
+    public static string ProcessingResultText(Core.Feedback.ProcessingResult result) => result switch
+    {
+        Core.Feedback.ProcessingResult.Ok => "korras",
+        Core.Feedback.ProcessingResult.Warning => "hoiatustega",
+        Core.Feedback.ProcessingResult.Error => "vigadega",
+        Core.Feedback.ProcessingResult.PartlyError => "osaliselt vigadega",
+        _ => "teadmata",
+    };
+
+    public static string ConfirmationText(Core.Feedback.ConfirmationOutcome outcome) => outcome switch
+    {
+        Core.Feedback.ConfirmationOutcome.Confirmed => "kinnitatud",
+        Core.Feedback.ConfirmationOutcome.StillProcessing => "andmed on veel töötlemisel — alusta kinnitamist hiljem uuesti",
+        Core.Feedback.ConfirmationOutcome.WithErrors => "deklaratsioonil on vigu",
+        Core.Feedback.ConfirmationOutcome.WithDiscrepancies => "andmetes on vastuolusid",
+        Core.Feedback.ConfirmationOutcome.CannotConfirm => "kinnitada ei saanud",
+        _ => "teadmata vastus",
+    };
+
+    public static string ConfirmationReportLine(string source, Core.Feedback.ConfirmationOutcome outcome) => $"{ReadFeedback} {source}: kinnitamise raport — {ConfirmationText(outcome)}";
 
     // the key's history
     public const string History = "Ajalugu…";

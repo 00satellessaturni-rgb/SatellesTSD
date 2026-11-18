@@ -92,6 +92,7 @@ public sealed class CalculatorDialog : FieldDialog
     private readonly ComboBox _residency = Combo([new Choice("R", UiText.Resident), new Choice("N", UiText.NonResident)]);
     private readonly ComboBox _type;
     private readonly CheckBox _exemptionApplied = new() { Text = UiText.ExemptionApplied, AutoSize = true, Checked = true };
+    private readonly CheckBox _pensionAge = new() { Text = UiText.PensionAgeThisYearTick, AutoSize = true }; // MVT_650 (the fifth audit, item 13)
     private readonly TextBox _exemptionMonthly = new();
     private readonly ComboBox _member = Combo([new Choice("1", UiText.Yes), new Choice("0", UiText.No)]);
     private readonly ComboBox _rate = Combo([new Choice("0.02", "2 %"), new Choice("0.04", "4 %"), new Choice("0.06", "6 %")]);
@@ -109,6 +110,7 @@ public sealed class CalculatorDialog : FieldDialog
         Field(UiText.Residency, _residency);
         Field(UiText.PaymentType, _type);
         Field("", _exemptionApplied);
+        Field("", _pensionAge);
         Field(UiText.ExemptionMonthly, _exemptionMonthly);
         Field(UiText.PensionMemberLabel, _member);
         Field(UiText.PensionRate, _rate);
@@ -134,29 +136,65 @@ public sealed class CalculatorDialog : FieldDialog
         };
     }
 
+    // the window tests drive the dialog through these
+    internal TextBox AmountBox => _amount;
+    internal TextBox ExemptionBox => _exemptionMonthly;
+    internal TextBox ShareBox => _share;
+    internal CheckBox PensionAgeBox => _pensionAge;
+    internal CheckBox ExemptionAppliedBox => _exemptionApplied;
+    internal string OutputText => _output.Text;
+
+    internal void ComputeNow() => Compute();
+
+    private static bool TryNumber(string text, out decimal value) =>
+        decimal.TryParse(text, Plain, CultureInfo.CurrentCulture, out value) || decimal.TryParse(text, Plain, CultureInfo.InvariantCulture, out value);
+
+    /// <summary>What the dialog cannot use is said in Estonian before anything is computed; no figure is replaced
+    /// silently, and the engine's English refusal of an exemption above the legal one is never reached (the fifth audit, item 13).</summary>
     private void Compute()
     {
-        if (!decimal.TryParse(_amount.Text, Plain, CultureInfo.CurrentCulture, out var amount) && !decimal.TryParse(_amount.Text, Plain, CultureInfo.InvariantCulture, out amount))
+        if (!TryNumber(_amount.Text, out var amount))
         {
-            Complain("Summa ei ole arv.");
+            Complain(UiText.SimNotANumber(UiText.Amount, _amount.Text));
             return;
         }
 
         decimal? exemption = null;
         if (!string.IsNullOrWhiteSpace(_exemptionMonthly.Text))
         {
-            if (!decimal.TryParse(_exemptionMonthly.Text, Plain, CultureInfo.CurrentCulture, out var e) && !decimal.TryParse(_exemptionMonthly.Text, Plain, CultureInfo.InvariantCulture, out e))
+            if (!TryNumber(_exemptionMonthly.Text, out var e))
             {
-                Complain("Maksuvaba summa ei ole arv.");
+                Complain(UiText.SimNotANumber(UiText.ExemptionMonthly, _exemptionMonthly.Text));
                 return;
             }
 
             exemption = e;
         }
 
-        if (!decimal.TryParse(_share.Text, Plain, CultureInfo.CurrentCulture, out var share) && !decimal.TryParse(_share.Text, Plain, CultureInfo.InvariantCulture, out share))
+        // the engine's other refusals of an own figure, said here first: a figure without the application, and part of a cent
+        if (exemption is not null && !_exemptionApplied.Checked)
         {
-            share = 1m;
+            Complain(UiText.CalculatorExemptionWithoutApplication);
+            return;
+        }
+
+        if (exemption is { } cents && cents != Math.Round(cents, 2))
+        {
+            Complain(UiText.CalculatorExemptionSubCent(_exemptionMonthly.Text));
+            return;
+        }
+
+        var legal = _pensionAge.Checked ? _rates.PensionAgeExemptionMonth : _rates.BasicExemptionMonth;
+        if (exemption is { } own && (own < 0m || own > legal))
+        {
+            Complain(UiText.CalculatorExemptionOutOfRange(legal));
+            return;
+        }
+
+        if (!TryNumber(_share.Text, out var share) || share <= 0m || share > 1m)
+        {
+            Complain(UiText.CalculatorShareInvalid(_share.Text));
+            return;
         }
 
         var type = PaymentTypes.Get(((Choice)_type.SelectedItem!).Value);
@@ -166,10 +204,11 @@ public sealed class CalculatorDialog : FieldDialog
             FundedPensionMember: _member.SelectedIndex == 0,
             PensionRate: decimal.Parse(((Choice)_rate.SelectedItem!).Value, CultureInfo.InvariantCulture),
             OnOldAgeOrFlexiblePension: _onPension.Checked,
+            PensionAgeThisYear: _pensionAge.Checked,
             BasicExemptionApplied: _exemptionApplied.Checked,
             BasicExemptionMonthly: exemption,
             SocialTaxMinimumApplies: _minimum.Checked,
-            SocialTaxMinimumShare: share <= 0m || share > 1m ? 1m : share);
+            SocialTaxMinimumShare: share);
         try
         {
             var allocator = new MonthAllocator(new TaxEngine(_rates));

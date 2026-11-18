@@ -1,5 +1,25 @@
 namespace SatellesTSD.Core.Matching;
 
+/// <summary>What makes a pattern unusable (the fifth audit, item 27).</summary>
+public enum PatternProblemKind
+{
+    /// <summary>A "[" never closed.</summary>
+    Unclosed,
+
+    /// <summary>A range written downwards, its larger character first.</summary>
+    Downwards,
+}
+
+/// <summary>One thing that makes a pattern unusable: an unclosed "[" at a 1-based position, or a range written downwards
+/// (<paramref name="Range"/> as "z-a", at the 1-based position of its first character).</summary>
+public sealed record PatternProblem(PatternProblemKind Kind, string Pattern, int Position, string? Range = null)
+{
+    /// <summary>The problem in English, as the Core's refusals carry it.</summary>
+    public string Text => Kind == PatternProblemKind.Unclosed
+        ? $"'{Pattern}': the \"[\" at position {Position} is never closed."
+        : $"'{Pattern}': the range {Range} is written downwards.";
+}
+
 /// <summary>VBA's <c>Like</c> operator as the workbook used it under <c>Option Compare Text</c>: the whole text
 /// against the whole pattern, case-insensitively. <c>?</c> is one character, <c>*</c> any run, <c>#</c> one digit,
 /// <c>[list]</c> one of the listed characters and ranges, <c>[!list]</c> one character not in the list; <c>[]</c>
@@ -75,10 +95,14 @@ public static class LikePattern
 
     /// <summary>What makes the pattern unusable: a "[" never closed, a range written downwards. An empty pattern is
     /// fine (it matches an empty text only).</summary>
-    public static IReadOnlyList<string> Problems(string pattern)
+    public static IReadOnlyList<string> Problems(string pattern) => Findings(pattern).Select(f => f.Text).ToList();
+
+    /// <summary>The same problems as <see cref="Problems"/>, each with its kind, so a window can word them in its own
+    /// language (the fifth audit, item 27); the English text stays for the Core's other callers.</summary>
+    public static IReadOnlyList<PatternProblem> Findings(string pattern)
     {
         ArgumentNullException.ThrowIfNull(pattern);
-        var problems = new List<string>();
+        var problems = new List<PatternProblem>();
         var p = 0;
         while (p < pattern.Length)
         {
@@ -90,7 +114,7 @@ public static class LikePattern
 
             if (!TryList(pattern, p, out var end, out _))
             {
-                problems.Add($"'{pattern}': the \"[\" at position {p + 1} is never closed.");
+                problems.Add(new PatternProblem(PatternProblemKind.Unclosed, pattern, p + 1));
                 return problems;
             }
 
@@ -109,7 +133,7 @@ public static class LikePattern
             {
                 if (i + 2 < end - 1 && pattern[i + 1] == '-' && Fold(pattern[i]) > Fold(pattern[i + 2]))
                 {
-                    problems.Add($"'{pattern}': the range {pattern[i]}-{pattern[i + 2]} is written downwards.");
+                    problems.Add(new PatternProblem(PatternProblemKind.Downwards, pattern, i + 1, $"{pattern[i]}-{pattern[i + 2]}"));
                 }
 
                 i += i + 2 < end - 1 && pattern[i + 1] == '-' ? 3 : 1;

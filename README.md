@@ -119,7 +119,8 @@ person picked, every payment of the month, one per category, the payments withou
    line hides beneath a later draft.
 9. **Märgi kinnitatuks** once the declaration is confirmed in e-MTA. A correction later: **Ava
    parandamiseks**, edit, **Koosta read** (M and T lines on the same keys), **Ekspordi XML…** with the
-   PARANDUSPOHJUS.
+   PARANDUSPOHJUS. Reopened by mistake, nothing exported yet: the same button reads **Loobu
+   parandamisest** and puts the month back to its confirmation when no draft line is left.
 10. **Ekspordi aruanne…**: the report-details workbook (Vahearuanne with its sub-tables, TOR kontroll,
     Otsingu kontroll, the category sheets, a copy of every statement with "Vaste leitud", the declared
     lines) for the file.

@@ -337,7 +337,8 @@ public static class StatementParser
             // a row whose state says the money never moved (a card export's reverted, declined, failed or pending row) is
             // read and listed like a row without a counterparty, never a payment (decision 179)
             var notDone = stateCol > 0 && Text(sheet.At(rowNo, stateCol)) is { } state && layout.StatesNotDone is { } notDoneStates
-                && notDoneStates.Any(s => string.Equals(s.Trim(), state, StringComparison.OrdinalIgnoreCase));
+                // a blank entry, in a layout stored before the save refused it, never matches and never throws (the fifth audit, item 6)
+                && notDoneStates.Any(s => !string.IsNullOrWhiteSpace(s) && string.Equals(s.Trim(), state, StringComparison.OrdinalIgnoreCase));
             var dateCell = sheet.At(rowNo, dateCol);
             var amountCell = sheet.At(rowNo, amountCol);
             var dcText = Text(sheet.At(rowNo, dcCol));
@@ -497,12 +498,43 @@ public static class StatementParser
             row.Amount?.ToString("0.############", CultureInfo.InvariantCulture) ?? row.AmountText ?? "",
             row.Direction.ToString(),
             NameText.Canonical(row.Counterparty),
-            NameText.Canonical(row.Description),
+            DescriptionForm(row.Description),
             NameText.Canonical(row.CounterpartyCode), // a code's leading zero survives the fingerprint's digit rule, not Excel
             // not the reference number: a viitenumber of twenty digits loses its tail in an Excel copy
         };
         var text = string.Concat(fields.Select(f => $"{f.Length}:{f}|")); // length-prefixed, so a '|' inside a field cannot collide
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+    }
+
+    private static readonly Regex IsoStamp = new(@"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$", RegexOptions.CultureInvariant);
+    private static readonly Regex ExponentForm = new(@"^-?\d(\.\d+)?E\+(\d+)$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>The description as the fingerprint takes it (the fifth audit, item 7): what an Excel copy may have turned
+    /// into a date or a rounded number by its locale — digits and date, time or decimal separators alone, a typed date's ISO
+    /// text, a run of sixteen digits or more (a double keeps fifteen), its E-form — is left out, as the reference number
+    /// is; a description with a letter in it, and a shorter run of digits, count as before. Worked out from
+    /// <see cref="NameText.Canonical"/>'s form alone, so two descriptions that hash alike today still do.</summary>
+    public static string DescriptionForm(string? description)
+    {
+        const string LeftOut = "\u0001"; // a marker no description's canonical form can be
+        var canonical = NameText.Canonical(description);
+        if (canonical.Length == 0 || !canonical.Any(char.IsAsciiDigit))
+        {
+            return canonical;
+        }
+
+        if (IsoStamp.IsMatch(canonical)
+            || (ExponentForm.Match(canonical) is { Success: true } e && int.TryParse(e.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var exponent) && exponent >= 15))
+        {
+            return LeftOut;
+        }
+
+        if (canonical.All(c => char.IsAsciiDigit(c) || c is '.' or ',' or '/' or '-' or ':' or ' '))
+        {
+            return canonical.All(char.IsAsciiDigit) && canonical.Length < 16 ? canonical : LeftOut;
+        }
+
+        return canonical;
     }
 
     /// <summary>The cells of a row as the store keeps them: a compact JSON string array aligned to the headers.</summary>

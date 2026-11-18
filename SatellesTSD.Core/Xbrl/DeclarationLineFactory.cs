@@ -38,6 +38,12 @@ public static class DeclarationLineFactory
             throw new InvalidOperationException("An A1 case needs both the A1 country and the work country.");
         }
 
+        if (!PaymentChecks.A1CountriesAgree(result.EffectiveA1, facts.A1Country, facts.WorkCountry))
+        {
+            // the file's classifiers would say the other case than the taxes worked out (the fifth audit, items 14 and 21)
+            throw new InvalidOperationException("The A1 case and its countries disagree (KR_YLD2_07/09).");
+        }
+
         var calcDate = calculationDate ?? documentDate;
         if (calcDate > documentDate)
         {
@@ -47,8 +53,8 @@ public static class DeclarationLineFactory
         var extras = new List<AccountSubEntry>();
         if (result.EffectiveA1 != A1Case.None)
         {
-            extras.Add(AccountSubEntry.A1Country(facts.A1Country!));
-            extras.Add(AccountSubEntry.WorkCountry(facts.WorkCountry!));
+            extras.Add(AccountSubEntry.A1Country(PaymentChecks.A1Code(facts.A1Country!)));
+            extras.Add(AccountSubEntry.WorkCountry(facts.WorkCountry!.Trim().ToUpperInvariant()));
         }
 
         if (facts.Residency == Residency.NonResident && !string.IsNullOrWhiteSpace(facts.ResidenceCountry))

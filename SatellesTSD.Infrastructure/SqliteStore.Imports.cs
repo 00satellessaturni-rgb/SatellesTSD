@@ -430,10 +430,14 @@ public sealed partial class SqliteStore
             """,
             ("$file", G(fileId)), ("$unlinked", unlinkedFrom is { } from ? G(from) : ""));
         // a file no month lists ("Eemalda perioodist" took it out of the month long before): the lines are looked for by
-        // the payments they name ("LHV pank *1234 [12]"), and a name of one of its rows is enough (decision 177)
-        if (unlinkedFrom is null && PeriodImportsOf(fileId) == 0)
+        // the payments they name ("LHV pank *1234 [12]"), and a name of one of its rows is enough (decision 177). One taken
+        // out of a month a moment ago ("Eemalda fail") is looked for so too: a month that let it go earlier ("Eemalda
+        // perioodist" after "Ava parandamiseks") lists it no more, yet its lines on the server add up its rows — but there
+        // a name counts only when no file that month lists now accounts for it, so an overlapping export of the same
+        // account still goes from its own month (the fifth audit, item 12)
+        if (PeriodImportsOf(fileId) == 0)
         {
-            totals = Math.Max(totals, OnServerTotalsNaming(fileId));
+            totals = Math.Max(totals, OnServerTotalsNaming(fileId, unexplainedOnly: unlinkedFrom is not null));
         }
 
         if (totals > 0)
@@ -481,7 +485,9 @@ public sealed partial class SqliteStore
 
     /// <summary>The company's totals lines on the server (every version) whose source names a row of the file dated in the
     /// line's month — "sheet [row]", "sheet #k [row]" for the k-th sheet of an equal name, a part's "… osa N" too.</summary>
-    private int OnServerTotalsNaming(Guid fileId)
+    /// <param name="unexplainedOnly">Whether a name counts only when no other file the line's month lists now has a
+    /// statement sheet of that name with that row (the fifth audit, item 12).</param>
+    private int OnServerTotalsNaming(Guid fileId, bool unexplainedOnly = false)
     {
         if (Scalar<string?>("SELECT company_id FROM import_file WHERE id = $file", ("$file", G(fileId))) is not { } company)
         {
@@ -518,6 +524,27 @@ public sealed partial class SqliteStore
             // by the name alone: once no month lists the file, nothing tells it from another export of its account whose
             // rows bear the same names, so a name is enough to keep it (decision 177)
             var tokens = period.SelectMany(l => (l.Named ?? []).Select(TotalsToken).Where(t => t is not null).Select(t => (Line: l.Id, Token: t!.Value))).ToList();
+            if (unexplainedOnly)
+            {
+                // the names the month's own files account for, as a run of the month would name their sheets now ("#k" for the
+                // k-th of an equal name): the line adds up their rows, not this file's
+                var sources = PeriodImports(period.Key.Period).Where(f => f.Id != fileId)
+                    .SelectMany(f => Sheets(f.Id).Where(s => s.Kind == SheetKind.Statement && s.Layout is not null))
+                    .Select(s => new Core.Matching.MatchSource(s.DisplayName, s.Layout!.Id, s.Layout.Kind, StatementRows(s.Id).Select(r => r.Row).ToList(), s.Id));
+                // a current name stands for the built one only while the month still has as many sheets of that name as the
+                // line counted (the first of two let go, the second takes its bare name), and a row explains a name only as
+                // a payment of the line's month (the review of the fifth audit, item 12)
+                var ordered = Core.Matching.MatchSource.Order(sources).ToList();
+                var builtCount = tokens.GroupBy(t => t.Token.Base, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.Max(t => SheetIndex(t.Token.Source, t.Token.Base)), StringComparer.OrdinalIgnoreCase);
+                var nowCount = sources.GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+                var explained = ordered
+                    .SelectMany(s => s.Rows.Where(r => r.IsPayment && r.Date is { } day && (day.Year, day.Month) == period.Key.Month).Select(r => (Name: s.Name.ToUpperInvariant(), r.RowNo)))
+                    .ToHashSet();
+                tokens = tokens.Where(t => nowCount.GetValueOrDefault(t.Token.Base) < builtCount[t.Token.Base]
+                    || !explained.Contains((t.Token.Source.ToUpperInvariant(), t.Token.RowNo))).ToList();
+            }
+
             foreach (var name in mine.Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 var rowNos = mine.Where(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)).Select(r => r.RowNo).ToHashSet();
@@ -547,6 +574,10 @@ public sealed partial class SqliteStore
 
     /// <summary>One payment a totals line names, "LHV pank *1234 #2 [7] osa 1": the source as the run named it ("LHV pank
     /// *1234 #2"), the sheet's display name under it ("LHV pank *1234") and the row; null for what is no row (a hand line).</summary>
+    /// <summary>Which sheet of an equal name a token's source is: 1 for the bare name, k for "name #k".</summary>
+    private static int SheetIndex(string source, string name) =>
+        source.Length > name.Length + 2 && int.TryParse(source.AsSpan(name.Length + 2), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var k) ? k : 1;
+
     private static (string Source, string Base, int RowNo)? TotalsToken(string token)
     {
         var part = token.LastIndexOf(" osa ", StringComparison.Ordinal);
@@ -569,7 +600,7 @@ public sealed partial class SqliteStore
     public void SaveLayout(StatementLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        var problems = layout.Problems();
+        var problems = layout.SaveProblems();   // stricter than the read: a stored layout is read though its entries are bad (the fifth audit, item 6)
         if (problems.Count > 0)
         {
             throw new ImportException("The layout cannot be saved:\n" + string.Join("\n", problems));
@@ -594,7 +625,7 @@ public sealed partial class SqliteStore
     public void SaveLayouts(IReadOnlyList<StatementLayout> layouts)
     {
         ArgumentNullException.ThrowIfNull(layouts);
-        var problems = layouts.SelectMany(l => l.Problems().Select(p => $"{l.Id}: {p}")).ToList();
+        var problems = layouts.SelectMany(l => l.SaveProblems().Select(p => $"{l.Id}: {p}")).ToList();
         if (problems.Count > 0)
         {
             throw new ImportException("The layouts cannot be saved:\n" + string.Join("\n", problems));
@@ -662,10 +693,17 @@ public sealed partial class SqliteStore
         FROM statement_row
         """;
 
-    private static StoredStatementRow ReadStatementRow(SqliteDataReader r) => new(
-        Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)),
-        new StatementRow((int)r.GetInt64(2), Date(r, 3), Str(r, 4), Str(r, 5), Str(r, 6), Str(r, 7), Dec(r, 8), Str(r, 9), Str(r, 10), Str(r, 11), Str(r, 12), Str(r, 13),
-            Enum.Parse<Direction>(r.GetString(14)), Str(r, 15), Str(r, 16), Str(r, 17), r.GetString(18), StatementParser.CellsFromJson(r.GetString(19))));
+    private static StoredStatementRow ReadStatementRow(SqliteDataReader r)
+    {
+        var row = new StatementRow((int)r.GetInt64(2), Date(r, 3), Str(r, 4), Str(r, 5), Str(r, 6), Str(r, 7), Dec(r, 8), Str(r, 9), Str(r, 10), Str(r, 11), Str(r, 12), Str(r, 13),
+            Enum.Parse<Direction>(r.GetString(14)), Str(r, 15), Str(r, 16), Str(r, 17), r.GetString(18), StatementParser.CellsFromJson(r.GetString(19)));
+
+        // the fingerprint is worked out again from the stored values, never taken as stored: a row stored before the
+        // fingerprint's rule changed (the fifth audit, item 7) still meets its copy read after it, and a re-read carries
+        // its decisions; a row stored without one (no payee) keeps none
+        return new StoredStatementRow(Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)),
+            row.RowHash.Length > 0 ? row with { RowHash = StatementParser.HashOf(row) } : row);
+    }
 
     private const string TorEntrySelect =
         """

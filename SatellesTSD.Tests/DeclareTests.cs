@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null)
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string strangerCurrency = "EUR")
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond, mariEndOn: mariEndOn, mariPauseFrom: mariPauseFrom);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond, mariEndOn: mariEndOn, mariPauseFrom: mariPauseFrom, mariEndBlank: mariEndBlank, strangerCurrency: strangerCurrency);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -153,6 +153,16 @@ public class DeclareTests
         Assert.Equal(0m, PeriodDeclarer.MonthShare(paused with { PauseStart = null }, [], 2026, 10)); // a pause without a start counts nothing
         // the person card's "kaasa": the paused entry counts every day as if valid
         Assert.Equal(1m, PeriodDeclarer.MonthShare(paused, [], 2026, 10, treatPausedAsValid: true));
+
+        // the fifth audit, item 16: an ended row naming no end, and a state the app does not know, are in force on no day
+        // (decision 181) and count none; "kaasa" still counts every day of the standing entry
+        Assert.Equal(0m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2024, 1, 1), null, "4"), [], 2026, 10));
+        Assert.Equal(0m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2024, 1, 1), null, "9"), [], 2026, 10));
+        Assert.Equal(1m, PeriodDeclarer.MonthShare(Entry(new DateOnly(2024, 1, 1), null, "4"), [], 2026, 10, treatPausedAsValid: true));
+        // a board seat (601, valid) stands beside a Tööleping ended with no end date: the Tööleping carries the minimum but is
+        // in force on no day, so nothing counts — the board seat's days do not stand in for the Tööleping's
+        var endless = Entry(new DateOnly(2024, 1, 1), null, "4", "1", 1);
+        Assert.Equal(0m, PeriodDeclarer.MonthShare(board, [endless, board], 2026, 10));
     }
 
     [Fact]
@@ -257,8 +267,10 @@ public class DeclareTests
         Assert.True(PeriodDeclarer.IsTotals(salary));
         var (typeCode, references) = PeriodDeclarer.TotalsOf(salary.SourceRef)!.Value;
         Assert.Equal("10", typeCode);
-        Assert.Equal($"{ReviewFixtures.Source} [2]; {ReviewWorkspace.ByHandSource}", references);
+        // the hand line named by its own review line as well, as every hand line's reference is the same (the fifth audit, item 5)
+        Assert.StartsWith($"{ReviewFixtures.Source} [2]; {ReviewWorkspace.ByHandSource} #", references, StringComparison.Ordinal);
         Assert.StartsWith("koond, liik 10: ", ReportText.SourceText(salary.SourceRef), StringComparison.Ordinal);
+        Assert.EndsWith($"; {ReportText.ByHandSource}", ReportText.SourceText(salary.SourceRef), StringComparison.Ordinal); // the id never shown
         Assert.Equal(("24", 120m, new DateOnly(2026, 10, 15)), (lines[1].Line.TypeCode, lines[1].NetPaid, lines[1].Line.DocumentDate));
 
         // built again the same way: kept in place (replaced drafts, the same keys)
@@ -455,6 +467,88 @@ public class DeclareTests
         Assert.Throws<KeyNotFoundException>(() => box.Submitter.Reopen(Guid.NewGuid()));
         Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => box.Submitter.MarkUploaded(box.Period.Id)).Code);
         Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => box.Submitter.Withdraw(second.Submission.Id)).Code);
+    }
+
+    private sealed class MovingClock(DateTime at) : TimeProvider
+    {
+        public DateTime At { get; set; } = at;
+
+        public override DateTimeOffset GetUtcNow() => new(DateTime.SpecifyKind(At, DateTimeKind.Utc), TimeSpan.Zero);
+
+        public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    [Fact]
+    public void A_reopened_month_with_nothing_to_resend_goes_back_to_its_confirmation()
+    {
+        // the fifth audit, item 8: a month reopened for corrections and found to need none returns to the confirmation MTA holds
+        using var box = Ready();
+        var clock = new MovingClock(new DateTime(2026, 11, 4, 10, 0, 0));
+        var submitter = new PeriodSubmitter(box.Store, SchemaRoot, clock);
+        Period Now() => box.Store.Periods(box.Company.Id).Single();
+
+        box.Declarer.Build(box.Period.Id);
+        submitter.Export(box.Period.Id, box.Folder);
+        submitter.MarkUploaded(box.Period.Id);
+        submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        clock.At = clock.At.AddMinutes(5);
+        submitter.MarkConfirmed(box.Period.Id);
+        var confirmed = Now().ConfirmedAt!.Value;
+        Assert.False(submitter.CanUndoReopen(box.Period.Id)); // confirmed: nothing to undo
+
+        // reopened, the review unchanged: the build keeps every line, and the reopen is undone under the old time
+        clock.At = clock.At.AddMinutes(5);
+        submitter.Reopen(box.Period.Id);
+        Assert.True(submitter.CanUndoReopen(box.Period.Id));
+        var kept = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(1, kept.Count(LineChange.Kept));
+        clock.At = clock.At.AddMinutes(5);
+        submitter.UndoReopen(box.Period.Id);
+        Assert.Equal((PeriodState.Confirmed, (DateTime?)confirmed), (Now().State, Now().ConfirmedAt));
+
+        // reopened and changed: the M draft is a correction to send, so the undo is refused and names it
+        submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        box.Declarer.Build(box.Period.Id);
+        var pending = Assert.Throws<DeclareException>(() => submitter.UndoReopen(box.Period.Id));
+        Assert.Equal(PeriodSubmitter.LinesPending, pending.Code);
+        Assert.Equal([box.Lines.Single().LineNumber], pending.DraftLines);
+        Assert.Equal(PeriodState.Draft, Now().State);
+
+        // exported since the confirmation: the server may hold it, so only the export path is left; withdrawn, it is none
+        clock.At = clock.At.AddMinutes(5);
+        var correction = submitter.Export(box.Period.Id, box.Folder, "PARANDUSPOHJUS_1");
+        Assert.False(submitter.CanUndoReopen(box.Period.Id));
+        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => submitter.UndoReopen(box.Period.Id)).Code);
+        submitter.Withdraw(correction.Submission.Id);
+        Assert.True(submitter.CanUndoReopen(box.Period.Id));
+
+        // the review changed back: the build leaves no draft, and the undo goes through
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = false, PensionRate = null });
+        box.Declarer.Build(box.Period.Id);
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft);
+        submitter.UndoReopen(box.Period.Id);
+        Assert.Equal((PeriodState.Confirmed, (DateTime?)confirmed), (Now().State, Now().ConfirmedAt));
+
+        // a correction exported and uploaded but never confirmed, then reopened: the server holds what MTA did not confirm
+        submitter.Reopen(box.Period.Id);
+        box.Workspace.SavePerson(box.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        box.Declarer.Build(box.Period.Id);
+        clock.At = clock.At.AddMinutes(5);
+        submitter.Export(box.Period.Id, box.Folder, "PARANDUSPOHJUS_1");
+        submitter.MarkUploaded(box.Period.Id);
+        submitter.Reopen(box.Period.Id);
+        Assert.False(submitter.CanUndoReopen(box.Period.Id));
+        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => submitter.UndoReopen(box.Period.Id)).Code);
+
+        // a month never confirmed has no confirmation to go back to
+        using var never = Ready();
+        never.Declarer.Build(never.Period.Id);
+        never.Submitter.Export(never.Period.Id, never.Folder);
+        never.Submitter.MarkUploaded(never.Period.Id);
+        never.Submitter.Reopen(never.Period.Id);
+        Assert.False(never.Submitter.CanUndoReopen(never.Period.Id));
+        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => never.Submitter.UndoReopen(never.Period.Id)).Code);
     }
 
     [Fact]
@@ -1681,6 +1775,138 @@ public class DeclareTests
     }
 
     [Fact]
+    public void A_card_whose_A1_countries_say_the_other_case_refuses_the_pay_and_builds_no_zero_line()
+    {
+        // the fifth audit, items 14 and 21: an Estonian A1 with the work country EE says a case the taxes do not follow
+        using var box = Ready(minimum: true);
+        box.Workspace.SavePerson(box.Mari with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "EE" });
+        Assert.Contains(box.Salary.Checks, c => c.Code == PaymentChecks.A1CountriesInconsistent);
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.Refused, StringComparison.Ordinal) && p.Contains(PaymentChecks.A1CountriesInconsistent, StringComparison.Ordinal));
+        Assert.Empty(box.Lines);
+
+        // no pay: the zero line, which never passes the review's checks, is refused by the line factory the same way
+        box.Workspace.SetDeclare(box.Salary, false);
+        mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NotBuilt, StringComparison.Ordinal));
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft);
+
+        // the countries put right: the zero line is built
+        box.Workspace.SavePerson(box.Mari with { WorkCountry = "FI" });
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+    }
+
+    [Fact]
+    public void An_Estonian_A1_employee_paid_only_a_termination_compensation_gets_the_minimums_zero_line()
+    {
+        // the fifth audit, item 15: under an Estonian A1 a termination compensation (33) carries no minimum, the Tööleping does
+        var day = new DateOnly(2026, 10, 20);
+
+        // no A1: the 33 carries the minimum, topped up on it, and no zero line beside it
+        using (var plain = Ready(minimum: true))
+        {
+            plain.Workspace.SetDeclare(plain.Salary, false);
+            plain.Workspace.AddHandLine(plain.Period.Id, plain.Mari.Id, day, 300m, "Mari Maasikas", "hüvitis", typeCode: "33", declare: true);
+            var mari = Assert.Single(plain.Declarer.Build(plain.Period.Id).Persons, p => p.PersonId == plain.Mari.Id);
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+            var line = Assert.Single(plain.Lines);
+            Assert.Equal("33", line.Line.TypeCode);
+            Assert.True(line.Result!.SocialTaxMinimumIncrease > 0m);
+        }
+
+        using var box = Ready(minimum: true);
+        box.Workspace.SavePerson(box.Mari with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI" });
+        box.Workspace.SetDeclare(box.Salary, false);
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, day, 300m, "Mari Maasikas", "hüvitis", typeCode: "33", declare: true);
+        var report = box.Declarer.Build(box.Period.Id);
+        var built = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.True(box.Lines.Count == 2, string.Join(" | ", built.Problems.Concat(report.Problems)));
+        Assert.Contains(built.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        var zero = Assert.Single(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource);
+        Assert.Equal("10", zero.Line.TypeCode);
+        Assert.True(built.MinimumShortfall > 0m);
+        Assert.Equal(0m, Assert.Single(box.Lines, l => l.Line.TypeCode == "33").Result!.SocialTaxMinimumIncrease);
+    }
+
+    [Fact]
+    public void An_Estonian_A1_employees_refused_termination_compensation_holds_no_minimum()
+    {
+        // the fifth audit, item 15: a 33 the review refused carries no minimum under an Estonian A1 once put right, so it
+        // holds none — the month's zero line is built
+        using var box = Ready(minimum: true, strangerCurrency: "USD");
+        box.Workspace.SavePerson(box.Mari with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI" });
+        box.Workspace.SetDeclare(box.Salary, false);
+        ReviewPayment Foreign() => box.Workspace.Load(box.Period.Id).Persons.SelectMany(p => p.Payments).Single(p => p.Currency == "USD");
+        box.Workspace.SetPerson(Foreign(), box.Mari.Id);
+        box.Workspace.SetTypeCode(Foreign(), "33");
+        box.Workspace.SetDeclare(Foreign(), true);
+        Assert.Contains(Foreign().Checks, c => c.Code == ReviewChecks.ForeignCurrency);
+
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.Refused, StringComparison.Ordinal) && p.Contains(ReviewChecks.ForeignCurrency, StringComparison.Ordinal));
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.MinimumHeld, StringComparison.Ordinal));
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+        Assert.Equal(PeriodDeclarer.MinimumSource, Assert.Single(box.Lines).SourceRef);
+    }
+
+    [Fact]
+    public void An_Estonian_A1_employees_termination_compensation_kept_on_the_server_carries_no_minimum_so_the_zero_line_stands()
+    {
+        // the fifth audit, item 15: a refused payment's 33 line left standing on the server carries no minimum under an
+        // Estonian A1, so it does not stand in for the zero line — which is not cancelled
+        using var box = Ready(minimum: true);
+        box.Workspace.SavePerson(box.Mari with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI" });
+        box.Workspace.SetDeclare(box.Salary, false);
+        var hand = box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 300m, "Mari Maasikas", "hüvitis", typeCode: "33", declare: true);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(2, box.Lines.Count);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+
+        box.Workspace.SetTypeCode(box.Workspace.Load(box.Period.Id).Persons.SelectMany(p => p.Payments).Single(p => p.LineId == hand.Id), "999"); // refused, of no known type
+        var report = box.Declarer.Build(box.Period.Id);
+        Assert.Equal(0, report.Count(LineChange.Cancelled));
+        Assert.Contains(box.Lines, l => l.SourceRef == PeriodDeclarer.MinimumSource && l.Status == PaymentStatus.Accepted);
+    }
+
+    [Fact]
+    public void An_ended_row_without_an_end_date_owes_no_minimum_unless_the_card_says_kaasa()
+    {
+        // the fifth audit, item 16: kande olek 4 with no readable end is in force on no day (decision 181), so the share
+        // counts no day and the build says so, rather than topping the pay up to the whole month's minimum
+        using (var box = Ready(minimum: true, mariEndBlank: true, salary: 300m))
+        {
+            Assert.Empty(box.Salary.Checks);
+            var report = box.Declarer.Build(box.Period.Id);
+            var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal) && p.Contains("in force on a day", StringComparison.Ordinal));
+            Assert.Equal((0m, 0m), (mari.MinimumDue, mari.MinimumShortfall));
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+            var line = Assert.Single(box.Lines);
+            Assert.Equal(0m, line.Result!.SocialTaxMinimumIncrease);
+        }
+
+        // the card's "kaasa": the standing entry counts every day, the minimum is topped up
+        using (var included = Ready(minimum: true, mariEndBlank: true, salary: 300m))
+        {
+            included.Workspace.SavePerson(included.Mari with { Declaration = DeclarationChoice.Include });
+            var mari = Assert.Single(included.Declarer.Build(included.Period.Id).Persons, p => p.PersonId == included.Mari.Id);
+            Assert.Equal(1m, mari.MinimumShare);
+            Assert.True(mari.MinimumShortfall > 0m);
+            Assert.True(Assert.Single(included.Lines).Result!.SocialTaxMinimumIncrease > 0m);
+        }
+    }
+
+    [Fact]
     public void A_non_resident_without_the_country_of_residence_is_declared_and_the_build_notes_it()
     {
         using var box = Ready();
@@ -2010,6 +2236,84 @@ public class DeclareTests
         Assert.Equal((1, 0, 0), (report.Count(LineChange.Kept), report.Count(LineChange.Changed), report.Count(LineChange.Cancelled)));
         var standing = box.Lines.Single();
         Assert.Equal((totals.Id, PaymentStatus.Accepted), (standing.Id, standing.Status));
+    }
+
+    [Fact]
+    public void Under_the_totals_cut_a_refused_hand_line_holds_only_the_types_whose_line_adds_that_hand_line_up()
+    {
+        // the fifth audit, item 5: every hand line's reference is "by hand", so a refused hand line held every type whose
+        // line added up some hand line — here the type-10 line on the server, which a second hand line never was in
+        using var box = Ready();
+        var day = box.Salary.Date!.Value;
+        var a = box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, day, 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        ReviewPayment Hand(Guid id) => box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.LineId == id);
+        box.Workspace.SetDeclare(Hand(a.Id), true);
+        box.Workspace.TotalsPerType = true;
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var totals = Assert.Single(box.Lines);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(totals.Id, onServer: true);
+        box.Submitter.Reopen(box.Period.Id);
+
+        // hand line B, of another type and dated outside the month: refused; hand line A's amount changed, so type 10 is an M
+        var b = box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 11, 2), 50m, "Mari Maasikas", "haigusleht", typeCode: "24", declare: true);
+        box.Workspace.SetAmount(Hand(a.Id), 150m);
+        var person = box.Workspace.Load(box.Period.Id).Persons[0];
+        Assert.Contains(person.Undeclared, u => u.Reason == Undeclared.Refused && u.Payment.LineId == b.Id);
+        Assert.DoesNotContain(person.Undeclared, u => u.Reason == Undeclared.Held);
+        var report = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.Refused, StringComparison.Ordinal));
+        Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.NotAllocated, StringComparison.Ordinal));
+        Assert.Equal((0, 1), (report.Count(LineChange.Kept), report.Count(LineChange.Changed)));
+        var changed = Assert.Single(box.Lines, l => l.Status == PaymentStatus.Draft);
+        Assert.Equal(("10", 1055.92m), (changed.Line.TypeCode, changed.NetPaid));
+
+        // hand line A itself refused: the type-10 line on the server adds A up, so it stands as it is — the M drafted
+        // above goes — and the bank salary is held (decision 199)
+        box.Workspace.SetTypeCode(Hand(a.Id), "999");
+        var held = Assert.Single(box.Workspace.Load(box.Period.Id).Persons[0].Undeclared, u => u.Reason == Undeclared.Held);
+        Assert.Equal(box.Salary.RowId, held.Payment.RowId);
+        var again = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal((1, 0), (again.Count(LineChange.Deleted), again.Count(LineChange.Changed)));
+        Assert.Contains(again.Persons.Single(p => p.PersonId == box.Mari.Id).Lines, l => l.Change == LineChange.Deleted && l.Note == PeriodDeclarer.Refused);
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal(1, box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType).Count(LineChange.Kept)); // with no draft left, the line on the server is kept
+        Assert.Equal((totals.Id, PaymentStatus.Accepted), (box.Lines.Single().Id, box.Lines.Single().Status));
+    }
+
+    [Fact]
+    public void A_totals_token_names_a_hand_line_by_its_own_line_and_a_line_written_before_holds_every_hand_line()
+    {
+        var period = Guid.NewGuid();
+        ReviewPayment HandLine() => new() { PeriodId = period, Source = ReviewWorkspace.ByHandSource, Payee = "x", VerdictText = "", IsByHand = true, LineId = Guid.NewGuid() };
+        var a = HandLine();
+        var b = HandLine();
+        var row = new ReviewPayment { PeriodId = period, Source = ReviewFixtures.Source, Payee = "x", VerdictText = "", RowNo = 2, RowId = Guid.NewGuid() };
+        var part = new ReviewPayment { PeriodId = period, Source = ReviewFixtures.Source, Payee = "x", VerdictText = "", RowNo = 2, RowId = row.RowId, Part = 2, LineId = Guid.NewGuid() };
+
+        Assert.StartsWith(ReviewWorkspace.ByHandSource + " #", PeriodDeclarer.TotalsToken(a), StringComparison.Ordinal);
+        Assert.NotEqual(PeriodDeclarer.TotalsToken(a), PeriodDeclarer.TotalsToken(b));
+        Assert.Equal((row.Reference, part.Reference), (PeriodDeclarer.TotalsToken(row), PeriodDeclarer.TotalsToken(part)));
+
+        // two hand lines never match each other's token; a row by its reference, a part by its "osa n"
+        string[] refs = [PeriodDeclarer.TotalsToken(row), PeriodDeclarer.TotalsToken(a)];
+        Assert.True(PeriodDeclarer.AddsUp(refs, a));
+        Assert.False(PeriodDeclarer.AddsUp(refs, b));
+        Assert.True(PeriodDeclarer.AddsUp(refs, row));
+        Assert.False(PeriodDeclarer.AddsUp(refs, part));
+        Assert.True(PeriodDeclarer.AddsUp([part.Reference], part));
+
+        // a totals line sent before hand lines had a token names them bare: it adds up every hand line, as it did
+        string[] legacy = [PeriodDeclarer.TotalsToken(row), ReviewWorkspace.ByHandSource];
+        Assert.True(PeriodDeclarer.AddsUp(legacy, a) && PeriodDeclarer.AddsUp(legacy, b));
+        Assert.False(PeriodDeclarer.AddsUp(legacy, part));
+
+        // the id is never shown
+        Assert.Equal((ReviewWorkspace.ByHandSource, row.Reference), (PeriodDeclarer.ShownToken(PeriodDeclarer.TotalsToken(a)), PeriodDeclarer.ShownToken(row.Reference)));
+        Assert.Equal($"koond, liik 10: {row.Reference}; {ReportText.ByHandSource}; {ReportText.ByHandSource}",
+            ReportText.SourceText(PeriodDeclarer.TotalsRef("10", [PeriodDeclarer.TotalsToken(row), PeriodDeclarer.TotalsToken(a), ReviewWorkspace.ByHandSource])));
     }
 
     [Fact]

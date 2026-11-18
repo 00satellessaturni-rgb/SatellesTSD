@@ -33,6 +33,10 @@ public sealed record PatternList(IReadOnlyList<string> Include, IReadOnlyList<st
     public IReadOnlyList<string> Problems() =>
         Include.Concat(Exclude).SelectMany(LikePattern.Problems).ToList();
 
+    /// <summary>The problems with their kinds (the fifth audit, item 27).</summary>
+    public IReadOnlyList<PatternProblem> Findings() =>
+        Include.Concat(Exclude).SelectMany(LikePattern.Findings).ToList();
+
     public bool Equals(PatternList? other) => other is not null && Include.SequenceEqual(other.Include, StringComparer.Ordinal) && Exclude.SequenceEqual(other.Exclude, StringComparer.Ordinal);
 
     public override int GetHashCode() => HashCode.Combine(Include.Count, Exclude.Count, Include.Count > 0 ? Include[0] : "");

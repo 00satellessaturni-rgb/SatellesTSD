@@ -337,6 +337,39 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
         _store.SetPeriodState(periodId, PeriodState.Draft, _clock.GetUtcNow().UtcDateTime);
     }
 
+    /// <summary>A period opened for corrections from which nothing was sent: confirmed before, no file exported since (a
+    /// withdrawn export leaves no submission). Only then can the reopen be undone (the fifth audit, item 8).</summary>
+    public bool CanUndoReopen(Guid periodId)
+    {
+        var period = FindPeriod(periodId);
+        return period is { State: PeriodState.Draft, ConfirmedAt: { } confirmed }
+            && !_store.Submissions(periodId).Any(s => s.CreatedAt > confirmed);
+    }
+
+    /// <summary>Undoes Ava parandamiseks when nothing is to be resent: the period is Confirmed again under its earlier
+    /// confirmation time, the one MTA holds — undoing a reopen confirms nothing anew. Refused (WRONG_STATE) when it was
+    /// never confirmed or a file was exported since; refused (LINES_PENDING, DraftLines) while a draft line stands: that
+    /// is a correction to send (the fifth audit, item 8).</summary>
+    public void UndoReopen(Guid periodId)
+    {
+        var period = FindPeriod(periodId);
+        if (!CanUndoReopen(periodId))
+        {
+            throw new DeclareException(WrongState, $"The period is {period.State}; only a confirmed period reopened with no file exported since goes back to confirmed.");
+        }
+
+        var drafts = _store.Payments(periodId).Where(p => p.Status == PaymentStatus.Draft).ToList();
+        if (drafts.Count > 0)
+        {
+            throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) differ from the server: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them as a correction.")
+            {
+                DraftLines = drafts.Select(p => p.LineNumber).ToList(),
+            };
+        }
+
+        _store.SetPeriodState(periodId, PeriodState.Confirmed, period.ConfirmedAt!.Value);
+    }
+
     /// <summary>Reads a feedback report (or a ZIP of them) onto the submission's lines; a confirmation report is answered, not recorded.</summary>
     public IReadOnlyList<FeedbackOutcome> ReadFeedback(Guid submissionId, string path)
     {

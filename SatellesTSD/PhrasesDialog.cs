@@ -5,7 +5,7 @@ namespace SatellesTSD;
 
 /// <summary>The words and phrases that find each category (decision 202): listed by filter set and category, saved to a
 /// file, read back from one, and the built-in ones put back. The categories themselves stay the built-in ones; a month's
-/// search keeps the phrases it ran with, so new ones find rows at the month's next "Sobita".</summary>
+/// search keeps the phrases it ran with, so new ones find rows at the month's next "Otsi maksed".</summary>
 public sealed class PhrasesDialog : Form
 {
     private readonly AppServices _services;

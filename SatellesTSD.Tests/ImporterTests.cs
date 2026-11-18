@@ -80,6 +80,13 @@ public class ImporterTests
         var ex = Assert.Throws<ImportException>(() => Importer.Read("statement.xls", html));
         Assert.Contains("web page", ex.Message);
 
+        // an Excel 2003 XML spreadsheet is said to be one, not a web page (the fifth audit, item 22)
+        var spreadsheetMl = Encoding.UTF8.GetBytes("<?xml version=\"1.0\"?>\r\n<?mso-application progid=\"Excel.Sheet\"?>\r\n<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"></Workbook>");
+        var xml = Assert.Throws<ImportException>(() => Importer.Read("valjavote.xls", spreadsheetMl));
+        Assert.Contains("Excel 2003 XML", xml.Message);
+        Assert.Contains("save it as .xlsx", xml.Message);
+        Assert.DoesNotContain("web page", xml.Message);
+
         Assert.Throws<ImportException>(() => Importer.Read("x.bin", [0, 1, 2, 3]));
 
         var noExcel = new Importer(LayoutCatalog.Default);

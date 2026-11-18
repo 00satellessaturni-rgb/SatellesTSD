@@ -85,6 +85,11 @@ public sealed class ReviewPayment
 
     public bool Declare { get; init; }
 
+    /// <summary>A hand line of the same amount stands, or would stand but for the accountant's word, for the payee this
+    /// month: whether the row is declared by default turns on the word being stored, so the word is kept as given (the
+    /// fifth audit, item 11).</summary>
+    public bool HandLineTwin { get; init; }
+
     public bool InPeriod { get; init; }
 
     /// <summary>The run's own Counted flag (a Matched verdict, a readable amount, not shared).</summary>

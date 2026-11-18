@@ -247,6 +247,34 @@ public static class DateText
 
     private static readonly Lazy<TimeZoneInfo> Estonia = new(() => Zone("Europe/Tallinn"));
 
+    /// <summary>Whether a layout's date pattern can be tried: not blank, and a .NET custom format that both writes and
+    /// reads a date with every time tail the reader adds ("\" alone is refused, "\ HH:mm:ss" is not, so each tail is
+    /// tried; a sample date is written with the pattern first, so the reading walks the whole pattern and not only up
+    /// to the first mismatch) — the fifth audit, item 6.</summary>
+    public static bool IsUsablePattern(string? pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return false;
+        }
+
+        var sample = new DateTime(2026, 10, 31, 14, 22, 5, DateTimeKind.Unspecified);
+        try
+        {
+            foreach (var tail in TimeTails)
+            {
+                var written = sample.ToString(pattern + tail, CultureInfo.InvariantCulture);
+                _ = DateTime.TryParseExact(written, pattern + tail, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AdjustToUniversal, out _);
+            }
+
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>The value of a cell in the date role, or null when it is not a date. A typed date comes through as
     /// it is; a number is an Excel serial; text is tried against the layout's formats, then the defaults, each with
     /// and without a time part. A text with a zone comes back as UTC (<see cref="DateTimeKind.Utc"/>); any other
@@ -286,10 +314,21 @@ public static class DateText
             foreach (var tail in TimeTails)
             {
                 // AdjustToUniversal: a text that names its zone comes back as that instant in UTC (Kind Utc), never as the machine's local time
-                if (DateTime.TryParseExact(cleaned, pattern + tail, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AdjustToUniversal, out var value))
+                DateTime value;
+                try
                 {
-                    return value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+                    if (!DateTime.TryParseExact(cleaned, pattern + tail, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AdjustToUniversal, out value))
+                    {
+                        continue;
+                    }
                 }
+                catch (FormatException)
+                {
+                    // a pattern .NET cannot use, in a layout stored before the save refused it: skipped, never fatal (the fifth audit, item 6)
+                    continue;
+                }
+
+                return value.Kind == DateTimeKind.Utc ? value : DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
             }
         }
 
@@ -299,10 +338,20 @@ public static class DateText
             var head = cleaned[..space];
             foreach (var pattern in patterns)
             {
-                if (DateTime.TryParseExact(head, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out var value))
+                DateTime value;
+                try
                 {
-                    return DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+                    if (!DateTime.TryParseExact(head, pattern, CultureInfo.InvariantCulture, DateTimeStyles.None, out value))
+                    {
+                        continue;
+                    }
                 }
+                catch (FormatException)
+                {
+                    continue;
+                }
+
+                return DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
             }
         }
 

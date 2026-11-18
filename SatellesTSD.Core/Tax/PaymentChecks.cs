@@ -7,7 +7,7 @@ public sealed record Refusal(string Code, string Message);
 
 /// <summary>The checks the engine, the allocator, the zero-line helper and the line factory enforce by throwing, as a
 /// list a review grid can show per payment. Each refusal mirrors one of those throws; with no refusal, every one of
-/// them computes for the facts given. Two refusals mirror no throw: <see cref="ExemptionNotEea"/>, which MTA would
+/// them computes for the facts given (<see cref="A1CountriesInconsistent"/> mirrors the line factory's). Two refusals mirror no throw: <see cref="ExemptionNotEea"/>, which MTA would
 /// refuse and the engine cannot see, and <see cref="TreatyRateInvalid"/>, a rate the file cannot carry or no treaty gives.</summary>
 public static class PaymentChecks
 {
@@ -16,6 +16,11 @@ public static class PaymentChecks
     public const string ZeroNotAllowed = "ZERO_NOT_ALLOWED";
     public const string TypePayeeMismatch = "TYPE_PAYEE_MISMATCH";
     public const string A1CountriesMissing = "A1_COUNTRIES_MISSING";
+
+    /// <summary>An A1 case whose countries say the other case (MTA's KR_YLD2_07/09): an Estonian A1 has the A1 country EE
+    /// and work abroad, a foreign A1 another A1 country and work in Estonia — else the file's classifiers and the taxes
+    /// worked out for the case disagree (the fifth audit, items 14 and 21).</summary>
+    public const string A1CountriesInconsistent = "A1_COUNTRIES_INCONSISTENT";
     public const string PensionNotChecked = "PENSION_NOT_CHECKED";
     public const string PensionRateUnknown = "PENSION_RATE_UNKNOWN";
     public const string PensionRateInvalid = "PENSION_RATE_INVALID";
@@ -45,6 +50,33 @@ public static class PaymentChecks
     /// <summary>Whether a country of tax residence entered on the card is outside the EEA; an empty one is not (it is
     /// optional, decision 144).</summary>
     public static bool OutsideEea(string? country) => !string.IsNullOrWhiteSpace(country) && !EeaCountries.Contains(country.Trim());
+
+    /// <summary>Whether the A1 case and its two countries agree (<see cref="A1CountriesInconsistent"/>); with no A1 case,
+    /// or a country missing (<see cref="A1CountriesMissing"/> says that), they do.</summary>
+    public static bool A1CountriesAgree(A1Case a1, string? a1Country, string? workCountry)
+    {
+        static bool Ee(string? c) => string.Equals(c?.Trim(), "EE", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(a1Country) || string.IsNullOrWhiteSpace(workCountry))
+        {
+            return true;
+        }
+
+        return a1 switch
+        {
+            A1Case.EstonianA1WorkAbroad => Ee(a1Country) && !Ee(workCountry),
+            A1Case.ForeignA1WorkInEstonia => !Ee(a1Country) && Ee(workCountry),
+            _ => true,
+        };
+    }
+
+    /// <summary>An A1 country as the file writes it: trimmed, upper case, Greece's ISO code GR as EL, the spelling of
+    /// MTA's A1 list (KR_YLD2_01).</summary>
+    public static string A1Code(string country)
+    {
+        ArgumentNullException.ThrowIfNull(country);
+        var code = country.Trim().ToUpperInvariant();
+        return code == "GR" ? "EL" : code;
+    }
 
     /// <summary>Whether the card's treaty rate is one the build refuses for the type (<see cref="TreatyRateInvalid"/>): a
     /// non-resident's rate on a type that takes one, below 0, above the type's own rate or not a whole percent.</summary>
@@ -80,6 +112,12 @@ public static class PaymentChecks
         if (a1 != A1Case.None && (string.IsNullOrWhiteSpace(facts.A1Country) || string.IsNullOrWhiteSpace(facts.WorkCountry)))
         {
             refusals.Add(new Refusal(A1CountriesMissing, "An A1 case needs both the A1 country and the work country."));
+        }
+        else if (!A1CountriesAgree(a1, facts.A1Country, facts.WorkCountry))
+        {
+            refusals.Add(new Refusal(A1CountriesInconsistent, a1 == A1Case.EstonianA1WorkAbroad
+                ? "An Estonian A1 needs the A1 country EE and a work country other than EE (KR_YLD2_09, KR_YLD2_07)."
+                : "A foreign A1 needs an A1 country other than EE and the work country EE (KR_YLD2_07)."));
         }
 
         bool pensionWithheld = type.FundedPension && facts.Residency == Residency.Resident && a1 != A1Case.ForeignA1WorkInEstonia;

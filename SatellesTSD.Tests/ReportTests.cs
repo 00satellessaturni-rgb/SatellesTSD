@@ -44,9 +44,9 @@ public class ReportTests
     }
 
     /// <summary>The fixture's month run and reviewed: Mari a checked resident outside the II pillar with the exemption applied.</summary>
-    private static Box Ready(bool run = true)
+    private static Box Ready(bool run = true, string? renter = null, string renterDirection = "D")
     {
-        var (store, company, period, _) = ReviewFixtures.Setup();
+        var (store, company, period, _) = ReviewFixtures.Setup(renter: renter, renterDirection: renterDirection);
         if (run)
         {
             new MatchRunner(store).Run(period.Id);
@@ -174,6 +174,30 @@ public class ReportTests
         sheet = box.Build().Sheet(ReportText.InterimSheet)!;
         var loans = sheet.Rows.Select((r, i) => (Row: i + 1, Title: r.Cells.Count == 1 ? r.Cells[0].Text : null)).Single(x => x.Title == "Laenud").Row;
         Assert.Equal(["", "Jaan Tamm", "", "300", "", "300"], Texts(sheet, loans + 2));
+    }
+
+    [Fact]
+    public void A_sub_table_leaves_out_money_in_the_accountant_gave_its_category()
+    {
+        // the fifth audit, item 10: a credit row of 400 given a payout's category is no payout of it
+        using var box = Ready(renter: "Kodu Haldus OÜ", renterDirection: "C");
+        box.Workspace.SetCategory(box.Stranger, "Üür");
+        var credit = box.View.Unmatched.Payments.Single(p => p.Payee == "Kodu Haldus OÜ");
+        Assert.Equal(Direction.Credit, credit.Direction);
+        box.Workspace.SetCategory(credit, "Üür");
+        var sheet = box.Build().Sheet(ReportText.InterimSheet)!;
+        int Title(ReportSheet s, string name) => s.Rows.Select((r, i) => (Row: i + 1, Title: r.Cells.Count == 1 ? r.Cells[0].Text : null)).Single(x => x.Title == name).Row;
+        var rent = Title(sheet, "Üür");
+        Assert.Equal(["", "Kinnisvara OÜ", "", "450", "450"], Texts(sheet, rent + 2));
+        Assert.Empty(sheet.Row(rent + 3).Cells); // the 400 that came in is not listed
+        Assert.Contains(box.Build().Sheet("Üür")!.Rows.Skip(1), r => r.Cells.Any(c => c.Text == "Kodu Haldus OÜ")); // its own sheet still lists it
+
+        // the same row a person's, of a person-side category: still no payout of it
+        credit = box.View.Unmatched.Payments.Single(p => p.Payee == "Kodu Haldus OÜ");
+        box.Workspace.SetPerson(credit, box.View.Persons[0].PersonId);
+        box.Workspace.SetCategory(box.View.Persons[0].Payments.Single(p => p.Payee == "Kodu Haldus OÜ"), "Kompensatsioon");
+        sheet = box.Build().Sheet(ReportText.InterimSheet)!;
+        Assert.Empty(sheet.Row(Title(sheet, "Kompensatsioon") + 2).Cells);
     }
 
     [Fact]

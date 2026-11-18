@@ -436,6 +436,9 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var source = kind == LookupKind.Residency ? LookupSource.Emta : LookupSource.Pensionikeskus;
         var code = person.PersonalCode!.Trim();
         if (!force && _store.LatestLookup(person.Id, kind, controlDate) is { Succeeded: true } recorded && recorded.Source == source && recorded.PersonalCode == code
+            // an answer given before the day it stands for is a forecast, not the register's word for the day: asked again once
+            // a later day has come, as a failed one is; today's stands, as nothing newer can be had today (the fifth audit, item 9)
+            && CheckedOn(recorded) >= Earliest(controlDate, Today())
             // a pension answer that cannot tell the day's membership is no answer for the day: asked again, as a failed one is (decision 162)
             && !(kind == LookupKind.Pension && JsonSerializer.Deserialize<PensionFinding>(recorded.FindingJson!, Json) is { } known && known.MembershipUnknownOn(controlDate)))
         {
@@ -473,6 +476,8 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
     }
 
     private DateOnly Today() => DateOnly.FromDateTime(Local(_clock.GetUtcNow().UtcDateTime));
+
+    private static DateOnly Earliest(DateOnly a, DateOnly b) => a < b ? a : b;
 
     /// <summary>The person as the store has them now: a lookup changes only its own fields of a fresh row.</summary>
     private Person Fresh(Person person) => _store.Persons(person.CompanyId).FirstOrDefault(p => p.Id == person.Id) ?? person;

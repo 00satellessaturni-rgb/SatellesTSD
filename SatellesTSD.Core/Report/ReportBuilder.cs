@@ -115,7 +115,7 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             subHeader.AddRange(sources.Select(SourceHeader));
             subHeader.Add(ReportText.Total);
             rows.Add(ReportRow.Headers(subHeader.ToArray()));
-            foreach (var row in SubTable(view, category.Name))
+            foreach (var row in SubTable(view, category))
             {
                 var cells = new List<ReportCell> { ReportCell.Identifier(row.Code), ReportCell.Of(row.LastName), ReportCell.Of(row.FirstName) };
                 cells.AddRange(sources.Select(s => row.BySource.TryGetValue(s, out var sum) ? ReportCell.Amount(sum) : ReportCell.Empty));
@@ -132,19 +132,24 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
     /// <summary>The sub-table of a category from what stands: the persons in the view's order with their rows of the
     /// category in the month that count, then the rows nobody has, by the payee's name on the statement (in the
     /// last-name column, as the macro put them — and of any month, as the macro's second pass never asked the date).</summary>
-    private static IEnumerable<SubRow> SubTable(ReviewView view, string categoryName)
+    private static IEnumerable<SubRow> SubTable(ReviewView view, Category category)
     {
-        static bool Counts(ReviewPayment p, string name) => string.Equals(p.Category, name, StringComparison.OrdinalIgnoreCase) && p.AmountOk;
+        // money on the category's wrong side (money in for a payout's category) is no payout of it, whatever category the
+        // accountant gave the row, as the run's own sub-table counts only rows on the category's side; a row of unknown
+        // direction counts as before (the fifth audit, item 10)
+        static bool Counts(ReviewPayment p, Category c) =>
+            string.Equals(p.Category, c.Name, StringComparison.OrdinalIgnoreCase) && p.AmountOk
+            && !(p.Direction is Direction.Debit or Direction.Credit && p.Direction != c.Side);
         foreach (var person in view.Persons.Where(p => !p.IsUnmatched))
         {
-            var own = person.Payments.Where(p => Counts(p, categoryName) && p.InPeriod).ToList();
+            var own = person.Payments.Where(p => Counts(p, category) && p.InPeriod).ToList();
             if (own.Count > 0)
             {
                 yield return new SubRow(person.PersonalCode, person.LastName, person.FirstName, Sums(own));
             }
         }
 
-        foreach (var group in view.Unmatched.Payments.Where(p => Counts(p, categoryName)).GroupBy(p => p.Payee, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in view.Unmatched.Payments.Where(p => Counts(p, category)).GroupBy(p => p.Payee, StringComparer.OrdinalIgnoreCase))
         {
             yield return new SubRow(null, group.Key, "", Sums(group.ToList()));
         }

@@ -572,6 +572,53 @@ public class WindowTests
     }
 
     [Fact]
+    public void The_update_dialog_keeps_its_fresh_check_for_the_main_window_and_names_the_version_put_back()
+    {
+        // the way back names what the exe in place says, the running version only when that cannot be read (the fifth audit, item 23)
+        Assert.Equal("Alles jäi versioon 0.34.0.", UpdateDialog.KeptText(new Version(0, 34, 0, 0), new Version(0, 33, 0, 0)));
+        Assert.Equal("Alles jäi versioon 0.33.0.", UpdateDialog.KeptText(null, new Version(0, 33, 0, 0)));
+
+        var empty = Path.Combine(Path.GetTempPath(), $"satellestsd-fresh-{Guid.NewGuid():N}");
+        var offered = Path.Combine(Path.GetTempPath(), $"satellestsd-fresh-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(empty);
+        Directory.CreateDirectory(offered);
+        try
+        {
+            // the release folder names the running version: the offer the window opened on is gone
+            File.WriteAllText(Path.Combine(offered, SatellesTSD.Infrastructure.Updates.Updater.ManifestName), $"version=0.10.0\nfile=SatellesTSD-v0.10.0.zip\nsize=1\nsha256={new string('A', 64)}\npublished=trial\ncommit=abc\n");
+            Ui.Run(() =>
+            {
+                var release = new SatellesTSD.Infrastructure.Updates.ReleaseManifest(new Version(0, 11, 0, 0), "SatellesTSD-v0.11.0.zip", 1, new string('A', 64), "trial", null);
+                foreach (var (folder, said, state) in new[]
+                {
+                    (empty, UiText.UpdatesFailed, SatellesTSD.Infrastructure.Updates.UpdateState.NoRelease),
+                    (offered, UiText.UpdateNoLongerOffered, SatellesTSD.Infrastructure.Updates.UpdateState.UpToDate),
+                })
+                {
+                    using var dialog = new UpdateDialog(Path.Combine(Path.GetTempPath(), "nowhere", "SatellesTSD.exe"), folder, release, new Version(0, 10, 0, 0), fromStart: false, () => { })
+                    {
+                        StartPosition = FormStartPosition.Manual,
+                        Location = new Point(-4000, -4000),
+                    };
+                    dialog.Show();
+                    Ui.Pump();
+                    Assert.Null(dialog.FreshCheck);
+                    dialog.InstallButton.PerformClick();
+                    Ui.Until(() => dialog.StatusText.Contains(said, StringComparison.Ordinal), what: said);
+                    Assert.Equal(state, dialog.FreshCheck!.State); // the main window shows this in place of the offer (the fifth audit, item 25)
+                    dialog.Close();
+                    Ui.Pump();
+                }
+            });
+        }
+        finally
+        {
+            Directory.Delete(empty, true);
+            Directory.Delete(offered, true);
+        }
+    }
+
+    [Fact]
     public void The_update_dialog_closes_on_a_hand_over_and_only_then_while_it_works()
     {
         Ui.Run(() =>
@@ -826,6 +873,7 @@ public class WindowTests
             Assert.Contains(UiText.NextActionText(Core.Feedback.NextAction.ReviewWarning), tip, StringComparison.Ordinal);
             Assert.DoesNotContain("sotsiaalmaks", cell.ToolTipText, StringComparison.Ordinal); // the grid's own tooltip would cut the text at 256 characters: never given it
             Assert.Contains("KR_JAOTIS_TEST", panel.SubmissionsList.Items[0].ToolTipText, StringComparison.Ordinal);
+            Assert.Equal("korras", panel.SubmissionsList.Items[0].SubItems[3].Text); // MTA's result in Estonian (the fifth audit, item 29)
         }));
     }
 
@@ -1873,6 +1921,49 @@ public class WindowTests
 
             asked.Add(question);
             return answer;
+        }));
+    }
+
+    [Fact]
+    public void A_month_reopened_with_nothing_to_resend_is_confirmed_again_by_the_same_button()
+    {
+        // the fifth audit, item 8
+        using var fixture = new WindowFixture();
+        var asked = new List<string>();
+        Ui.Run(() => fixture.Drive(form =>
+        {
+            form.Tabs.SelectedIndex = 1;
+            Ui.Pump();
+            var panel = form.Declaration;
+            panel.BuildButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && panel.LinesGrid.Rows.Count == 1, what: "the build");
+            var submitter = form.Services!.Submitter;
+            var periodId = form.View!.Period.Id;
+            submitter.Export(periodId, fixture.ExportFolder);
+            submitter.MarkUploaded(periodId);
+            submitter.Resolve(form.Services.Store.Payments(periodId).Single().Id, onServer: true);
+            submitter.MarkConfirmed(periodId);
+            var confirmedAt = form.Services.Store.Periods(form.View.Period.CompanyId).Single(p => p.Id == periodId).ConfirmedAt;
+            form.Reload();
+            Ui.Pump();
+            Assert.Equal((UiText.Reopen, true), (panel.ReopenButton.Text, panel.ReopenButton.Enabled));
+
+            panel.ReopenButton.PerformClick();
+            Ui.Pump();
+            Assert.Equal(PeriodState.Draft, form.View!.Period.State);
+            Assert.Equal((UiText.UndoReopen, true), (panel.ReopenButton.Text, panel.ReopenButton.Enabled));
+
+            panel.ReopenButton.PerformClick();
+            Ui.Until(() => !form.IsBusy && form.View!.Period.State == PeriodState.Confirmed, what: "the undo");
+            Ui.Pump();
+            Assert.Contains(UiText.UndoReopenConfirm, asked);
+            Assert.Equal(confirmedAt, form.View!.Period.ConfirmedAt);
+            Assert.Equal(UiText.Reopen, panel.ReopenButton.Text);
+            Assert.Empty(fixture.Failures);
+        }, confirm: (question, _) =>
+        {
+            asked.Add(question);
+            return true;
         }));
     }
 

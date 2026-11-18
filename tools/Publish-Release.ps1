@@ -86,8 +86,16 @@ if ($Withdraw) {
     if (-not (Test-Path -LiteralPath $manifest)) { Write-Host "NOT WITHDRAWN: there is no latest.txt in $ReleaseFolder (an interrupted publish? rename latest.txt.new to latest.txt, or publish again)." -ForegroundColor Red; exit 1 }
     $withdrawn = (Read-Manifest $manifest)['version']
     $restored = (Read-Manifest $previousManifest)['version']
-    # once withdrawn, latest.txt and latest.previous.txt name the same release: a second withdraw would take that one too
-    if ($withdrawn -eq $restored) { Write-Host "NOT WITHDRAWN: $withdrawn is on offer and is also the previous release - it has been withdrawn already." -ForegroundColor Red; exit 1 }
+    # after one withdrawal latest.txt and latest.previous.txt name the same release; no earlier one is on record (-Withdraw
+    # goes back one release only): the refusal says what the folder records (the fifth audit, item 24)
+    if ($withdrawn -eq $restored) {
+        $withdrawnFile = Join-Path $ReleaseFolder 'latest.withdrawn.txt'
+        $before = if (Test-Path -LiteralPath $withdrawnFile) { (Read-Manifest $withdrawnFile)['version'] } else { $null }
+        $above = if ($before) { $before } else { $withdrawn }
+        $what = if ($before) { "$before was withdrawn already and $withdrawn put back" } else { "latest.previous.txt names $withdrawn too" }
+        Write-Host "NOT WITHDRAWN: $what; no release earlier than $withdrawn is on record to go back to (-Withdraw goes back one release only). Edit latest.txt by hand to name an earlier release, or publish a fixed version above $above." -ForegroundColor Red
+        exit 1
+    }
     [IO.File]::Copy($manifest, (Join-Path $ReleaseFolder 'latest.withdrawn.txt'), $true)
     $staged = "$manifest.new"
     [IO.File]::Copy($previousManifest, $staged, $true)

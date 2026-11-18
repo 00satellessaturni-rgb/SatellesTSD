@@ -937,9 +937,10 @@ public class LookupRunnerTests
             var day = store.Lookups(first.Id).Select(r => DateOnly.FromDateTime(r.CheckedAt)).Distinct().Single();
             Assert.Equal((day, day), (first.ResidencyCheckedOn, first.PensionCheckedOn)); // the day the answers were given
 
-            // the answers given weeks ago (the records' stamps moved back), the same month asked again: they are reused, and so is their day
-            var given = new DateOnly(2026, 10, 20);
-            store.ExecuteRaw("UPDATE lookup SET checked_at = $at", ("$at", "2026-10-20T09:00:00.000Z"));
+            // the answers given days ago, after the control date (the records' stamps moved back), the same month asked again:
+            // they are reused, and so is their day
+            var given = new DateOnly(2026, 11, 2);
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at", ("$at", "2026-11-02T09:00:00.000Z"));
             var again = await Runner(store, residency, pension).RunAsync(period.Id);
             Assert.Contains(again.Persons.Single().Steps, s => s.Contains("reused", StringComparison.Ordinal));
             Assert.Single(residency.Asked);
@@ -968,6 +969,66 @@ public class LookupRunnerTests
             var person = store.FindPerson(company.Id, "48712219406")!;
             Assert.Equal((new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1)), (person.ResidencyCheckedOn, person.PensionCheckedOn));
             Assert.Contains(again.Persons.Single().Steps, s => s.Contains("01.11.2026 00:40 reused", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public async Task An_answer_given_before_the_day_it_stands_for_is_asked_again_once_the_day_has_come()
+    {
+        // the fifth audit, item 9: a run of October made on 20.10 asks the registers for 31.10 before that day has come
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var early = new FixedClock(new DateTime(2026, 10, 20, 12, 0, 0));
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            await Runner(store, residency, pension, clock: early).RunAsync(period.Id);
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at", ("$at", "2026-10-20T09:00:00.000Z"));
+
+            // rerun the same day: today's answer is the best the registers can say today, so it is reused
+            var sameDay = await Runner(store, residency, pension, clock: early).RunAsync(period.Id);
+            Assert.Contains(sameDay.Persons.Single().Steps, s => s.StartsWith("residency answer of", StringComparison.Ordinal) && s.EndsWith("reused", StringComparison.Ordinal));
+            Assert.Equal((1, 1), (residency.Asked.Count, pension.Asked.Count));
+
+            // the register changed its word before the day; a run on 05.11 asks again instead of reusing the forecast
+            residency.Answers["48712219406"] = LookupResult<ResidencyFinding>.Found(NonResidentSince(new DateOnly(2026, 10, 1)), null);
+            var later = new FixedClock(new DateTime(2026, 11, 5, 12, 0, 0));
+            var after = await Runner(store, residency, pension, clock: later).RunAsync(period.Id);
+            Assert.Contains("asked residency", after.Persons.Single().Steps);
+            Assert.Equal(2, residency.Asked.Count);
+            var person = store.FindPerson(company.Id, "48712219406")!;
+            var newest = DateOnly.FromDateTime(store.Lookups(person.Id).Where(r => r.Kind == LookupKind.Residency).Max(r => r.CheckedAt));
+            Assert.Equal((Residency.NonResident, (DateOnly?)newest, (DateOnly?)Control), (person.Residency, person.ResidencyCheckedOn, person.FactsControlDate));
+
+            // once more on 05.11: the answer given after the day is reused
+            var again = await Runner(store, residency, pension, clock: later).RunAsync(period.Id);
+            Assert.Contains(again.Persons.Single().Steps, s => s.StartsWith("residency answer of", StringComparison.Ordinal) && s.EndsWith("reused", StringComparison.Ordinal));
+            Assert.Equal(2, residency.Asked.Count);
+        }
+    }
+
+    [Fact]
+    public async Task Only_the_register_whose_answer_was_given_before_the_day_is_asked_again()
+    {
+        // the fifth audit, item 9: the residency answer given after the control date, the pension answer before it
+        var (store, company, period) = Setup();
+        using (store)
+        {
+            var later = new FixedClock(new DateTime(2026, 11, 5, 12, 0, 0));
+            store.AddPerson(Person.New(company.Id, "Mari", "Maasikas", "48712219406"));
+            var residency = new FakeResidency { Answers = { ["48712219406"] = LookupResult<ResidencyFinding>.Found(Resident(), null) } };
+            var pension = new FakePension { Answers = { ["48712219406"] = LookupResult<PensionFinding>.Found(NotJoined, null) } };
+            await Runner(store, residency, pension, clock: later).RunAsync(period.Id);
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at WHERE kind = 'Residency'", ("$at", "2026-11-02T09:00:00.000Z"));
+            store.ExecuteRaw("UPDATE lookup SET checked_at = $at WHERE kind = 'Pension'", ("$at", "2026-10-20T09:00:00.000Z"));
+
+            var again = await Runner(store, residency, pension, clock: later).RunAsync(period.Id);
+
+            var steps = again.Persons.Single().Steps;
+            Assert.Contains("residency answer of 02.11.2026 09:00 reused", steps);
+            Assert.Contains("asked pension", steps);
+            Assert.Equal((1, 2), (residency.Asked.Count, pension.Asked.Count));
         }
     }
 

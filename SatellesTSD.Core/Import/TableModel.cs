@@ -174,6 +174,30 @@ public static class FileSniffer
         return LooksLikeText(start) ? SourceFormat.Csv : SourceFormat.Unknown;
     }
 
+    /// <summary>Whether a file sniffed as markup is an Excel 2003 XML spreadsheet (SpreadsheetML), not a web page: its
+    /// head carries Excel's mark (the fifth audit, item 22).</summary>
+    public static bool IsSpreadsheetXml(ReadOnlySpan<byte> bytes)
+    {
+        var window = bytes[..Math.Min(bytes.Length, 4096)];
+        string head;
+        if (window.Length >= 2 && window[0] == 0xFF && window[1] == 0xFE)
+        {
+            head = System.Text.Encoding.Unicode.GetString(window[2..]);
+        }
+        else if (window.Length >= 2 && window[0] == 0xFE && window[1] == 0xFF)
+        {
+            head = System.Text.Encoding.BigEndianUnicode.GetString(window[2..]);
+        }
+        else
+        {
+            // UTF-8 with its BOM skipped; the marks are ASCII, so a file in another single-byte encoding reads the same
+            head = System.Text.Encoding.Latin1.GetString(window.Length >= 3 && window[0] == 0xEF && window[1] == 0xBB && window[2] == 0xBF ? window[3..] : window);
+        }
+
+        return head.Contains("urn:schemas-microsoft-com:office:spreadsheet", StringComparison.OrdinalIgnoreCase)
+            || head.Contains("progid=\"Excel.Sheet\"", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ReadOnlySpan<byte> SkipBomAndSpace(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)

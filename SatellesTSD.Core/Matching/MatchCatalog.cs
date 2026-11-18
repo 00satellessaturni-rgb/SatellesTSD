@@ -276,14 +276,16 @@ public sealed class MatchCatalog
                 }
 
                 var value = cell ?? "";
-                if (PatternList.Parse(value).Problems() is { Count: > 0 } problems)
+                if (PatternList.Parse(value).Findings() is { Count: > 0 } findings)
                 {
                     if (lenient)
                     {
                         continue;
                     }
 
-                    throw PhrasesRefusal.Of(PhrasesRefusal.BadCell, $"Set '{setName}', category '{category.Name}': {string.Join("; ", problems)}", $"{setName} / {category.Name}");
+                    // the first problem's kind goes with the refusal, so the window words it (the fifth audit, item 27)
+                    throw PhrasesRefusal.Of(PhrasesRefusal.BadCell, $"Set '{setName}', category '{category.Name}': {string.Join("; ", findings.Select(f => f.Text))}", $"{setName} / {category.Name}",
+                        problem: findings[0]);
                 }
 
                 // the cell under the catalog's own spelling of the name (names are compared case-insensitively)
@@ -369,15 +371,30 @@ public static class PhrasesRefusal
     public const string UnknownCategory = "PHRASES_UNKNOWN_CATEGORY";
     public const string BadCell = "PHRASES_BAD_CELL";
 
-    public static MatchException Of(string code, string message, string? subject = null, Exception? inner = null)
+    /// <param name="problem">A bad cell's first pattern problem, kept in the data as plain values (the fifth audit, item 27).</param>
+    public static MatchException Of(string code, string message, string? subject = null, Exception? inner = null, PatternProblem? problem = null)
     {
         var refusal = new MatchException(message, inner);
         refusal.Data["Code"] = code;
         refusal.Data["Subject"] = subject;
+        if (problem is not null)
+        {
+            refusal.Data["Problem"] = problem.Kind.ToString();
+            refusal.Data["Pattern"] = problem.Pattern;
+            refusal.Data["Position"] = problem.Position;
+            refusal.Data["Range"] = problem.Range;
+        }
+
         return refusal;
     }
 
     public static string? CodeOf(Exception e) => e?.Data["Code"] as string;
 
     public static string? SubjectOf(Exception e) => e?.Data["Subject"] as string;
+
+    /// <summary>The pattern problem a bad cell's refusal carries, or null (a merged catalog that fails its check names none).</summary>
+    public static PatternProblem? ProblemOf(Exception e) =>
+        e?.Data["Problem"] is string kind && Enum.TryParse<PatternProblemKind>(kind, out var parsed) && e.Data["Pattern"] is string pattern && e.Data["Position"] is int position
+            ? new PatternProblem(parsed, pattern, position, e.Data["Range"] as string)
+            : null;
 }

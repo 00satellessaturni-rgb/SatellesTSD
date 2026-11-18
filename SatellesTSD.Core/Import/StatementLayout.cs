@@ -218,6 +218,31 @@ public sealed record StatementLayout(
 
         return problems;
     }
+
+    /// <summary>What a layout being saved must not hold beyond <see cref="Problems"/>: a date pattern .NET cannot use, a
+    /// blank entry in StatesNotDone (the fifth audit, item 6). Not part of Problems(): a layout stored before the check,
+    /// and a sheet's snapshot, are still read — the reader skips the bad entry — so one typo never stops the start.</summary>
+    public IReadOnlyList<string> EntryProblems()
+    {
+        var problems = new List<string>();
+        foreach (var format in DateFormats ?? [])
+        {
+            if (!DateText.IsUsablePattern(format))
+            {
+                problems.Add($"Layout '{Id}': date format '{format}' is not a usable date pattern.");
+            }
+        }
+
+        if (StatesNotDone?.Any(string.IsNullOrWhiteSpace) == true)
+        {
+            problems.Add($"Layout '{Id}' has a blank entry in StatesNotDone.");
+        }
+
+        return problems;
+    }
+
+    /// <summary>Everything that keeps a layout from being saved: <see cref="Problems"/> and <see cref="EntryProblems"/>.</summary>
+    public IReadOnlyList<string> SaveProblems() => [.. Problems(), .. EntryProblems()];
 }
 
 /// <summary>The layouts the parser knows: the embedded defaults, with the owner's overrides merged by Id.</summary>

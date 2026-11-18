@@ -66,6 +66,17 @@ public class LikePatternTests
     }
 
     [Fact]
+    public void Findings_give_each_problem_its_kind_beside_the_english_text()
+    {
+        // the fifth audit, item 27: the window words a problem from its kind
+        Assert.Equal(new PatternProblem(PatternProblemKind.Unclosed, "a[b", 2), Assert.Single(LikePattern.Findings("a[b")));
+        var downwards = Assert.Single(LikePattern.Findings("[z-a]"));
+        Assert.Equal((PatternProblemKind.Downwards, "z-a"), (downwards.Kind, downwards.Range));
+        Assert.Equal(LikePattern.Problems("x[z-a]y[q"), LikePattern.Findings("x[z-a]y[q").Select(f => f.Text));
+        Assert.Equal(LikePattern.Problems("[z-a]").Single(), PatternList.Parse("ok;[z-a]").Findings().Single().Text);
+    }
+
+    [Fact]
     public void Agrees_with_a_regex_oracle_on_random_patterns()
     {
         // the oracle: a straight translation to a regex, over the constructs a regex shares with Like (the ones it does not — an empty

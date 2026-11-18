@@ -146,6 +146,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         }
         var twinRows = new HashSet<Guid>(); // rent rows whose payee has a hand line of the amount this month: not declared by default
         var twinHandLines = new HashSet<Guid>(); // the hand lines already paired with a row
+        var twinByWord = new HashSet<Guid>(); // rows a hand line would pair with but for the accountant's word on Declare: the word is kept as given
         List<MatchProblem> ProblemsOf(Guid id) => personProblems.TryGetValue(id, out var list) ? list : personProblems[id] = [];
         // a register person beside a store person of the same names under another personal code whom this month's register
         // does not list: the register may have corrected the code, and the card made anew carries the defaults, not the
@@ -202,7 +203,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
                 // the rows of the month whose stored state cell says the money did not move: named, and only when there are any
                 var rows = source.Rows.Where(r => r.IsPayment && r.Date is { } day && day.Year == period.Year && day.Month == period.Month && column <= r.Cells.Count
-                    && notDone.Any(s => string.Equals(s.Trim(), r.Cells[column - 1].Trim(), StringComparison.OrdinalIgnoreCase)) && Declared(source, r)).Select(r => r.RowNo).ToList();
+                    && notDone.Any(s => !string.IsNullOrWhiteSpace(s) && string.Equals(s.Trim(), r.Cells[column - 1].Trim(), StringComparison.OrdinalIgnoreCase)) // a blank entry a layout stored before the save check may hold (the fifth audit, item 6)
+                    && Declared(source, r)).Select(r => r.RowNo).ToList();
                 if (rows.Count == 0)
                 {
                     continue;
@@ -334,13 +336,13 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                 // the row's own share is what its parts leave; each part is a payment of its own, with its own person and decisions
                 var whole = hit.Amount;
                 var rest = whole - parts.Sum(p => p.Amount!.Value);
-                Emit(overlay, parts.Count == 0 ? null : rest, parts.Count == 0 ? 0 : 1, twinRows.Contains(rowId));
+                Emit(overlay, parts.Count == 0 ? null : rest, parts.Count == 0 ? 0 : 1, twinRows.Contains(rowId), twinRows.Contains(rowId) || twinByWord.Contains(rowId));
                 for (var n = 0; n < parts.Count; n++)
                 {
-                    Emit(parts[n], parts[n].Amount, n + 2, twinRows.Contains(rowId)); // a row a hand line already declares: none of its shares by default
+                    Emit(parts[n], parts[n].Amount, n + 2, twinRows.Contains(rowId), false); // a row a hand line already declares: none of its shares by default
                 }
 
-                void Emit(ReviewLine? decided, decimal? amount, int part, bool twin)
+                void Emit(ReviewLine? decided, decimal? amount, int part, bool twin, bool handLineTwin)
                 {
                     // a part of a row nobody of the register was found for has the payee its own category calls for (decision 108)
                     var shareDefault = part >= 2 && !shared && hit.PersonKey is null ? PayeeOf(hit, decided, rowId, pairTwin: false) : defaultPerson;
@@ -361,7 +363,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
                     var register = person is not null
                         ? registerByPersonId.GetValueOrDefault(person.Id)
                         : own.PersonKey is { } hk ? run.Persons.FirstOrDefault(p => p.Key == hk) : null;
-                    Place(FromHit(period, own, rowId, decided, person, shareDefault?.Id, register, catalog, shared, candidates, assumed.Contains(own.Source), twin, amount, part));
+                    Place(FromHit(period, own, rowId, decided, person, shareDefault?.Id, register, catalog, shared, candidates, assumed.Contains(own.Source), twin, amount, part, handLineTwin));
                 }
             }
         }
@@ -517,13 +519,22 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             // a line added by hand of the same amount for the payee this month, declaring something: the rent may be declared
             // there already — the row is not declared by default, and the person says so, until the accountant's tick or
             // untick on the row ends the word; one hand line pairs with one row
-            if (pairTwin && overlay?.Declare is null
+            if (pairTwin
                 && lines.FirstOrDefault(l => l.IsByHand && !twinHandLines.Contains(l.Id) && l.PersonId == payee.Id && l.Amount == hit.Amount && l.Declare != false
                     && l.Date is { } day && day.Year == period.Year && day.Month == period.Month && HandLineDeclares(l, payee)) is { } twin)
             {
-                twinHandLines.Add(twin.Id);
-                twinRows.Add(rowId);
-                ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeHandLine, $"{hit.Reference}: a line added by hand of the same amount stands for the person this month; the row is not declared by default (tick it when both are real).", Source: hit.Source, RowNo: hit.Row.RowNo));
+                if (overlay?.Declare is null)
+                {
+                    twinHandLines.Add(twin.Id);
+                    twinRows.Add(rowId);
+                    ProblemsOf(payee.Id).Add(new MatchProblem(MatchProblem.PayeeHandLine, $"{hit.Reference}: a line added by hand of the same amount stands for the person this month; the row is not declared by default (tick it when both are real).", Source: hit.Source, RowNo: hit.Row.RowNo));
+                }
+                else
+                {
+                    // the word ends the pairing: nothing paired, no hand line taken, nothing said; but the row's default turns
+                    // on the word being stored, so the word is kept as given (the fifth audit, item 11)
+                    twinByWord.Add(rowId);
+                }
             }
 
             return payee;
@@ -570,8 +581,13 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     }
 
     /// <summary>Whether the payment is declared, by the accountant's word; the default when null or equal to it.</summary>
-    public ReviewLine? SetDeclare(ReviewPayment payment, bool? declare) =>
-        Change(payment, l => l with { Declare = declare == payment.DefaultDeclare ? null : declare }, l => l with { Declare = declare == payment.DefaultDeclare ? null : declare });
+    public ReviewLine? SetDeclare(ReviewPayment payment, bool? declare)
+    {
+        // a row with a hand-line twin: its default turns on whether a word is stored, so a word equal to the default shown is
+        // still the accountant's — stored as no word it would bring the pairing back and undo itself (the fifth audit, item 11)
+        bool? Stored() => declare is null ? null : payment.HandLineTwin || declare != payment.DefaultDeclare ? declare : null;
+        return Change(payment, l => l with { Declare = Stored() }, l => l with { Declare = Stored() });
+    }
 
     public ReviewLine? SetNote(ReviewPayment payment, string? note) =>
         Change(payment, l => l with { Note = Clean(note) }, l => l with { Note = Clean(note) });
@@ -825,6 +841,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var codeChanged = !string.Equals(code, Clean(fresh.PersonalCode), StringComparison.Ordinal);
         var dropResidency = codeChanged && !residencyChanged && fresh.ResidencySource == LookupSource.Emta;
         var dropPension = codeChanged && !pensionChanged && fresh.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
+        var exemptionApplied = Pick(edited.BasicExemptionApplied, basis?.BasicExemptionApplied ?? edited.BasicExemptionApplied, fresh.BasicExemptionApplied);
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
@@ -841,8 +858,10 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             PensionSource = pensionChanged ? LookupSource.Manual : fresh.PensionSource,
             OnOldAgeOrFlexiblePension = Pick(edited.OnOldAgeOrFlexiblePension, basis?.OnOldAgeOrFlexiblePension ?? edited.OnOldAgeOrFlexiblePension, fresh.OnOldAgeOrFlexiblePension),
             PensionAgeYear = Pick(edited.PensionAgeYear, basis?.PensionAgeYear, fresh.PensionAgeYear),
-            BasicExemptionApplied = Pick(edited.BasicExemptionApplied, basis?.BasicExemptionApplied ?? edited.BasicExemptionApplied, fresh.BasicExemptionApplied),
-            BasicExemptionMonthly = Pick(edited.BasicExemptionMonthly, basis?.BasicExemptionMonthly, fresh.BasicExemptionMonthly),
+            BasicExemptionApplied = exemptionApplied,
+            // the person's own figure goes with the application: without it the figure refuses every payment
+            // (EXEMPTION_WITHOUT_APPLICATION), as the lookup and the non-residents' command already drop it (the fifth audit, item 20)
+            BasicExemptionMonthly = exemptionApplied ? Pick(edited.BasicExemptionMonthly, basis?.BasicExemptionMonthly, fresh.BasicExemptionMonthly) : null,
             SocialTaxMinimumApplies = Pick(edited.SocialTaxMinimumApplies, basis?.SocialTaxMinimumApplies ?? edited.SocialTaxMinimumApplies, fresh.SocialTaxMinimumApplies),
             Declaration = Pick(edited.Declaration, basis?.Declaration ?? edited.Declaration, fresh.Declaration),
             TypeFromCard = Pick(edited.TypeFromCard, basis?.TypeFromCard ?? edited.TypeFromCard, fresh.TypeFromCard),
@@ -889,7 +908,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
 
     /// <param name="partAmount">The share of a split row this payment is (its own share or a part's); null for a row not split.</param>
     /// <param name="part">The payment's place among the row's parts (<see cref="ReviewPayment.Part"/>).</param>
-    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false, decimal? partAmount = null, int part = 0)
+    private ReviewPayment FromHit(Period period, MatchHit hit, Guid rowId, ReviewLine? overlay, Person? person, Guid? defaultPersonId, MatchPerson? register, MatchCatalog catalog, bool shared, IReadOnlyList<string> candidates, bool directionAssumed, bool twin = false, decimal? partAmount = null, int part = 0, bool handLineTwin = false)
     {
         var amount = partAmount ?? hit.Amount;
         var defaultCategory = hit.Verdict.Kind == VerdictKind.Matched ? hit.Verdict.Category?.Name : null;
@@ -943,6 +962,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             ContractTypes = pick.InForce,
             DefaultDeclare = defaultDeclare,
             Declare = declare,
+            HandLineTwin = handLineTwin,
             InPeriod = hit.InPeriod,
             Counted = hit.Counted,
             Flags = hit.Flags,
@@ -1126,7 +1146,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             var refusedPayments = list.Where(u => u.Reason == Undeclared.Refused).Select(u => u.Payment).ToList();
             var held = refusedPayments.Where(p => p.TypeCode is not null).Select(p => p.TypeCode!).ToHashSet(StringComparer.Ordinal);
-            held.UnionWith(totalsLines.Where(t => refusedPayments.Any(p => t.References.Contains(p.Reference, StringComparer.Ordinal))).Select(t => t.TypeCode));
+            held.UnionWith(totalsLines.Where(t => refusedPayments.Any(p => Declare.PeriodDeclarer.AddsUp(t.References, p))).Select(t => t.TypeCode));
             foreach (var payment in payments.Where(p => p.Declare && p.Checks.Count == 0 && p.TypeCode is { } type && held.Contains(type)))
             {
                 list.Add(new Undeclared(payment, Undeclared.Held, [Undeclared.TypeHeld], false));

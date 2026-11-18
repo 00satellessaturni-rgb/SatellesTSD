@@ -346,6 +346,25 @@ public class XbrlGlTests
     }
 
     [Fact]
+    public void An_A1_case_whose_countries_say_the_other_case_is_refused_and_Greece_is_written_EL()
+    {
+        // the fifth audit, items 14 and 21: the file's classifiers and the taxes worked out must say the same case (KR_YLD2_07/09)
+        var type = PaymentTypes.Get("10");
+        var engine = new TaxEngine(TaxRates.Year2026);
+        PaymentLine Line(PayeeTaxFacts facts) => DeclarationLineFactory.Create("a1", 1, LineAction.R, type, facts, PayeeId.Mrr("A0003689779"), new DateOnly(2026, 10, 10),
+            engine.Calculate(new TaxInput(type, 1000m, false, 0m), facts));
+        var employee = PayeeTaxFacts.ResidentEmployee();
+
+        Assert.Throws<InvalidOperationException>(() => Line(employee with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "EE" }));
+        Assert.Throws<InvalidOperationException>(() => Line(employee with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "EE", WorkCountry = "FI" }));
+
+        // the codes written trimmed and in upper case, Greece's ISO GR as EL, the spelling of MTA's A1 list
+        var greek = Line(employee with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = " gr", WorkCountry = "ee " });
+        Assert.Contains(greek.ExtraAccountSubs, e => e.ParentCode == AccountSubEntry.RoleA1 && e.Id == "EL");
+        Assert.Contains(greek.ExtraAccountSubs, e => e.ParentCode == AccountSubEntry.RoleWorkLocation && e.Id == "EE");
+    }
+
+    [Fact]
     public void A_cancellation_line_carries_only_the_key_the_counter_and_T()
     {
         var xml = XbrlGlWriter.WriteLine(PaymentLine.Cancellation("Tehing_2111", 1));

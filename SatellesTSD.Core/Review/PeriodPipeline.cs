@@ -398,11 +398,13 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
             throw LayoutsRefusal.Of(LayoutsRefusal.NullEntry, "The layouts file holds an empty entry (null) among its layouts.");
         }
 
-        var problems = layouts.SelectMany(l => l.Problems().Select(p => $"{l.Id}: {p}")).ToList();
+        // the save's stricter check: an unusable date pattern or a blank state is refused here, though a stored one is still read (the fifth audit, item 6)
+        var problemsOf = layouts.Select(l => (Layout: l, Problems: l.SaveProblems())).ToList();
+        var problems = problemsOf.SelectMany(x => x.Problems.Select(p => $"{x.Layout.Id}: {p}")).ToList();
         if (problems.Count > 0)
         {
             throw LayoutsRefusal.Of(LayoutsRefusal.Unusable, "The layouts cannot be used:\n" + string.Join("\n", problems),
-                subject: string.Join(", ", layouts.Where(l => l.Problems().Count > 0).Select(l => l.Id)), detail: string.Join("\n", problems));
+                subject: string.Join(", ", problemsOf.Where(x => x.Problems.Count > 0).Select(x => x.Layout.Id)), detail: string.Join("\n", problems));
         }
 
         var repeated = layouts.GroupBy(l => l.Id, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => $"'{g.Key}' {g.Count()} times").ToList();
@@ -450,7 +452,7 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
 
     /// <summary>The phrases of a file saved over the ones in force (decision 202), refused whole by
     /// <see cref="Matching.MatchCatalog.WithPhrases"/>; a month's search keeps the catalog it ran with (decision 31), so the
-    /// new phrases find rows at its next "Sobita". The number of cells changed is given.</summary>
+    /// new phrases find rows at its next "Otsi maksed". The number of cells changed is given.</summary>
     public int ImportPhrases(string json)
     {
         var catalog = MatchCatalog().WithPhrases(json, out var changed);

@@ -314,6 +314,7 @@ public sealed class MainForm : Form
         _declaration.FeedbackRequested += async submission => await ReadFeedbackAsync(submission);
         _declaration.ConfirmedRequested += MarkConfirmed;
         _declaration.ReopenRequested += () => { if (Confirm(UiText.ReopenConfirm, UiText.Reopen)) { Declare(s => s.Submitter.Reopen(_view!.Period.Id), UiText.Reopen); } };
+        _declaration.UndoReopenRequested += async () => await UndoReopenAsync();
         _declaration.ResolveRequested += (payment, onServer) => Resolve(payment, onServer);
         _declaration.HistoryRequested += ShowHistory;
         FormClosing += OnClosing;
@@ -842,6 +843,14 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (dialog.FreshCheck is { } fresh)
+        {
+            // the offer as the window last found it: a withdrawn or overtaken one leaves the title and the button
+            // (the fifth audit, item 25)
+            _updateCheck = fresh;
+            ShowUpdateState();
+        }
+
         // the update did not go through. The copy the new version made of the store (one that was not there before, or
         // is another file now) goes on record: only a copy on record is offered to go back to (decision 156)
         if (upgraded is not null && Updater.CopyMadeSince(copiesBefore, upgraded) is { } made)
@@ -977,21 +986,24 @@ public sealed class MainForm : Form
         ReloadView();
     }
 
-    private async Task BuildLinesAsync()
+    /// <returns>Whether the lines were built: false when nothing was built (the month not editable, the card not settled, a
+    /// refusal, a failure), which "Loobu parandamisest" stops on.</returns>
+    private async Task<bool> BuildLinesAsync()
     {
         if (_services is null || _view is null || !Editable)
         {
-            return;
+            return false;
         }
 
         if (!SettleCard())
         {
-            return;
+            return false;
         }
 
         var services = _services;
         var periodId = _view.Period.Id;
         var mode = DeclarationMode;
+        var built = false;
         await RunBusyAsync(async () =>
         {
             BuildReport report;
@@ -1021,6 +1033,7 @@ public sealed class MainForm : Form
                 return;
             }
 
+            built = true;
             Log($"{UiText.BuildLines} ({(mode == Core.Declare.DeclarationMode.TotalsPerType ? UiText.ModeTotals : UiText.ModeEach)}): {report.Count(LineChange.New)} uut, {report.Count(LineChange.Replaced)} asendatud, {report.Count(LineChange.Changed)} muudatust (M), {report.Count(LineChange.Cancelled)} tühistust (T), {report.Count(LineChange.Kept)} jäi, {report.Count(LineChange.Deleted)} kustutatud");
             foreach (var person in report.Persons)
             {
@@ -1046,6 +1059,45 @@ public sealed class MainForm : Form
                 Log("   " + problem);
             }
         });
+        ReloadView();
+        return built;
+    }
+
+    /// <summary>"Loobu parandamisest": the lines built first, as "Koosta read" builds them, so a review changed since the
+    /// reopen is checked against the server; the period is Confirmed again only when no draft is left (the fifth audit,
+    /// item 8).</summary>
+    private async Task UndoReopenAsync()
+    {
+        if (_services is null || _view is null || _busy || !Confirm(UiText.UndoReopenConfirm, UiText.UndoReopen))
+        {
+            return;
+        }
+
+        if (!await BuildLinesAsync())
+        {
+            return;
+        }
+
+        if (_services is null || _view is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _services.Submitter.UndoReopen(_view.Period.Id);
+            Log(UiText.UndoReopenDone);
+        }
+        catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
+        {
+            Log($"{UiText.UndoReopen}: {e.Message}");
+            Inform(UiText.UndoReopenHasDrafts(e.DraftLines.Count), UiText.UndoReopen);
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+
         ReloadView();
     }
 
@@ -1301,7 +1353,7 @@ public sealed class MainForm : Form
             foreach (var outcome in outcomes)
             {
                 Log(outcome.Confirmation is { } confirmation
-                    ? $"{UiText.ReadFeedback} {outcome.Source}: kinnitamise raport — {confirmation}"
+                    ? UiText.ConfirmationReportLine(outcome.Source, confirmation)
                     : $"{UiText.ReadFeedback} {outcome.Source}: {outcome.Recorded} rida; {string.Join(", ", outcome.Statuses.Select(kv => $"{UiText.PaymentStatusText(kv.Key)} {kv.Value}"))}");
                 if (outcome.RefusedOverLines.Count > 0)
                 {

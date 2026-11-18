@@ -17,6 +17,8 @@ public class PaymentChecksTests
         yield return Case(PaymentChecks.ZeroNotAllowed, PaymentTypes.Get("21"), PayeeTaxFacts.ResidentEmployee(), 0m);
         yield return Case(PaymentChecks.TypePayeeMismatch, PaymentTypes.Get("120"), PayeeTaxFacts.ResidentEmployee(), 100m);
         yield return Case(PaymentChecks.A1CountriesMissing, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.EstonianA1WorkAbroad }, 100m);
+        yield return Case(PaymentChecks.A1CountriesInconsistent, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "EE" }, 100m);
+        yield return Case(PaymentChecks.A1CountriesInconsistent, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "EE", WorkCountry = "FI" }, 100m);
         yield return Case(PaymentChecks.PensionNotChecked, Salary, new PayeeTaxFacts(Residency.Resident), 100m);
         yield return Case(PaymentChecks.PensionRateUnknown, Salary, new PayeeTaxFacts(Residency.Resident, FundedPensionMember: true), 100m);
         yield return Case(PaymentChecks.PensionRateInvalid, Salary, PayeeTaxFacts.ResidentEmployee(pensionRate: 1.5m), 100m);
@@ -43,13 +45,31 @@ public class PaymentChecksTests
             var type = (PaymentType)caseData[1];
             var facts = (PayeeTaxFacts)caseData[2];
             var amount = (decimal)caseData[3];
-            if (code is PaymentChecks.ZeroNotAllowed or PaymentChecks.A1CountriesMissing or PaymentChecks.MinimumShareInvalid)
+            if (code is PaymentChecks.ZeroNotAllowed or PaymentChecks.A1CountriesMissing or PaymentChecks.A1CountriesInconsistent or PaymentChecks.MinimumShareInvalid)
             {
                 continue; // refused by the line factory, the zero-line helper or the allocator rather than the engine
             }
 
             Assert.ThrowsAny<Exception>(() => Engine.Calculate(new TaxInput(type, amount, false, 0m), facts));
         }
+    }
+
+    [Fact]
+    public void An_A1_case_whose_countries_agree_with_it_is_not_refused_and_a_type_without_an_A1_variant_ignores_them()
+    {
+        // the fifth audit, items 14 and 21: an Estonian A1 is EE with work abroad, a foreign A1 another country with work in EE
+        var resident = PayeeTaxFacts.ResidentEmployee();
+        Assert.Empty(PaymentChecks.Check(Salary, resident with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "FI" }, 100m, Rates));
+        Assert.Empty(PaymentChecks.Check(Salary, resident with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "LV", WorkCountry = "EE" }, 100m, Rates));
+        Assert.Empty(PaymentChecks.Check(Salary, resident with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "ee", WorkCountry = " fi " }, 100m, Rates));
+        Assert.Empty(PaymentChecks.Check(Salary, resident with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = " lv", WorkCountry = "ee " }, 100m, Rates));
+
+        // a type with no A1 variant (rent) declares no A1 case: contradictory countries refuse nothing
+        Assert.Empty(PaymentChecks.Check(PaymentTypes.Get("50"), resident with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "EE" }, 100m, Rates));
+
+        // a missing country is refused as missing, not as contradictory
+        var missing = PaymentChecks.Check(Salary, resident with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "EE" }, 100m, Rates);
+        Assert.Equal([PaymentChecks.A1CountriesMissing], missing.Select(r => r.Code));
     }
 
     [Fact]
