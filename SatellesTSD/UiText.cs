@@ -1,7 +1,9 @@
 using SatellesTSD.Core.Lookups;
+using SatellesTSD.Core.Matching;
 using SatellesTSD.Core.Model;
 using SatellesTSD.Core.Review;
 using SatellesTSD.Core.Store;
+using SatellesTSD.Core.Tax;
 
 namespace SatellesTSD;
 
@@ -333,6 +335,20 @@ internal static class UiText
             : $"Maksuvaba avaldus on märgitud {count} mitteresidendil. Eemaldada märge neilt kõigilt?")
         + " Muud andmed ei muutu; üksiku isiku märke saab kaardil tagasi panna.";
 
+    public const string ExemptionOnNonResidents = "Märgi mitteresidentidele maksuvaba avaldus";
+    public const string ExemptionOnLeftOut = "jäetud vahele (kaardil EMP-väline residentsusriik)";
+
+    public static string ExemptionOnNone(int outsideEea) =>
+        "Selle kuu isikute seas ei ole mitteresidenti, kellele maksuvaba avalduse saaks märkida."
+        + (outsideEea > 0 ? $" {outsideEea} mitteresidendi kaardil on EMP-väline residentsusriik; neile seda ei märgita." : "");
+
+    public static string ExemptionOnQuestion(int count, int outsideEea) =>
+        (count == 1 ? "Maksuvaba avaldus ei ole märgitud 1 mitteresidendil. Märkida see talle?"
+            : $"Maksuvaba avaldus ei ole märgitud {count} mitteresidendil. Märkida see neile kõigile?")
+        + (outsideEea > 0 ? $" {outsideEea} mitteresidenti, kelle kaardil on EMP-väline residentsusriik, jäetakse vahele." : "")
+        + " Mitteresident saab maksuvaba tulu ainult EMP riigi residendina residentsustõendiga. Oma kuusummat ei taastata:"
+        + " kehtib seaduse järgi maksuvaba tulu, kuni kaardile sisestatakse muu summa. Muud andmed ei muutu.";
+
     public const string LookupsLive = "Päringud lähevad EMTA ja Pensionikeskuse avalikele lehtedele, üks isik korraga. Jätkata?";
     public const string UnsavedPerson = "Isiku andmetes on salvestamata muudatused. Salvestada need?";
     public const string BusyClosing = "Töö käib. Oota, kuni see lõpeb, või katkesta see enne sulgemist.";
@@ -504,7 +520,41 @@ internal static class UiText
     }
 
     /// <summary>A refusal the window words itself (the card's save, a file's removal), or null: the exception's own text then.</summary>
-    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : FileRefused(refusal);
+    public static string? Worded(Exception refusal) => refusal is ReviewException review ? CardRefused(review) : PhrasesRefused(refusal) ?? FileRefused(refusal);
+
+    /// <summary>A refusal of the category phrases' file, in Estonian by its code (decision 202); null for any other.</summary>
+    public static string? PhrasesRefused(Exception refusal)
+    {
+        var subject = PhrasesRefusal.SubjectOf(refusal);
+        var said = PhrasesRefusal.CodeOf(refusal) switch
+        {
+            PhrasesRefusal.NotJson => "Fail ei ole loetav JSON.",
+            PhrasesRefusal.NotPhrases => $"Fail ei ole kategooriate fraaside fail (\"kind\": \"{MatchCatalog.PhrasesKind}\" ja \"sets\").",
+            PhrasesRefusal.UnknownSet => $"Failis on filtrikomplekt „{subject}“, mida rakendus ei tunne. Komplektid on sisseehitatud; alustage salvestatud failist.",
+            PhrasesRefusal.UnknownCategory => $"Failis on kategooria, mida rakendus ei tunne ({subject}). Kategooriad on sisseehitatud; nime saab muuta ainult fraasides.",
+            PhrasesRefusal.BadCell when subject is not null => $"Fraasid ei ole loetavad ({subject}): {refusal.Message[(refusal.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}",
+            PhrasesRefusal.BadCell => "Fraasid ei ole loetavad: " + refusal.Message,
+            _ => null,
+        };
+        return said is null ? null : said + " Midagi ei salvestatud.";
+    }
+
+    public const string Phrases = "Kategooriate fraasid…";
+    public const string PhrasesTitle = "Kategooriate fraasid";
+    public const string PhrasesSet = "Filtrikomplekt";
+    public const string PhrasesCategory = "Kategooria";
+    public const string PhrasesInclude = "Sisaldab";
+    public const string PhrasesExclude = "Välja arvatud";
+    public const string PhrasesImport = "Impordi failist…";
+    public const string PhrasesSave = "Salvesta faili…";
+    public const string PhrasesReset = "Taasta sisseehitatud";
+    public const string PhrasesFilter = "Fraaside fail (*.json)|*.json|Kõik failid (*.*)|*.*";
+    public const string PhrasesBuiltIn = "Kehtivad sisseehitatud fraasid.";
+    public const string PhrasesOwn = "Kehtivad omad fraasid (imporditud failist).";
+    public const string PhrasesResetConfirm = "Taastada sisseehitatud fraasid? Omad fraasid kustutatakse; kuu otsing kasutab neid järgmisel „Sobita“ käivitamisel.";
+    public static string PhrasesSaved(string path) => $"{PhrasesTitle}: salvestatud {path}";
+    public static string PhrasesImported(int changed) => $"{PhrasesTitle}: imporditud, muudetud lahtreid {changed}. Kuu otsing kasutab uusi fraase järgmisel „Sobita“ käivitamisel.";
+    public const string PhrasesResetDone = PhrasesTitle + ": taastatud sisseehitatud fraasid. Kuu otsing kasutab neid järgmisel „Sobita“ käivitamisel.";
     public const string CutChangedSinceBuild = "Deklaratsiooni lõige on pärast „Koosta read“ muudetud (Seaded): mustandid on teises lõikes. Eksportida need siiski? (Muidu vajuta uuesti „Koosta read“.)";
     public const string RunStaleReport = "Perioodi maksed on otsimata või failid muutusid pärast otsingut: aruanne ei sisalda kõiki makseid. Koostada aruanne siiski?";
     public static string HistoryRejectedBy(int version) => $"tagasi lükatud: hilisem versioon v{version} sai KR_XBRL_VALJAMAKSED_5 või _6 (võti ei ole serveris)";
@@ -546,6 +596,223 @@ internal static class UiText
         Core.Declare.LineChange.Deleted => "kustutatud",
         _ => change.ToString(),
     };
+    public const string Rules = "Reeglite tabel…";
+    public static string RulesTitle(int year) => $"Reeglite tabel {year}: väljamakse liigid ja maksud";
+    public const string RulesYearMissing = "Selle aasta määrasid rakendus ei tunne; tabel näitab 2026. aasta omi.";
+    public const string RulesSearch = "Otsi (kood, nimetus, TÖR liik):";
+    public const string RulesOnlyCase = "Ainult selle residentsuse liigid";
+    public const string RulesPensionMember = "II samba liige";
+    public const string RulesPensionAge = "Pensioniea aasta";
+    public const string RulesA1None = "A1 puudub";
+    public const string RulesA1Estonian = "Eesti A1 (töö välismaal)";
+    public const string RulesA1Foreign = "Välisriigi A1 (töö Eestis)";
+    public const string RulesTreaty = "Lepingumäär, %:";
+    public const string RulesCode = "Kood";
+    public const string RulesName = "Nimetus";
+    public const string RulesSection = "Osa";
+    public const string RulesPayee = "Saaja";
+    public const string RulesTor = "TÖR liik";
+    public const string RulesIncomeTax = "Tulumaks";
+    public const string RulesExemption = "Maksuvaba";
+    public const string RulesSocialTax = "Sotsiaalmaks";
+    public const string RulesMinimum = "SM miinimum";
+    public const string RulesUnemploymentEmployee = "TK kindlustatu";
+    public const string RulesUnemploymentEmployer = "TK tööandja";
+    public const string RulesFundedPension = "II sammas";
+    public const string RulesZero = "Null lubatud";
+    public const string RulesTreatyAllowed = "Lepingumäär";
+    public const string RulesThirdPillar = "MVT_640";
+    public const string RulesNone = "—";
+    public const string RulesTreatyRefused = "keelatud lepingumäär";
+    public const string RulesTreatyRefusedTip = "Lepingumäär peab olema täisprotsent 0-st kuni liigi oma määrani; muu määraga makse arvutus keelab (TREATY_RATE_INVALID).";
+    public const string RulesAllowed = "lubatud";
+    public const string RulesOtherPayee = "Teise residentsusega saaja kood: arvutus keelab selle valitud isikule (TYPE_PAYEE_MISMATCH).";
+    public const string RulesRatesTitle = "Määrad ja summad";
+    public const string RulesRateName = "Maks või summa";
+    public const string RulesRateValue = "Kehtib";
+    public const string RulesRateField = "TSD väli";
+    public const string RulesNotesTitle = "Muud tingimused";
+    public static string RulesShown(int shown, int all) => $"Näidatud {shown} liiki {all}-st.";
+
+    /// <summary>The rates and amounts in force of a year, worded: name, figure, the TSD field (decision 203).</summary>
+    public static IReadOnlyList<(string Name, string Value, string Field)> RatesInForce(TaxRates rates)
+    {
+        var et = System.Globalization.CultureInfo.GetCultureInfo("et-EE");
+        string Percent(decimal fraction) => (fraction * 100m).ToString("0.##", et) + " %";
+        string Euro(decimal amount) => amount.ToString("#,##0.00", et) + " €";
+        var own = PaymentTypes.All.Where(t => t.IncomeTaxRate is { } r && r != rates.IncomeTax).GroupBy(t => t.IncomeTaxRate!.Value)
+            .Select(g => $"{Percent(g.Key)} liigil {string.Join(", ", g.Select(t => t.Code))}").ToList();
+        var minimum = Math.Round(rates.SocialTaxMinimumBase * rates.SocialTax, 2, MidpointRounding.AwayFromZero);
+        return
+        [
+            ("Tulumaks", Percent(rates.IncomeTax) + (own.Count > 0 ? "; " + string.Join("; ", own) : ""), "TSD_TM"),
+            ("Sotsiaalmaks", Percent(rates.SocialTax), "TSD_SM"),
+            ("Töötuskindlustusmakse, kindlustatu", Percent(rates.UnemploymentEmployee), "TSD_TK"),
+            ("Töötuskindlustusmakse, tööandja", Percent(rates.UnemploymentEmployer), "TSD_TTK"),
+            ("Kohustuslik kogumispension (II sammas)", "2 %, 4 % või 6 % (isiku oma määr)", "TSD_KP"),
+            ("Sotsiaalmaksu kuumäär (miinimumi alus)", Euro(rates.SocialTaxMinimumBase) + " kuus", "SM_KUUMAAR"),
+            ("Sotsiaalmaksu miinimum", $"{Euro(minimum)} kuus ({Euro(rates.SocialTaxMinimumBase)} × {Percent(rates.SocialTax)}); kuu osa = päevad / 30", "TSD_KUUMSUURENDUS"),
+            ("Maksuvaba tulu", Euro(rates.BasicExemptionMonth) + " kuus", "MVT_610"),
+            ("Maksuvaba tulu pensioniea aastal", Euro(rates.PensionAgeExemptionMonth) + " kuus", "MVT_650"),
+        ];
+    }
+
+    /// <summary>The conditions the matrix's toggles do not show, in words (decision 203).</summary>
+    public static IReadOnlyList<string> RulesNotes() =>
+    [
+        $"SM miinimum kehtib TÖR liikidel {string.Join(", ", EmploymentTypes.All.Where(e => e.SocialTaxMinimum).Select(e => $"{e.TorTypeId} {e.Name}"))}; kuu osa on päevad / 30. Kui isik on kuu registris puudu, miinimumi ei ole (NO_EMPLOYMENT_IN_MONTH).",
+        "SM miinimum ei kehti SMS § 2 lg 4 juhtudel (riikliku pensioni saaja, vähenenud töövõimega isik, alla 3-aastase lapse või kolme alla 19-aastase lapse vanem, õpilane või üliõpilane jt) ega teisel tööandjal, kui miinimumi kannab maksuvaba tulu arvestav tööandja; märge on isiku kaardil.",
+        "Mitteresident saab maksuvaba tulu ainult EMP riigi residendina residentsustõendiga (KR_MVT_06/07); kaardil EMP-väline riik keelab selle (EXEMPTION_NOT_EEA).",
+        "Maksuvaba tulu ei ületa makset, millest on maha arvatud II sammas ja töötuskindlustusmakse (KR_MVT_08); kuu maksuvaba jagatakse isiku maksete vahel.",
+        "Vanadus- või paindliku vanaduspensioni saajalt kindlustatu töötuskindlustusmakset ei peeta kinni (KR_TK_2).",
+        "Välisriigi A1 tõendiga töötaja Eestis: sotsiaalmaks, töötuskindlustusmakse ja II sammas puuduvad. Eesti A1 tõendiga töö välismaal: tulumaks puudub. A1 mõjub ainult liikidel, millel on A1 variant.",
+        $"Lepingumäär asendab tulumaksu määra ainult mitteresidendile residentsustõendiga, liikidel {string.Join(", ", PaymentTypes.All.Where(t => t.TreatyRateAllowed).Select(t => t.Code))}; täisprotsent, mitte üle liigi oma määra (TREATY_RATE_INVALID).",
+        "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäide kasutab 820 €, küsimus on lahtine.",
+    ];
+
+    public const string Simulation = "Simulatsioon…";
+    public const string SimTitle = "Simulatsioon: näidisisiku deklaratsioon";
+    public const string SimMonth = "Kuu:";
+    public const string SimRegisterLabel = "TÖR:";
+    public const string SimCut = "Lõige:";
+    public const string SimListed = "registris, allolevate töötamistega";
+    public const string SimNotListed = "kuu registris isikut ei ole";
+    public const string SimNoRegister = "kuul registrit ei ole";
+    public const string SimCardTitle = "Isiku kaart";
+    public const string SimFirstName = "Eesnimi";
+    public const string SimLastName = "Perenimi";
+    public const string SimCode = "Isikukood";
+    public const string SimMrr = "MRR kood";
+    public const string SimCountry = "Residentsuse riik";
+    public const string SimUnchecked = "kontrollimata";
+    public const string SimPensionAgeYear = "Pensioniea aasta";
+    public const string SimA1Country = "A1 riik";
+    public const string SimWorkCountry = "Töö riik";
+    public const string SimCardType = "Kaardi TÖR liik";
+    public const string SimNoCardType = "(puudub)";
+    public const string SimTypeFromCard = "Kaardi töötamise liik kõigile maksetele";
+    public const string SimEmploymentsTitle = "Töötamised registris";
+    public const string SimStart = "Algus";
+    public const string SimEnd = "Lõpp";
+    public const string SimPauseStart = "Peatamise algus";
+    public const string SimPauseEnd = "Peatamise lõpp";
+    public const string SimRowsTitle = "Pangaread (väljamaksed)";
+    public const string SimDate = "Kuupäev";
+    public const string SimPayee = "Saaja";
+    public const string SimDescription = "Selgitus";
+    public const string SimCurrency = "Valuuta";
+    public const string SimMoneyIn = "Laekumine";
+    public const string SimBySearch = "(otsingu järgi)";
+    public const string SimTypeCode = "Liik";
+    public const string SimDeclare = "Deklareeri";
+    public const string SimRun = "Käivita";
+    public const string SimOpen = "Ava…";
+    public const string SimSave = "Salvesta…";
+    public const string SimLinesTab = "Read";
+    public const string SimReviewTab = "Ülevaatus";
+    public const string SimXmlTab = "XML";
+    public const string SimLineKey = "Rida";
+    public const string SimAction = "Toiming";
+    public const string SimNet = "Neto";
+    public const string SimGross = "Bruto";
+    public const string SimIncrease = "SM lisa";
+    public const string SimSource = "Allikas";
+    public const string SimNameMissing = "Isiku ees- ja perenimi on vajalikud.";
+    public const string SimNoRows = "Lisa vähemalt üks pangarida.";
+    public const string SimNotAScenario = "Fail ei ole selle rakenduse salvestatud simulatsioon.";
+    public const string SimFilter = "Simulatsioon (*.json)|*.json|Kõik failid (*.*)|*.*";
+    public static string SimNotANumber(string label, string text) => $"{label}: „{text}“ ei ole arv.";
+    public static string SimNotADay(string label, string text) => $"{label}: „{text}“ ei ole kuupäev (pp.kk.aaaa).";
+    public static string SimEmploymentIncomplete(int row) => $"Töötamise rida {row}: liik ja algus on vajalikud.";
+    public static string SimRowIncomplete(int row) => $"Pangarida {row}: kuupäev ja summa on vajalikud.";
+    public const string SimTreaty = "Lepingumäär, %";
+    public const string SimPensionYearInvalid = "Pensioniea aasta peab olema aastaarv (1900–2200).";
+    public const string SimNoLines = "Isikule ei koostatud ühtegi rida: faili ei ole, mida kirjutada.";
+    public const string SimOwnPhrases = "Kategooriad otsiti omade fraasidega (imporditud failist).";
+    public const string SimBuiltInPhrases = "Kategooriad otsiti sisseehitatud fraasidega.";
+    public static string SimImportRefused(string reason) => "Näidist ei saanud lugeda: " + reason;
+
+    /// <summary>Why the simulation stopped before the build, worded as the main window words the same refusal; null when it
+    /// did not stop.</summary>
+    public static string? SimStop(SimResult result) =>
+        result.RefusalError is { } e ? Worded(e) ?? e.Message
+        : result.Refusal is { } reason ? SimImportRefused(reason)
+        : null;
+
+    /// <summary>The XML tab's text: the file, or why there is none.</summary>
+    public static string SimXmlText(SimResult result) =>
+        result.Xml
+        ?? (result.XmlRefusalError is { } e ? Worded(e) ?? e.Message : null)
+        ?? SimStop(result)
+        ?? SimNoLines;
+
+    /// <summary>A simulation's review in words (decision 204): the steps, the refusal, every payment with what blocks it,
+    /// the payments left out and why, the build's problems and the minimum, the totals.</summary>
+    public static string SimReport(SimResult result)
+    {
+        var et = System.Globalization.CultureInfo.GetCultureInfo("et-EE");
+        string Euro(decimal amount) => amount.ToString("#,##0.00", et) + " €";
+        var text = new System.Text.StringBuilder();
+        if (SimStop(result) is { } refusal)
+        {
+            text.AppendLine("PEATUS: " + refusal).AppendLine();
+        }
+
+        text.AppendLine(result.OwnPhrases ? SimOwnPhrases : SimBuiltInPhrases);
+        text.AppendLine("Sammud:");
+        foreach (var step in result.Steps)
+        {
+            text.AppendLine("  " + step);
+        }
+
+        if (result.Review is { } review)
+        {
+            text.AppendLine().AppendLine("Maksed:");
+            foreach (var payment in review.Payments)
+            {
+                text.AppendLine($"  [{payment.RowNo}] {payment.Date?.ToString("dd.MM.yyyy", et)} {Euro(payment.Amount)} {payment.Description} — {payment.Category ?? NoCategory}, liik {payment.TypeCode ?? RulesNone}, {(payment.Declare ? "deklareeritakse" : "ei deklareerita")}");
+                foreach (var blocker in payment.Blockers)
+                {
+                    text.AppendLine($"      {blocker.Code}: {blocker.Message}");
+                }
+            }
+
+            if (review.Undeclared.Count > 0)
+            {
+                text.AppendLine().AppendLine("Deklareerimata:");
+                foreach (var left in review.Undeclared)
+                {
+                    text.AppendLine($"  [{left.Payment.RowNo}] {Euro(left.Payment.Amount)}: {UndeclaredReason(left)}");
+                }
+            }
+        }
+
+        if (result.Build is { } build)
+        {
+            text.AppendLine().AppendLine($"SM miinimum: kohustus {Euro(build.MinimumDue)} (kuu osa {build.MinimumShare.ToString("0.####", et)}), puudu {Euro(build.MinimumShortfall)}{(build.TopUpKey is { } key ? $", lisarida {key}" : "")}.");
+            text.AppendLine($"Maksuvaba: pakutud {Euro(build.ExemptionOffered)}, alles {Euro(build.ExemptionLeft)}.");
+        }
+
+        var problems = (result.Build?.Problems ?? []).Concat(result.BuildProblems).Distinct().ToList();
+        if (problems.Count > 0)
+        {
+            text.AppendLine().AppendLine("Probleemid:");
+            foreach (var problem in problems)
+            {
+                text.AppendLine("  " + problem);
+            }
+        }
+
+        var t = result.Totals;
+        text.AppendLine().AppendLine($"Kokku {t.Lines} rida: neto {Euro(t.Net)}, TM {Euro(t.IncomeTax)}, SM {Euro(t.SocialTax)}, TK {Euro(t.UnemploymentEmployee)}, TTK {Euro(t.UnemploymentEmployer)}, KP {Euro(t.FundedPension)}; maksud kokku {Euro(t.Taxes)}.");
+        if (result.Xml is null && result.Refusal is null)
+        {
+            text.AppendLine().AppendLine("XML puudub: " + SimXmlText(result));
+        }
+
+        return text.ToString();
+    }
+
     public const string CalculatorTitle = "Kalkulaator";
     public const string AmountIsNet = "neto (väljamakstud)";
     public const string AmountIsGross = "bruto";

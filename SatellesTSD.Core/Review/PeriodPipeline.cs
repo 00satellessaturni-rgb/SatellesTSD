@@ -412,6 +412,39 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
         RefreshImporter();
     }
 
+    /// <summary>The match catalog the next search runs with: the owner's saved one, else the built-in one.</summary>
+    public MatchCatalog MatchCatalog() => new MatchRunner(_store).Catalog();
+
+    /// <summary>Whether phrases of the owner's are in force over the built-in ones.</summary>
+    public bool OwnPhrases => _store.SavedMatchCatalog() is not null;
+
+    /// <summary>The category phrases in force as a file (decision 202): the shape <see cref="ImportPhrases"/> takes back.</summary>
+    public string ExportPhrases() => MatchCatalog().PhrasesToJson();
+
+    /// <summary>The phrases of a file saved over the ones in force (decision 202), refused whole by
+    /// <see cref="Matching.MatchCatalog.WithPhrases"/>; a month's search keeps the catalog it ran with (decision 31), so the
+    /// new phrases find rows at its next "Sobita". The number of cells changed is given.</summary>
+    public int ImportPhrases(string json)
+    {
+        var catalog = MatchCatalog().WithPhrases(json, out var changed);
+
+        // only the cells that differ from the built-in ones are kept: a later release's own cells, sets, categories and
+        // layouts still reach the search; a file that says nothing of its own leaves the built-in phrases in force
+        if (catalog.PhrasesOver(Matching.MatchCatalog.Default) is { } own)
+        {
+            _store.SaveMatchCatalog(own);
+        }
+        else
+        {
+            _store.ClearMatchCatalog();
+        }
+
+        return changed;
+    }
+
+    /// <summary>Back to the built-in phrases (and the built-in catalog whole).</summary>
+    public void ResetPhrases() => _store.ClearMatchCatalog();
+
     private void RefreshImporter() => _importer = _importer.WithCatalog(LayoutCatalog.Default.WithOverrides(_store.Layouts()));
 
     /// <summary>The company's files no period lists any more (unlinked everywhere, or left when a month was cleared).</summary>

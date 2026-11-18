@@ -162,6 +162,159 @@ public sealed class MatchCatalog
         return problems;
     }
 
+    /// <summary>What the category phrases' file says it is.</summary>
+    public const string PhrasesKind = "satellestsd-category-phrases";
+
+    /// <summary>The words and phrases that find each category — the filter cells of every set, "include,include;exclude"
+    /// — as a file of their own (decision 202): the categories, the layouts' sets and the aliases are not in it.</summary>
+    public string PhrasesToJson() => JsonSerializer.Serialize(
+        new PhrasesDocument(PhrasesKind, FilterSets.ToDictionary(s => s.Key, s => (Dictionary<string, string>?)s.Value.ToDictionary(c => c.Key, c => c.Value, StringComparer.Ordinal), StringComparer.Ordinal)),
+        LayoutCatalog.Json);
+
+    /// <summary>This catalog with the phrases of a file over it (decision 202): each cell the file names replaces the one of
+    /// its set and category; a cell, a set or a category the file does not name stays. The file is refused whole — a
+    /// refusal's code and subject in its data (<see cref="PhrasesRefusal"/>) — when it is no phrases' file, or names a set
+    /// or a category the catalog does not have (the categories and the sets are the built-in ones: the review lines and
+    /// the runs keep category names), or a cell that cannot be read. The number of cells it changed is given.</summary>
+    public MatchCatalog WithPhrases(string json, out int changed) => Merge(json, lenient: false, out changed);
+
+    /// <summary>This catalog with the owner's saved phrases over it (decision 202): the cells the store keeps, those that
+    /// differ from the built-in ones. A cell whose set or category a later release no longer has, or that no longer reads,
+    /// is left out rather than refusing the search: the built-in catalog of the release in use stays the base.</summary>
+    public MatchCatalog WithSavedPhrases(string json) => Merge(json, lenient: true, out _);
+
+    /// <summary>Whether a saved catalog document is the owner's phrases (laid over the built-in catalog) rather than a
+    /// catalog whole.</summary>
+    public static bool IsPhrases(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        try
+        {
+            return JsonSerializer.Deserialize<PhrasesDocument>(json.TrimStart('﻿', ' ', '\t', '\r', '\n'), LayoutCatalog.Json) is { Kind: PhrasesKind };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The phrases of this catalog that differ from <paramref name="baseline"/>'s, as a phrases' file; null when
+    /// none differs. What the store keeps of an import (decision 202), so a later release's own cells, sets, categories
+    /// and layouts still reach the search.</summary>
+    public string? PhrasesOver(MatchCatalog baseline)
+    {
+        ArgumentNullException.ThrowIfNull(baseline);
+        var sets = new Dictionary<string, Dictionary<string, string>?>(StringComparer.Ordinal);
+        foreach (var (setName, cells) in FilterSets)
+        {
+            baseline.FilterSets.TryGetValue(setName, out var before);
+            var own = cells.Where(c => before is null || !before.TryGetValue(c.Key, out var b) || !string.Equals(b, c.Value, StringComparison.Ordinal))
+                .ToDictionary(c => c.Key, c => c.Value, StringComparer.Ordinal);
+            if (own.Count > 0)
+            {
+                sets[setName] = own;
+            }
+        }
+
+        return sets.Count == 0 ? null : JsonSerializer.Serialize(new PhrasesDocument(PhrasesKind, sets), LayoutCatalog.Json);
+    }
+
+    private MatchCatalog Merge(string json, bool lenient, out int changed)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        var text = json.TrimStart('﻿', ' ', '\t', '\r', '\n');
+        PhrasesDocument? file;
+        try
+        {
+            file = text.Length == 0 ? null : JsonSerializer.Deserialize<PhrasesDocument>(text, LayoutCatalog.Json);
+        }
+        catch (JsonException e) when (!lenient)
+        {
+            throw PhrasesRefusal.Of(PhrasesRefusal.NotJson, "The category phrases' file is not valid JSON: " + e.Message, null, e);
+        }
+        catch (JsonException)
+        {
+            changed = 0;
+            return this;
+        }
+
+        if (file is null || !string.Equals(file.Kind, PhrasesKind, StringComparison.Ordinal) || file.Sets is not { Count: > 0 } sets)
+        {
+            if (lenient)
+            {
+                changed = 0;
+                return this;
+            }
+
+            throw PhrasesRefusal.Of(PhrasesRefusal.NotPhrases, $"The file is not a category phrases' file (\"kind\": \"{PhrasesKind}\" with its \"sets\").");
+        }
+
+        var merged = FilterSets.ToDictionary(s => s.Key, s => new Dictionary<string, string>(s.Value, StringComparer.Ordinal), StringComparer.Ordinal);
+        changed = 0;
+        foreach (var (setName, cells) in sets)
+        {
+            if (!merged.TryGetValue(setName, out var target))
+            {
+                if (lenient)
+                {
+                    continue;
+                }
+
+                throw PhrasesRefusal.Of(PhrasesRefusal.UnknownSet, $"The file names a filter set '{setName}' the catalog does not have ({string.Join(", ", merged.Keys)}).", setName);
+            }
+
+            foreach (var (categoryName, cell) in cells ?? [])
+            {
+                if (Find(categoryName) is not { } category)
+                {
+                    if (lenient)
+                    {
+                        continue;
+                    }
+
+                    throw PhrasesRefusal.Of(PhrasesRefusal.UnknownCategory, $"The file names a category '{categoryName}' (set '{setName}') the catalog does not have.", $"{setName} / {categoryName}");
+                }
+
+                var value = cell ?? "";
+                if (PatternList.Parse(value).Problems() is { Count: > 0 } problems)
+                {
+                    if (lenient)
+                    {
+                        continue;
+                    }
+
+                    throw PhrasesRefusal.Of(PhrasesRefusal.BadCell, $"Set '{setName}', category '{category.Name}': {string.Join("; ", problems)}", $"{setName} / {category.Name}");
+                }
+
+                // the cell under the catalog's own spelling of the name (names are compared case-insensitively)
+                var key = target.Keys.FirstOrDefault(k => string.Equals(k, categoryName, StringComparison.OrdinalIgnoreCase)) ?? category.Name;
+                if (!target.TryGetValue(key, out var before) || !string.Equals(before, value, StringComparison.Ordinal))
+                {
+                    target[key] = value;
+                    changed++;
+                }
+            }
+        }
+
+        var catalog = new MatchCatalog(new Document(
+            Categories.ToList(),
+            merged.ToDictionary(s => s.Key, s => (Dictionary<string, string>?)s.Value, StringComparer.Ordinal),
+            LayoutFilterSets.ToDictionary(l => l.Key, l => l.Value, StringComparer.Ordinal),
+            Aliases.Select(g => (List<string>?)g.ToList()).ToList()));
+        if (catalog.Validate() is { Count: > 0 } left)
+        {
+            if (lenient)
+            {
+                changed = 0;
+                return this;
+            }
+
+            throw PhrasesRefusal.Of(PhrasesRefusal.BadCell, "The phrases cannot be used:\n" + string.Join("\n", left));
+        }
+
+        return catalog;
+    }
+
     public Category? Find(string name) => Categories.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The parsed filters of a layout, category by category (names case-insensitive); null when the layout
@@ -202,4 +355,29 @@ public sealed class MatchCatalog
         Dictionary<string, Dictionary<string, string>?>? FilterSets,
         Dictionary<string, string>? LayoutFilterSets,
         List<List<string>?>? Aliases);
+
+    private sealed record PhrasesDocument(string? Kind, Dictionary<string, Dictionary<string, string>?>? Sets);
+}
+
+/// <summary>A refusal of the category phrases' file (decision 202): a <see cref="MatchException"/> whose code and subject
+/// are in its data, so the window words it in Estonian (decision 183).</summary>
+public static class PhrasesRefusal
+{
+    public const string NotJson = "PHRASES_NOT_JSON";
+    public const string NotPhrases = "PHRASES_NOT_PHRASES";
+    public const string UnknownSet = "PHRASES_UNKNOWN_SET";
+    public const string UnknownCategory = "PHRASES_UNKNOWN_CATEGORY";
+    public const string BadCell = "PHRASES_BAD_CELL";
+
+    public static MatchException Of(string code, string message, string? subject = null, Exception? inner = null)
+    {
+        var refusal = new MatchException(message, inner);
+        refusal.Data["Code"] = code;
+        refusal.Data["Subject"] = subject;
+        return refusal;
+    }
+
+    public static string? CodeOf(Exception e) => e?.Data["Code"] as string;
+
+    public static string? SubjectOf(Exception e) => e?.Data["Subject"] as string;
 }

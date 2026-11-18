@@ -731,10 +731,52 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
     /// store holds them now.</summary>
     public IReadOnlyList<Person> NonResidentsWithExemption(Guid periodId) => NonResidentsWithExemption(Load(periodId));
 
-    private List<Person> NonResidentsWithExemption(ReviewView view)
+    private List<Person> NonResidentsWithExemption(ReviewView view) =>
+        NonResidentsShown(view).Where(p => p.BasicExemptionApplied).ToList();
+
+    private List<Person> NonResidentsShown(ReviewView view)
     {
         var shown = view.Persons.Select(p => p.PersonId).OfType<Guid>().ToHashSet();
-        return _store.Persons(view.Period.CompanyId).Where(p => shown.Contains(p.Id) && p is { Residency: Residency.NonResident, BasicExemptionApplied: true }).ToList();
+        return _store.Persons(view.Period.CompanyId).Where(p => shown.Contains(p.Id) && p.Residency == Residency.NonResident).ToList();
+    }
+
+    /// <summary>Ticks the basic exemption's application for every non-resident among the persons the period shows who has
+    /// it unticked — the accountant's one word for all of them, as a tick set by hand on the card (decision 173) — except a
+    /// person whose card names a country of tax residence outside the EEA, whom MTA refuses it (decision 144): those are
+    /// left as they are and named. An own monthly figure is not given back (it went with the tick, decision 186): the
+    /// legal allowance applies until one is entered. Every other fact stays. The persons ticked are returned.</summary>
+    public ExemptionTicks GiveExemptionToNonResidents(Guid periodId)
+    {
+        var view = Load(periodId);
+        if (!view.Editable)
+        {
+            throw new ReviewException(PeriodNotDraft, $"The period is {view.Period.State}; the persons' facts are changed for a month while it is a Draft.");
+        }
+
+        var (due, outside) = NonResidentsWithoutExemption(view);
+        var ticked = new List<Person>();
+        foreach (var person in due)
+        {
+            var on = person with { BasicExemptionApplied = true, BasicExemptionMonthly = null }; // the legal allowance: an own figure left on an unticked card is not given back
+            _store.UpdatePerson(on);
+            ticked.Add(on);
+        }
+
+        return new ExemptionTicks(ticked, outside);
+    }
+
+    /// <summary>The non-residents among the persons the period shows whose basic exemption's application is unticked, as
+    /// the store holds them now: those it would be ticked for, and those left out for a country outside the EEA.</summary>
+    public ExemptionTicks NonResidentsWithoutExemption(Guid periodId)
+    {
+        var (due, outside) = NonResidentsWithoutExemption(Load(periodId));
+        return new ExemptionTicks(due, outside);
+    }
+
+    private (List<Person> Due, List<Person> OutsideEea) NonResidentsWithoutExemption(ReviewView view)
+    {
+        var without = NonResidentsShown(view).Where(p => !p.BasicExemptionApplied).ToList();
+        return (without.Where(p => !PaymentChecks.OutsideEea(p.ResidenceCountry)).ToList(), without.Where(p => PaymentChecks.OutsideEea(p.ResidenceCountry)).ToList());
     }
 
     /// <summary>Saves the facts the accountant edited onto a fresh copy of the person (so a lookup that ran meanwhile is

@@ -42,6 +42,16 @@ public static class PaymentChecks
         "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE", "IS", "LI", "NO",
     };
 
+    /// <summary>Whether a country of tax residence entered on the card is outside the EEA; an empty one is not (it is
+    /// optional, decision 144).</summary>
+    public static bool OutsideEea(string? country) => !string.IsNullOrWhiteSpace(country) && !EeaCountries.Contains(country.Trim());
+
+    /// <summary>Whether the card's treaty rate is one the build refuses for the type (<see cref="TreatyRateInvalid"/>): a
+    /// non-resident's rate on a type that takes one, below 0, above the type's own rate or not a whole percent.</summary>
+    public static bool TreatyRateRefused(PaymentType type, PayeeTaxFacts facts) =>
+        facts.Residency == Residency.NonResident && type.TreatyRateAllowed && type.IncomeTaxRate is { } ownRate
+        && facts.TreatyIncomeTaxRate is { } treaty && (treaty < 0m || treaty > ownRate || treaty * 100m != Math.Round(treaty * 100m));
+
     public static IReadOnlyList<Refusal> Check(PaymentType type, PayeeTaxFacts facts, decimal amount, TaxRates rates)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -115,14 +125,13 @@ public static class PaymentChecks
         // flags, so a payment it exempts nothing on (a 0 % treaty rate, an Estonian A1) is not refused; for a
         // non-resident the flags never throw (the funded pension is not theirs)
         if (facts.Residency == Residency.NonResident && facts.BasicExemptionApplied
-            && !string.IsNullOrWhiteSpace(facts.ResidenceCountry) && !EeaCountries.Contains(facts.ResidenceCountry.Trim())
+            && OutsideEea(facts.ResidenceCountry)
             && EffectiveFlags.Of(type, facts).ExemptionKind != ExemptionKind.None)
         {
             refusals.Add(new Refusal(ExemptionNotEea, $"The basic exemption is applied, but the country of tax residence on the card ({facts.ResidenceCountry.Trim().ToUpperInvariant()}) is outside the EEA; a non-resident gets the exemption only as an EEA resident with a residency certificate (MTA refuses it, KR_MVT_06). Untick the exemption or correct the country."));
         }
 
-        if (facts.Residency == Residency.NonResident && type.TreatyRateAllowed && type.IncomeTaxRate is { } ownRate
-            && facts.TreatyIncomeTaxRate is { } treaty && (treaty < 0m || treaty > ownRate || treaty * 100m != Math.Round(treaty * 100m)))
+        if (TreatyRateRefused(type, facts) && type.IncomeTaxRate is { } ownRate && facts.TreatyIncomeTaxRate is { } treaty)
         {
             refusals.Add(new Refusal(TreatyRateInvalid, $"The treaty income-tax rate on the card ({treaty * 100m:0.####} %) must be a whole percent between 0 and the type's own {ownRate * 100m:0.##} %."));
         }

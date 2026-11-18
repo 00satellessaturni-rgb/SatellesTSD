@@ -67,14 +67,18 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _cancelButton = new(UiText.Cancel) { Enabled = false };
     private readonly ToolStripMenuItem _addLineButton = new(UiText.AddLine);
     private readonly ToolStripMenuItem _exemptionOffButton = new(UiText.ExemptionOffNonResidents);
+    private readonly ToolStripMenuItem _exemptionOnButton = new(UiText.ExemptionOnNonResidents);
     private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
+    private readonly ToolStripMenuItem _rulesButton = new(UiText.Rules);
+    private readonly ToolStripMenuItem _simulationButton = new(UiText.Simulation);
     private readonly ToolStripMenuItem _nonResidentsButton = new(UiText.NonResidentsMenu);
     private readonly ToolStripMenuItem _declareEachItem = new(UiText.DeclareEachPayment);
     private readonly ToolStripMenuItem _declareTotalsItem = new(UiText.DeclareTotalsPerType);
     private readonly ToolStripMenuItem _importLayoutsItem = new(UiText.ImportLayouts);
     private readonly ToolStripMenuItem _layoutsItem = new(UiText.Layouts);
+    private readonly ToolStripMenuItem _phrasesItem = new(UiText.Phrases);
     private readonly ToolStripMenuItem _logDefaultItem = new(UiText.LogHeightDefault);
     private readonly ToolStripMenuItem _logOneRowItem = new(UiText.LogHeightOneRow);
     private readonly ToolStripMenuItem _salaryOnlyItem = new(UiText.PersonsSalaryOnly);
@@ -160,17 +164,21 @@ public sealed class MainForm : Form
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
         periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
-        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton]);
+        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton, _exemptionOnButton]);
         _exemptionOffButton.Click += (_, _) => ExemptionOffNonResidents();
+        _exemptionOnButton.Click += (_, _) => ExemptionOnNonResidents();
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
-        toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton, new ToolStripSeparator(), _nonResidentsButton]);
+        toolsMenu.DropDownItems.AddRange([_reportButton, _calculatorButton, _rulesButton, _simulationButton, new ToolStripSeparator(), _nonResidentsButton]);
+        _rulesButton.Click += (_, _) => ShowRules();
+        _simulationButton.Click += (_, _) => ShowSimulation();
         _nonResidentsButton.Click += (_, _) => ShowNonResidents();
         // how the window is laid out, kept across sessions: the log's height (one of the two items is checked)
         var viewMenu = new ToolStripMenuItem(UiText.MenuView);
         viewMenu.DropDownItems.AddRange([_logDefaultItem, _logOneRowItem, new ToolStripSeparator(), _salaryOnlyItem]);
         // the settings kept across sessions: the declaration's cut (one of the two items is checked)
         var settingsMenu = new ToolStripMenuItem(UiText.MenuSettings);
-        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem, new ToolStripSeparator(), _importLayoutsItem, _layoutsItem]);
+        settingsMenu.DropDownItems.AddRange([_declareEachItem, _declareTotalsItem, new ToolStripSeparator(), _importLayoutsItem, _layoutsItem, new ToolStripSeparator(), _phrasesItem]);
+        _phrasesItem.Click += (_, _) => ShowPhrases();
         _importLayoutsItem.Click += (_, _) => ImportLayouts();
         _layoutsItem.Click += (_, _) => ShowLayouts();
         _menu.Items.AddRange([storeMenu, companyMenu, periodMenu, personMenu, toolsMenu, viewMenu, settingsMenu]);
@@ -323,6 +331,49 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem DeclareTotalsItem => _declareTotalsItem;
     internal ToolStripMenuItem ImportLayoutsItem => _importLayoutsItem;
     internal ToolStripMenuItem LayoutsItem => _layoutsItem;
+
+    internal ToolStripMenuItem PhrasesItem => _phrasesItem;
+
+    internal ToolStripMenuItem RulesButton => _rulesButton;
+    internal ToolStripMenuItem SimulationButton => _simulationButton;
+
+    /// <summary>Takes the rules panel instead of showing it (the tests drive it). Shown modal by default.</summary>
+    internal Action<RulesDialog>? RulesOpening;
+
+    /// <summary>The rules matrix of the month's year, or of 2026 with no month in hand (decision 203).</summary>
+    private void ShowRules()
+    {
+        var year = _view?.Period.Year ?? 2026;
+        using var dialog = new RulesDialog(TaxRates.For(year), year);
+        if (RulesOpening is { } take)
+        {
+            take(dialog);
+            return;
+        }
+
+        dialog.ShowDialog(this);
+    }
+
+    /// <summary>Takes the simulation instead of showing it (the tests drive it). Shown modal by default.</summary>
+    internal Action<SimulationDialog>? SimulationOpening;
+
+    /// <summary>The simulation (decision 204), opened on the month in hand or on the last month: one example person run
+    /// through the app's own path on a store of its own.</summary>
+    private void ShowSimulation()
+    {
+        var month = _view?.Period is { } period ? (period.Year, period.Month) : (DateTime.Today.AddMonths(-1).Year, DateTime.Today.AddMonths(-1).Month);
+        using var dialog = new SimulationDialog(month.Item1, month.Item2, Path.Combine(AppContext.BaseDirectory, "schemas", "apa-tsd"), _services?.Store.SavedMatchCatalog());
+        if (SimulationOpening is { } take)
+        {
+            take(dialog);
+            return;
+        }
+
+        dialog.ShowDialog(this);
+    }
+
+    /// <summary>Takes the category phrases' dialog instead of showing it (the tests drive it). Shown modal by default.</summary>
+    internal Action<PhrasesDialog>? PhrasesOpening;
     internal ToolStripMenuItem LogDefaultItem => _logDefaultItem;
     internal ToolStripMenuItem LogOneRowItem => _logOneRowItem;
     internal ToolStripMenuItem SalaryOnlyItem => _salaryOnlyItem;
@@ -433,6 +484,8 @@ public sealed class MainForm : Form
 
     internal ToolStripMenuItem ExemptionOffButton => _exemptionOffButton;
 
+    internal ToolStripMenuItem ExemptionOnButton => _exemptionOnButton;
+
     internal ToolStripMenuItem NonResidentsButton => _nonResidentsButton;
 
     /// <summary>Handed the non-residents list before it is shown, in place of showing it (a window test reads and drives it).</summary>
@@ -523,6 +576,52 @@ public sealed class MainForm : Form
         {
             // whichever way it went — nobody to change, the question declined, done or failed: the card was settled above,
             // so the card and the grids are shown again from the store
+            ReloadView(_personPanel.PresentedId);
+        }
+    }
+
+    /// <summary>Ticks the basic exemption's application for every non-resident of the month shown who has it unticked,
+    /// leaving out those whose card names a country outside the EEA, after one question that names how many of each.</summary>
+    private void ExemptionOnNonResidents()
+    {
+        if (_services is null || _view is null || _busy)
+        {
+            return;
+        }
+
+        if (!SettleCard()) // the card's own edits first: the command changes the persons as saved
+        {
+            return;
+        }
+
+        try
+        {
+            var periodId = _view.Period.Id;
+            var due = _services.Workspace.NonResidentsWithoutExemption(periodId);
+            if (due.Due.Count == 0)
+            {
+                Inform(UiText.ExemptionOnNone(due.OutsideEea.Count), UiText.ExemptionOnNonResidents);
+                return;
+            }
+
+            if (!Confirm(UiText.ExemptionOnQuestion(due.Due.Count, due.OutsideEea.Count), UiText.ExemptionOnNonResidents))
+            {
+                return;
+            }
+
+            var given = _services.Workspace.GiveExemptionToNonResidents(periodId);
+            Log($"{UiText.ExemptionOnNonResidents}: {given.Due.Count} — {string.Join(", ", given.Due.Select(p => $"{p.LastName} {p.FirstName}"))}");
+            if (given.OutsideEea.Count > 0)
+            {
+                Log($"{UiText.ExemptionOnNonResidents}: {UiText.ExemptionOnLeftOut} — {string.Join(", ", given.OutsideEea.Select(p => $"{p.LastName} {p.FirstName} ({p.ResidenceCountry!.Trim().ToUpperInvariant()})"))}");
+            }
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
+        finally
+        {
             ReloadView(_personPanel.PresentedId);
         }
     }
@@ -2427,6 +2526,7 @@ public sealed class MainForm : Form
         _lookupButton.Enabled = !_busy && Editable && _services?.Pipeline.HasLookups == true; // a locked month's lookups would rewrite the facts other months are built with
         _addLineButton.Enabled = !_busy && hasCompany && editable;
         _exemptionOffButton.Enabled = !_busy && Editable; // a month in hand, and a Draft
+        _exemptionOnButton.Enabled = _exemptionOffButton.Enabled;
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
         _closeCompanyButton.Enabled = !_busy && hasCompany;
@@ -2441,6 +2541,8 @@ public sealed class MainForm : Form
         _personPanel.Enabled = !_busy;
         _declaration.Enabled = !_busy;
         _calculatorButton.Enabled = !_busy;
+        _rulesButton.Enabled = !_busy; // reads no store
+        _simulationButton.Enabled = !_busy; // a store of its own
         _nonResidentsButton.Enabled = !_busy && _services is not null;
         _reportButton.Enabled = !_busy && _view is not null;
         _updateButton.Visible = UpdatesEnabled;
@@ -2448,6 +2550,7 @@ public sealed class MainForm : Form
         _updateButton.Enabled = !_busy && UpdatesEnabled && !_checkingUpdates;
         _declareEachItem.Enabled = _declareTotalsItem.Enabled = !_busy; // the review follows the cut: never switched under a run
         _importLayoutsItem.Enabled = _layoutsItem.Enabled = !_busy && _services is not null; // the layouts live in the store
+        _phrasesItem.Enabled = _layoutsItem.Enabled; // and so do the phrases
         UseWaitCursor = _busy;
     }
 
@@ -3049,6 +3152,24 @@ public sealed class MainForm : Form
         {
             Fail(e);
         }
+    }
+
+    /// <summary>The category phrases (decision 202): listed, saved to a file, read from one, the built-in ones put back.</summary>
+    private void ShowPhrases()
+    {
+        if (_services is null || _busy)
+        {
+            return;
+        }
+
+        using var dialog = new PhrasesDialog(_services, Log);
+        if (PhrasesOpening is { } take)
+        {
+            take(dialog);
+            return;
+        }
+
+        dialog.ShowDialog(this);
     }
 
     private void ShowLayouts()

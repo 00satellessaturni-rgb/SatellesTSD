@@ -169,6 +169,11 @@ public sealed class ReviewPerson
     public string? PersonalCode => Person?.PersonalCode ?? Register?.Person.PersonalCode;
 }
 
+/// <summary>The non-residents of a month whose basic exemption's application is unticked: <see cref="Due"/> those it is
+/// (or would be) ticked for, <see cref="OutsideEea"/> those left out for a country of tax residence outside the EEA on the
+/// card (decision 144).</summary>
+public sealed record ExemptionTicks(IReadOnlyList<Person> Due, IReadOnlyList<Person> OutsideEea);
+
 /// <summary>An income payment of the month left out of the declaration: <see cref="Reason"/> says how (the person excluded
 /// on the card, the payment refused when declared, unticked by the accountant, or not declared by default), <see
 /// cref="Codes"/> the refusals behind it. <see cref="ByChoice"/>: no error — the accountant's own word, or a row in another currency, which is declared in euros on a

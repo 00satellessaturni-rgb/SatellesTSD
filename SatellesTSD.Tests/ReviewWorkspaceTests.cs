@@ -69,6 +69,44 @@ public class ReviewWorkspaceTests
     }
 
     [Fact]
+    public void The_basic_exemptions_application_is_ticked_for_every_non_resident_the_month_shows_but_one_of_a_country_outside_the_eea()
+    {
+        // decision 201: the one click back — every non-resident of the month without the tick gets it, but a card naming a
+        // country outside the EEA (MTA refuses it, decision 144); an empty country is no refusal
+        var (store, company, period, workspace) = Run();
+        using (store)
+        {
+            var shown = workspace.Load(period.Id).Persons.Select(p => p.Person).OfType<Person>().ToList();
+            Assert.True(shown.Count >= 2);
+            var abroad = shown[^1];
+            store.UpdatePerson(abroad with { Residency = Residency.NonResident, ResidencySource = LookupSource.Emta, ResidenceCountry = null, BasicExemptionApplied = false, BasicExemptionMonthly = 300m }); // an own figure left on the unticked card
+            var outside = shown[0];
+            store.UpdatePerson(outside with { Residency = Residency.NonResident, ResidenceCountry = " us ", BasicExemptionApplied = false });
+            var elsewhere = store.AddPerson(Person.New(company.Id, "Peeter", "Pihl", "39001010008", Residency.NonResident) with { BasicExemptionApplied = false });
+
+            var preview = workspace.NonResidentsWithoutExemption(period.Id);
+            Assert.Equal([abroad.Id], preview.Due.Select(p => p.Id));
+            Assert.Equal([outside.Id], preview.OutsideEea.Select(p => p.Id));
+            var given = workspace.GiveExemptionToNonResidents(period.Id);
+            Assert.Equal([abroad.Id], given.Due.Select(p => p.Id));
+            Assert.Equal([outside.Id], given.OutsideEea.Select(p => p.Id));
+
+            var after = store.Persons(company.Id).ToDictionary(p => p.Id);
+            Assert.Equal((true, Residency.NonResident, LookupSource.Emta, (decimal?)null), (after[abroad.Id].BasicExemptionApplied, after[abroad.Id].Residency, after[abroad.Id].ResidencySource, after[abroad.Id].BasicExemptionMonthly)); // the legal allowance: no figure comes back
+            Assert.False(after[outside.Id].BasicExemptionApplied);
+            Assert.False(after[elsewhere.Id].BasicExemptionApplied); // not this month's to change
+            Assert.Empty(workspace.GiveExemptionToNonResidents(period.Id).Due); // nothing left to do
+
+            // the two clicks undo each other for the persons ticked
+            Assert.Equal([abroad.Id], workspace.ClearExemptionOfNonResidents(period.Id).Select(p => p.Id));
+
+            store.SetPeriodState(period.Id, PeriodState.Exported, DateTime.UtcNow);
+            Assert.Equal(ReviewWorkspace.PeriodNotDraft, Assert.Throws<ReviewException>(() => workspace.GiveExemptionToNonResidents(period.Id)).Code);
+            Assert.False(store.Persons(company.Id).Single(p => p.Id == abroad.Id).BasicExemptionApplied);
+        }
+    }
+
+    [Fact]
     public void Without_a_run_the_view_holds_the_files_and_the_rows_nobody_matched_is_empty()
     {
         var (store, _, period, _) = ReviewFixtures.Setup();

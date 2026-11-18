@@ -10,11 +10,14 @@ public sealed class MatchRunner(IStore store)
 {
     private readonly IStore _store = store ?? throw new ArgumentNullException(nameof(store));
 
-    /// <summary>The catalog in force: the owner's saved document, else the embedded default.</summary>
+    /// <summary>The catalog in force: the built-in one with the owner's saved phrases over it (decision 202), or an owner's
+    /// saved catalog whole, else the built-in one.</summary>
     public MatchCatalog Catalog()
     {
         var saved = _store.SavedMatchCatalog();
-        return saved is null ? MatchCatalog.Default : MatchCatalog.Parse(saved);
+        return saved is null ? MatchCatalog.Default
+            : MatchCatalog.IsPhrases(saved) ? MatchCatalog.Default.WithSavedPhrases(saved)
+            : MatchCatalog.Parse(saved);
     }
 
     /// <summary>The persons and sources a run of the period would see, without running or storing anything, and what the

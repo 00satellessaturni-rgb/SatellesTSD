@@ -736,4 +736,71 @@ public class PeriodPipelineTests
             Assert.Equal((PaymentStatus.Rejected, (Guid?)null), (kept.Status, kept.SourceRowId));
         }
     }
+
+    [Fact]
+    public void The_category_phrases_go_to_a_file_and_back_cell_by_cell_a_bad_file_refused_whole_and_the_built_in_ones_restored()
+    {
+        // decision 202: only the phrases travel — each cell the file names replaces its own, the rest stays; the categories
+        // and the sets stay the built-in ones
+        var (store, _, _) = Setup();
+        using (store)
+        {
+            var pipeline = new PeriodPipeline(store, ReviewFixtures.Importer);
+            Assert.False(pipeline.OwnPhrases);
+            var exported = pipeline.ExportPhrases();
+            Assert.Contains(MatchCatalog.PhrasesKind, exported, StringComparison.Ordinal);
+            Assert.DoesNotContain("LayoutFilterSets", exported, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, pipeline.ImportPhrases("﻿" + exported)); // the file as saved, read back: nothing changes
+            Assert.False(pipeline.OwnPhrases); // nothing of the owner's own: the built-in phrases stay in force
+
+            var palgad = MatchCatalog.Default.FilterSets["standard"]["Palgad"];
+            Assert.Equal(1, pipeline.ImportPhrases($$"""{ "kind": "{{MatchCatalog.PhrasesKind}}", "sets": { "standard": { "dividendid": "*dividen*,*kasumiosa*" } } }"""));
+            var inForce = new MatchRunner(store).Catalog();
+            Assert.Equal("*dividen*,*kasumiosa*", inForce.FilterSets["standard"]["Dividendid"]); // under the catalog's own spelling
+            Assert.DoesNotContain("dividendid", inForce.FilterSets["standard"].Keys);
+            Assert.Equal(palgad, inForce.FilterSets["standard"]["Palgad"]); // a cell the file does not name stays
+            Assert.Equal(MatchCatalog.Default.Categories, inForce.Categories);
+            Assert.Equal(MatchCatalog.Default.LayoutFilterSets.Count, inForce.LayoutFilterSets.Count);
+            Assert.True(pipeline.OwnPhrases);
+
+            // the store keeps only the owner's own cell, laid over the built-in catalog of the release in use: a built-in
+            // cell a later release changes still reaches the search
+            var saved = store.SavedMatchCatalog()!;
+            Assert.Contains("kasumiosa", saved, StringComparison.Ordinal);
+            Assert.DoesNotContain("Palgad", saved, StringComparison.Ordinal);
+            Assert.DoesNotContain("LayoutFilterSets", saved, StringComparison.OrdinalIgnoreCase);
+
+            // a saved cell whose category or set a later release no longer has is left out, not refused
+            var stale = SatellesTSD.Infrastructure.SqliteStore.InMemory();
+            using (stale)
+            {
+                stale.SaveMatchCatalog($$"""{ "kind": "{{MatchCatalog.PhrasesKind}}", "sets": { "standard": { "Boonus": "*boonus*", "Dividendid": "*kasumiosa*" }, "muu": { "Palgad": "*x*" } } }""");
+                var over = new MatchRunner(stale).Catalog();
+                Assert.Equal("*kasumiosa*", over.FilterSets["standard"]["Dividendid"]);
+                Assert.Equal(palgad, over.FilterSets["standard"]["Palgad"]);
+                Assert.Equal(MatchCatalog.Default.FilterSets.Keys.Order(), over.FilterSets.Keys.Order());
+            }
+
+            // refused whole, with a code the window words: nothing saved
+            foreach (var (json, code) in new[]
+            {
+                ("{ not json", PhrasesRefusal.NotJson),
+                ("[]", PhrasesRefusal.NotJson),
+                ("""{ "id": "lhv-et-short" }""", PhrasesRefusal.NotPhrases),
+                ($$"""{ "kind": "{{MatchCatalog.PhrasesKind}}", "sets": { "muu": { "Palgad": "*palk*" } } }""", PhrasesRefusal.UnknownSet),
+                ($$"""{ "kind": "{{MatchCatalog.PhrasesKind}}", "sets": { "standard": { "Palgad": "*x*", "Boonus": "*boonus*" } } }""", PhrasesRefusal.UnknownCategory),
+                ($$"""{ "kind": "{{MatchCatalog.PhrasesKind}}", "sets": { "standard": { "Palgad": "*[a-*" } } }""", PhrasesRefusal.BadCell),
+            })
+            {
+                var refusal = Assert.Throws<MatchException>(() => pipeline.ImportPhrases(json));
+                Assert.Equal(code, PhrasesRefusal.CodeOf(refusal));
+                Assert.Equal("*dividen*,*kasumiosa*", new MatchRunner(store).Catalog().FilterSets["standard"]["Dividendid"]);
+                Assert.Equal(palgad, new MatchRunner(store).Catalog().FilterSets["standard"]["Palgad"]);
+            }
+
+            pipeline.ResetPhrases();
+            Assert.False(pipeline.OwnPhrases);
+            Assert.Equal(MatchCatalog.Default.FilterSets["standard"]["Dividendid"], new MatchRunner(store).Catalog().FilterSets["standard"]["Dividendid"]);
+        }
+    }
 }
