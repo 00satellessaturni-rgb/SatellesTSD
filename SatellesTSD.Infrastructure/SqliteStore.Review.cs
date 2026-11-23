@@ -133,6 +133,31 @@ public sealed partial class SqliteStore
         Str(r, 4), Str(r, 5), r.IsDBNull(6) ? null : r.GetInt64(6) != 0, Str(r, 7), Date(r, 8), Dec(r, 9), Str(r, 10), Str(r, 11), Time(r, 12) ?? default,
         r.GetInt64(13) != 0, r.GetInt64(14) != 0);
 
+    public void SaveRunSummary(StoredRunSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        ArgumentNullException.ThrowIfNull(summary.SummaryJson);
+        using var tx = Tx();
+        if (Scalar<long>("SELECT COUNT(*) FROM company WHERE id = $id", ("$id", G(summary.CompanyId))) == 0)
+        {
+            throw new KeyNotFoundException($"Company {summary.CompanyId} is not in the store.");
+        }
+
+        // one per company: the latest replaces the one before, whatever month either was made for
+        Exec(
+            """
+            INSERT INTO run_summary (company_id, period_id, made_at, summary_json) VALUES ($company, $period, $at, $json)
+            ON CONFLICT (company_id) DO UPDATE SET period_id = excluded.period_id, made_at = excluded.made_at, summary_json = excluded.summary_json
+            """,
+            ("$company", G(summary.CompanyId)), ("$period", summary.PeriodId is { } p ? G(p) : null), ("$at", T(Truncate(summary.MadeAt))), ("$json", summary.SummaryJson));
+        tx.Commit();
+    }
+
+    public StoredRunSummary? RunSummary(Guid companyId) =>
+        Query("SELECT company_id, period_id, made_at, summary_json FROM run_summary WHERE company_id = $company",
+            r => new StoredRunSummary(Guid.Parse(r.GetString(0)), r.IsDBNull(1) ? null : Guid.Parse(r.GetString(1)), Time(r, 2) ?? default, r.GetString(3)),
+            ("$company", G(companyId))).SingleOrDefault();
+
     /// <summary>How many decisions, of any period or one, point at rows of a file (the guard behind removal).</summary>
     private long DecisionsOn(Guid fileId, Guid? periodId = null) =>
         Scalar<long>(

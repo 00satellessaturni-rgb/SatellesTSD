@@ -64,6 +64,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _filesButton = new(UiText.Files);
     private readonly ToolStripMenuItem _matchButton = new(UiText.RunMatch);
     private readonly ToolStripMenuItem _lookupButton = new(UiText.RunLookups);
+    private readonly ToolStripMenuItem _summaryButton = new(UiText.LastSummary);
     private readonly ToolStripMenuItem _cancelButton = new(UiText.Cancel) { Enabled = false };
     private readonly ToolStripMenuItem _addLineButton = new(UiText.AddLine);
     private readonly ToolStripMenuItem _exemptionOffButton = new(UiText.ExemptionOffNonResidents);
@@ -163,7 +164,7 @@ public sealed class MainForm : Form
         companyMenu.DropDownItems.AddRange([_newCompanyButton, _editCompanyButton, _filesButton, new ToolStripSeparator(), _closeCompanyButton]);
         _editCompanyButton.Click += (_, _) => EditCompany();
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
-        periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, new ToolStripSeparator(), _cancelButton]);
+        periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, _summaryButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
         personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton, _exemptionOnButton]);
         _exemptionOffButton.Click += (_, _) => ExemptionOffNonResidents();
@@ -262,6 +263,7 @@ public sealed class MainForm : Form
         _filesButton.Click += (_, _) => ShowFiles();
         _matchButton.Click += async (_, _) => await RunMatchAsync();
         _lookupButton.Click += async (_, _) => await RunLookupsAsync();
+        _summaryButton.Click += (_, _) => ShowLastSummary();
         _cancelButton.Click += (_, _) => _lookups?.Cancel();
         _addLineButton.Click += (_, _) => AddLine();
         _removeLineButton.Click += (_, _) => RemoveLine();
@@ -420,6 +422,18 @@ public sealed class MainForm : Form
     /// <summary>Takes a plain notice in place of the message box (the window tests set it).</summary>
     internal Action<string>? Informing;
 
+    /// <summary>Answers a question of several choices in place of the choice dialog — the text, the title, the choices; the
+    /// index of the one taken, -1 for none (the window tests set it).</summary>
+    internal Func<string, string, IReadOnlyList<string>, int>? Choosing;
+
+    /// <summary>Names a store file in place of the open (false) or the create (true) file dialog; null = cancelled (the window
+    /// tests set it).</summary>
+    internal Func<bool, string?>? ChoosingStoreFile;
+
+    /// <summary>The choice taken, -1 for none (the dialog closed with X or Esc).</summary>
+    private int Choose(string text, string title, IReadOnlyList<string> choices) =>
+        Choosing is { } answer ? answer(text, title, choices) : ChoiceDialog.Ask(this, text, title, choices);
+
     /// <summary>Whether a store's copy was made by the update that failed here, in place of the look at the update's
     /// note and the copy's time — for a test.</summary>
     internal Func<string, string?>? FailedUpdateProbe;
@@ -464,7 +478,9 @@ public sealed class MainForm : Form
     internal ToolStripButton StopButton => _stopButton;
 
     internal ToolStripMenuItem LookupButton => _lookupButton;
+    internal ToolStripMenuItem OpenStoreButton => _openStoreButton;
     internal ToolStripMenuItem MatchButton => _matchButton;
+    internal ToolStripMenuItem SummaryButton => _summaryButton;
 
     private void Inform(string text, string title)
     {
@@ -1436,19 +1452,19 @@ public sealed class MainForm : Form
         _outer.SizeChanged += (_, _) => FitSplitter(_outer, LeastPanel);
         _grids.SizeChanged += (_, _) => FitSplitter(_grids, LeastPanel / 2);
         var path = _storeOverride ?? _settings.StorePath;
-        if (path is null)
+        if (path is not null && File.Exists(path))
         {
-            OpenStoreDialog(false);
-        }
-        else if (!File.Exists(path))
-        {
-            // a moved or renamed store is never replaced by a silent empty one
-            Log($"{UiText.StoreMissing} {path}");
-            OpenStoreDialog(false);
+            OpenStore(path);
         }
         else
         {
-            OpenStore(path);
+            if (path is not null)
+            {
+                // a moved or renamed store is never replaced by a silent empty one
+                Log($"{UiText.StoreMissing} {path}");
+            }
+
+            AskForMissingStore(path);
         }
 
         // the release folder is asked once the window is up, off the UI thread, never holding it
@@ -1545,21 +1561,79 @@ public sealed class MainForm : Form
 
     private void OpenStoreDialog(bool create)
     {
-        string? path;
+        if (ChooseStoreFile(create) is { } path)
+        {
+            OpenChosenStore(path);
+        }
+    }
+
+    /// <summary>The store file the accountant names in the open or the create file dialog; null when it is cancelled.</summary>
+    private string? ChooseStoreFile(bool create)
+    {
+        if (ChoosingStoreFile is { } choose)
+        {
+            return choose(create);
+        }
+
         if (create)
         {
             using var dialog = new SaveFileDialog { Filter = UiText.StoreFilter, FileName = "SatellesTSD.db", OverwritePrompt = false };
-            path = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
-        }
-        else
-        {
-            using var dialog = new OpenFileDialog { Filter = UiText.StoreFilter, CheckFileExists = true };
-            path = dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
+            return dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : null;
         }
 
-        if (path is not null)
+        using var open = new OpenFileDialog { Filter = UiText.StoreFilter, CheckFileExists = true };
+        return open.ShowDialog(this) == DialogResult.OK ? open.FileName : null;
+    }
+
+    /// <summary>The start without its store: what went wrong said in words, and the ways on to choose from, in place of a
+    /// file dialog that opens with no word of why. No store named yet (the first start): open one, create one, or go on
+    /// without. A store named that is not there (moved, renamed, deleted, or on a network drive not yet connected): try
+    /// again — opened when it is there now, else said again —, find it, create one, or go on without. A file dialog
+    /// cancelled comes back here; going on without leaves the window with no store and the remembered path as it was, so
+    /// the next start looks for the same file (the Andmebaas menu still opens one). A file found or chosen that cannot be
+    /// opened (no store, a damaged one, a locked one) comes back here too once its error is said — except a store a newer
+    /// version made, which says itself what to do.</summary>
+    private void AskForMissingStore(string? missing)
+    {
+        var again = false;
+        var unopened = false; // tried again, and the file was there but would not open
+        while (true)
         {
-            OpenChosenStore(path);
+            var text = missing is null ? UiText.NoStoreChosen : unopened ? UiText.StoreNotOpened(missing) : UiText.StoreNotFound(missing, again);
+            IReadOnlyList<string> choices = missing is null
+                ? [UiText.StoreOpenChoice, UiText.StoreCreate, UiText.StoreContinueWithout]
+                : [UiText.StoreTryAgain, UiText.StoreFind, UiText.StoreCreate, UiText.StoreContinueWithout];
+            var chosen = Choose(text, UiText.StoreMissingTitle, choices);
+            var choice = chosen >= 0 && chosen < choices.Count ? choices[chosen] : UiText.StoreContinueWithout;
+            if (choice == UiText.StoreTryAgain)
+            {
+                if (File.Exists(missing))
+                {
+                    if (OpenStore(missing!)) // as the start would have: a one-off stays a one-off
+                    {
+                        return;
+                    }
+
+                    unopened = true;
+                    continue;
+                }
+
+                again = true;
+                unopened = false;
+                continue;
+            }
+
+            if (choice == UiText.StoreOpenChoice || choice == UiText.StoreFind || choice == UiText.StoreCreate)
+            {
+                if (ChooseStoreFile(create: choice == UiText.StoreCreate) is { } path && OpenStore(path, chosen: true))
+                {
+                    return;
+                }
+
+                continue; // cancelled, or the file would not open: back to the question, never to a window that says nothing
+            }
+
+            return; // on without a store
         }
     }
 
@@ -1569,12 +1643,14 @@ public sealed class MainForm : Form
 
     /// <param name="chosen">The accountant chose the store in the window: it is remembered from here on, a one-off start's
     /// store no longer standing in the way.</param>
-    private void OpenStore(string path, bool chosen = false)
+    /// <returns>Whether nothing more is to be asked: the store opened, the card's edits were kept in its way, or the store is a
+    /// newer version's (said in its own words); false when the file would not open.</returns>
+    private bool OpenStore(string path, bool chosen = false)
     {
         CommitPendingNote(); // a note being typed goes to the store it was typed for, before that store closes
         if (!SettleCard()) // against the store it was typed for, before that store closes
         {
-            return;
+            return true;
         }
 
         // another store is opened before the one in hand is let go of: a file that cannot be opened leaves the window
@@ -1601,18 +1677,17 @@ public sealed class MainForm : Form
             _restoredNow = true;
             try
             {
-                OpenStore(path, chosen); // the copy put back opens as this build's
+                return OpenStore(path, chosen); // the copy put back opens as this build's
             }
             finally
             {
                 _restoredNow = false;
             }
-
-            return;
         }
         catch (Exception e)
         {
-            if (SqliteStore.IsNewerThanThisBuild(e))
+            var newer = SqliteStore.IsNewerThanThisBuild(e);
+            if (newer)
             {
                 // a newer version of the program upgraded the store, said in the accountant's words: this copy is to be
                 // updated — or, after the update that failed here, the copy is there to go back to (declined just now);
@@ -1648,7 +1723,7 @@ public sealed class MainForm : Form
                 ReloadView(); // the store in hand shown afresh: a card settled on the way (saved or dropped) and the grids agree with it
             }
 
-            return;
+            return newer; // a newer version's store has said what to do; any other is asked about again where there is a question
         }
 
         if (another)
@@ -1674,6 +1749,7 @@ public sealed class MainForm : Form
         SaveSettings();
         _personPanel.LookupsAvailable = _services.Pipeline.HasLookups;
         FillCompanies();
+        return true;
     }
 
     private void FillCompanies()
@@ -2561,13 +2637,17 @@ public sealed class MainForm : Form
 
         foreach (DataGridViewRow row in _paymentsGrid.Rows)
         {
-            if (row.Visible && row.Tag is ReviewPayment p && (wanted.RowId is { } r && !wanted.IsPart ? p.RowId == r && !p.IsPart : p.LineId is not null && p.LineId == wanted.LineId))
+            if (row.Visible && row.Tag is ReviewPayment p && Matches(wanted, p))
             {
                 _paymentsGrid.CurrentCell = row.Cells[0];
                 return;
             }
         }
     }
+
+    /// <summary>A row's own share by its row (its overlay's line may be new since), a part and a hand line by their own line.</summary>
+    private static bool Matches(PaymentKey wanted, ReviewPayment p) =>
+        wanted.RowId is { } r && !wanted.IsPart ? p.RowId == r && !p.IsPart : p.LineId is not null && p.LineId == wanted.LineId;
 
     private void OnPaymentEdited(int rowIndex, int columnIndex)
     {
@@ -2703,6 +2783,7 @@ public sealed class MainForm : Form
         _filesButton.Enabled = !_busy && _view is not null;
         _matchButton.Enabled = !_busy && Editable;
         _lookupButton.Enabled = !_busy && Editable && _services?.Pipeline.HasLookups == true; // a locked month's lookups would rewrite the facts other months are built with
+        _summaryButton.Enabled = !_busy && hasCompany; // the company's latest, whatever month is shown
         _addLineButton.Enabled = !_busy && hasCompany && editable;
         _exemptionOffButton.Enabled = !_busy && Editable; // a month in hand, and a Draft
         _exemptionOnButton.Enabled = _exemptionOffButton.Enabled;
@@ -2860,10 +2941,11 @@ public sealed class MainForm : Form
         }
 
         var periodId = period.Id;
+        List<ImportOutcome> outcomes = [];
         await RunBusyAsync(async () =>
         {
             // every file gets its line, whatever happened to the one before it
-            var outcomes = await Task.Run(() => read.Select(f =>
+            outcomes = await Task.Run(() => read.Select(f =>
             {
                 try
                 {
@@ -2889,27 +2971,74 @@ public sealed class MainForm : Form
             }
         });
         ReloadView();
+        await OfferSearchAsync(outcomes, periodId);
     }
 
-    private async Task RunMatchAsync()
+    /// <summary>After an import, the search offered at once — with the registers' check after it when the window has the
+    /// registers, or alone, or not now. Offered when something new came in, or when the files were all there before but
+    /// the month has no search yet; never for a month past its draft (or one the view no longer shows). The offer says
+    /// what the search and the check do, so neither asks again.</summary>
+    private async Task OfferSearchAsync(IReadOnlyList<ImportOutcome> outcomes, Guid periodId)
     {
-        if (_services is null || _view is null || !Editable)
+        if (_services is null || _view is not { Editable: true } view || view.Period.Id != periodId)
         {
             return;
         }
 
-        if (_view.Run is not null && !Confirm(UiText.RunReplacesRun, UiText.RunMatch))
+        var succeeded = outcomes.Where(o => o.Succeeded).ToList();
+        if (succeeded.Count == 0 || (succeeded.All(o => o.AlreadyImported) && view.Run is not null))
         {
-            return;
+            return; // nothing in, or nothing new into a month already searched: the search would find what it found
+        }
+
+        var lookups = _services.Pipeline.HasLookups;
+        IReadOnlyList<string> choices = lookups
+            ? [UiText.ImportOfferSearchAndCheck, UiText.ImportOfferSearchOnly, UiText.ImportOfferNotNow]
+            : [UiText.ImportOfferSearchOnly, UiText.ImportOfferNotNow];
+        // the first sentence says what the import did: something new, some refused, or nothing new into a month not yet searched
+        var text = UiText.ImportOffer(lookups, view.Run is not null, anythingNew: succeeded.Any(o => !o.AlreadyImported), someRefused: succeeded.Count < outcomes.Count);
+        var chosen = Choose(text, UiText.ImportOfferTitle, choices);
+        var choice = chosen >= 0 && chosen < choices.Count ? choices[chosen] : UiText.ImportOfferNotNow;
+        if (choice == UiText.ImportOfferSearchAndCheck)
+        {
+            // one summary for both, once the check is over; a search that did not end is followed by no check
+            if (await RunMatchAsync(asked: true, summarize: false))
+            {
+                await RunLookupsAsync(asked: true, searched: true);
+            }
+        }
+        else if (choice == UiText.ImportOfferSearchOnly)
+        {
+            await RunMatchAsync(asked: true);
+        }
+    }
+
+    /// <summary>The month's search.</summary>
+    /// <param name="asked">The accountant already chose it in a question that said what it does (the offer after an import):
+    /// the question whether the earlier result is replaced is not put again.</param>
+    /// <param name="summarize">The summary of the problems is shown when the search ends; not when the registers' check
+    /// follows it (the one summary comes after the check).</param>
+    /// <returns>Whether the search ran to its end: refused, cancelled or failed is false.</returns>
+    private async Task<bool> RunMatchAsync(bool asked = false, bool summarize = true)
+    {
+        if (_services is null || _view is null || !Editable)
+        {
+            return false;
+        }
+
+        if (!asked && _view.Run is not null && !Confirm(UiText.RunReplacesRun, UiText.RunMatch))
+        {
+            return false;
         }
 
         if (!SettleCard()) // before the run holds the store
         {
-            return;
+            return false;
         }
 
         var services = _services;
         var periodId = _view.Period.Id;
+        var ended = false;
         await RunBusyAsync(async () =>
         {
             var result = await Task.Run(() => services.Pipeline.RunMatch(periodId));
@@ -2918,30 +3047,239 @@ public sealed class MainForm : Form
             {
                 Log("   " + UiText.ProblemLine(problem)); // the code verbatim, the Estonian after it (decision 46)
             }
+
+            ended = true;
         });
         ReloadView();
+        if (ended && summarize)
+        {
+            ShowRunSummary(searched: true, checkedRegisters: false, report: null, completed: true);
+        }
+
+        return ended;
     }
 
-    private async Task RunLookupsAsync()
+    /// <summary>The summary of the problems a run leaves, shown once the run is over: made from the month as the grids now
+    /// show it, kept in the store as the company's latest (so it is opened again later, „Viimane kokkuvõte…“), then shown.</summary>
+    /// <param name="searched">The search ran (alone, or before the registers' check in the offer's combined run).</param>
+    /// <param name="checkedRegisters">The month's registers' check ran (not the card's check of one person).</param>
+    /// <param name="report">The check's report; for a check stopped or failed, the run's own problems it told before the first
+    /// query with the persons it got to — null when it told none.</param>
+    /// <param name="completed">The check ran to its end; false when it was stopped by the accountant or failed — the summary
+    /// still shows what there is, and says the check was not completed. True for a search alone.</param>
+    /// <param name="outcomes">The persons the check got to before it was stopped or failed (the report's own when it ended).</param>
+    private void ShowRunSummary(bool searched, bool checkedRegisters, LookupRunReport? report, bool completed, IReadOnlyList<PersonLookupOutcome>? outcomes = null)
+    {
+        RunSummaryShown?.Invoke(searched, checkedRegisters, report, completed);
+        if (_services is null || _view is null)
+        {
+            return; // nothing to count: the store went with a failure
+        }
+
+        RunSummary summary;
+        try
+        {
+            summary = RunSummaryBuilder.Build(_view, DateTime.UtcNow, searched, checkedRegisters, completed, report, outcomes);
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return;
+        }
+
+        // keeping it is on top of showing it: a store that cannot be written just now (a locked file, the network drive
+        // gone for a moment) still shows what the run found, and the summary says it was not kept
+        var kept = true;
+        try
+        {
+            _services.Store.SaveRunSummary(new StoredRunSummary(summary.CompanyId, summary.PeriodId, summary.MadeAt, summary.ToJson()));
+        }
+        catch (Exception e)
+        {
+            Log($"{UiText.SummaryNotKept} {UiText.Problem}: {e.Message}");
+            kept = false;
+        }
+
+        ShowSummary(summary, kept);
+    }
+
+    /// <summary>Told each time a run's summary is made — what it covers (a window test watches it).</summary>
+    internal Action<bool, bool, LookupRunReport?, bool>? RunSummaryShown;
+
+    /// <summary>Handed the summary window before it is shown, in place of showing it (a window test reads and drives it; a
+    /// place it picks is gone to as a double-click's).</summary>
+    internal Action<SummaryDialog>? SummaryOpening;
+
+    /// <summary>The company's latest summary as it was shown, whatever month is shown now (its header names its own).</summary>
+    private void ShowLastSummary()
+    {
+        if (_services is null || _busy || SelectedCompany is not { } company)
+        {
+            return;
+        }
+
+        RunSummary? summary;
+        try
+        {
+            if (_services.Store.RunSummary(company.Id) is not { } stored)
+            {
+                Inform(UiText.NoSummaryYet, UiText.SummaryTitle);
+                return;
+            }
+
+            summary = RunSummary.FromJson(stored.SummaryJson);
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return;
+        }
+
+        if (summary is null)
+        {
+            Inform(UiText.SummaryUnreadable, UiText.SummaryTitle);
+            return;
+        }
+
+        ShowSummary(summary);
+    }
+
+    /// <param name="kept">The summary was kept in the store; false when keeping it failed — the dialog says so.</param>
+    private void ShowSummary(RunSummary summary, bool kept = true)
+    {
+        SummaryOccurrence? picked;
+        using (var dialog = new SummaryDialog(summary, kept))
+        {
+            DialogLayout.Keep(dialog, _settings, "summary");
+            if (SummaryOpening is { } take)
+            {
+                take(dialog);
+            }
+            else
+            {
+                dialog.ShowDialog(this);
+            }
+
+            picked = dialog.Picked;
+        }
+
+        if (picked is not null)
+        {
+            GoTo(summary, picked);
+        }
+    }
+
+    /// <summary>The main window on a place of a summary: the summary's month shown (switched to when another is), the person
+    /// selected, and the payment when the place is a payment's. The company must be the one shown.</summary>
+    private void GoTo(RunSummary summary, SummaryOccurrence place)
+    {
+        if (_services is null || _busy || place.PersonId is not { } personId)
+        {
+            return;
+        }
+
+        if (SelectedCompany?.Id != summary.CompanyId)
+        {
+            Inform(UiText.SummaryOtherCompany, UiText.SummaryTitle);
+            return;
+        }
+
+        PaymentKey? payment = place.IsPayment ? new PaymentKey(place.RowId, place.LineId, place.IsPart) : null;
+        if (SelectedPeriod != (summary.Year, summary.Month))
+        {
+            var year = _yearBox.Items.IndexOf(summary.Year.ToString(CultureInfo.InvariantCulture));
+            if (year < 0)
+            {
+                Inform(UiText.SummaryMonthMissing(summary.Year, summary.Month), UiText.SummaryTitle);
+                return;
+            }
+
+            if (!SettleCard()) // the card's own edits first, as any switch of month asks
+            {
+                return;
+            }
+
+            _filling = true;
+            try
+            {
+                _yearBox.SelectedIndex = year;
+                _monthBox.SelectedIndex = summary.Month - 1;
+            }
+            finally
+            {
+                _filling = false;
+            }
+
+            ReloadView(personId, payment);
+        }
+
+        _tabs.SelectedIndex = 0; // the review's tab, which holds the grids the place is chosen in: from the declaration's too
+        var row = _personsGrid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => r.Tag is ReviewPerson { IsUnmatched: false } p && p.PersonId == personId);
+        if (row is null)
+        {
+            Inform(UiText.SummaryPersonGone, UiText.SummaryTitle);
+            return;
+        }
+
+        if (!row.Visible)
+        {
+            _personsSearch.Text = ""; // the search hid the person: it goes, so the person is seen
+        }
+
+        if (!ReferenceEquals(_personsGrid.CurrentRow, row))
+        {
+            _personsGrid.CurrentCell = row.Cells.Cast<DataGridViewCell>().First(c => c.Visible);
+        }
+
+        if (SelectedPerson?.PersonId != personId || payment is not { } key)
+        {
+            return; // the selection was called off (the card's edits kept), or the place is the person's alone
+        }
+
+        if (!PaymentShown(key))
+        {
+            // the tab picked does not list it: the person's own payments do
+            _paymentsSearch.Text = "";
+            _scopeTabs.SelectedIndex = 0;
+        }
+
+        SelectPayment(key);
+    }
+
+    /// <summary>Whether the payments grid lists the payment under the tab and the search picked.</summary>
+    private bool PaymentShown(PaymentKey key) => _paymentsGrid.Rows.Cast<DataGridViewRow>().Any(r => r.Visible && r.Tag is ReviewPayment p && Matches(key, p));
+
+    /// <summary>The month's registers' check.</summary>
+    /// <param name="asked">The accountant already chose it in a question that said the queries go to the public pages (the
+    /// offer after an import): that question is not put again.</param>
+    /// <param name="searched">The search ran just before it in the same choice: the summary after the check covers both.</param>
+    private async Task RunLookupsAsync(bool asked = false, bool searched = false)
     {
         if (_services is null || _view is null)
         {
             return;
         }
 
-        if (!Confirm(UiText.LookupsLive, UiText.RunLookups))
+        if (!asked && !Confirm(UiText.LookupsLive, UiText.RunLookups))
         {
             return;
         }
 
         if (!SettleCard()) // the registers are asked about the persons as saved, and the card shown afresh with their answers
         {
+            if (searched)
+            {
+                ShowRunSummary(searched: true, checkedRegisters: false, report: null, completed: true); // the search's own stays shown
+            }
+
             return;
         }
 
         var services = _services;
         var periodId = _view.Period.Id;
         var logged = 0; // the persons' lines written so far, in the run's own order
+        var reached = new List<PersonLookupOutcome>(); // the persons the check got to: a check stopped midway is summarised by them
+        LookupProgress? first = null; // the run's own problems, told before the first query: a check stopped midway says them too
         var progress = new Progress<LookupProgress>(p =>
         {
             if (_lookups is null)
@@ -2949,13 +3287,20 @@ public sealed class MainForm : Form
                 return; // the run is over; a report posted late changes nothing
             }
 
+            if (p.Done == 0)
+            {
+                first = p;
+            }
+
             ShowProgress(UiText.LookupProgress(p.Done, p.Total), p.Done, p.Total);
             if (p.Outcome is { } outcome)
             {
                 LogOutcome(outcome);
+                reached.Add(outcome);
                 logged++;
             }
         });
+        LookupRunReport? finished = null;
         await RunCancellableAsync(token => services.Pipeline.RunLookupsAsync(periodId, progress, token), report =>
         {
             // a run that asked nobody (every answer reused) ends before its reports are handed over: the lines they would
@@ -2971,8 +3316,23 @@ public sealed class MainForm : Form
             }
 
             Log($"{UiText.RunLookups}: {UiText.Done}, {report.Queries} päringut"); // each person's line names their own day (decision 160)
+            finished = report;
         });
+        var summarised = finished;
+        if (finished is null && first is { Problems.Count: > 0 } told)
+        {
+            // stopped or failed: the run's own problems, known before anyone was asked, are said all the same — in the log as
+            // a check that ends says them, and in the summary with the persons it got to
+            summarised = new LookupRunReport(default, reached, told.Problems) { ProblemNotes = told.ProblemNotes };
+            foreach (var problem in UiText.LookupProblemLines(summarised))
+            {
+                Log("   " + problem);
+            }
+        }
+
         ReloadView();
+        // stopped or failed, the summary still comes: what there is, and that the check was not completed
+        ShowRunSummary(searched, checkedRegisters: true, report: summarised, completed: finished is not null, outcomes: reached);
     }
 
     private async Task LookUpOneAsync(Person person)

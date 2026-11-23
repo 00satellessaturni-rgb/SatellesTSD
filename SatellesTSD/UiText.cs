@@ -365,6 +365,169 @@ internal static class UiText
     public const string UnsavedPerson = "Isiku andmetes on salvestamata muudatused. Salvestada need?";
     public const string BusyClosing = "Töö käib. Oota, kuni see lõpeb, või katkesta see enne sulgemist.";
     public const string StoreMissing = "Andmebaasi faili ei leitud:";
+
+    // the start without its database: what went wrong, and the ways on
+    public const string StoreMissingTitle = "Andmebaas";
+    public const string NoStoreChosen = "Andmebaasi ei ole veel valitud. Ava olemasolev andmebaasi fail, loo uus andmebaas või jätka ilma andmebaasita (menüüst „Andmebaas“ saab selle avada ka hiljem).";
+
+    public static string StoreNotFound(string path, bool again) =>
+        (again ? "Andmebaasi faili ei leitud ka seekord:" : "Andmebaasi faili ei leitud:") + $"\n{path}\n\n"
+        + "Fail võib olla teisaldatud, ümber nimetatud või kustutatud, või on see võrgukettal (näiteks S:), mis ei ole veel ühendatud."
+        + " Kui võrguketas ühendub, vali „Proovi uuesti“. Ilma andmebaasita jätkates jääb meelde sama fail; menüüst „Andmebaas“ saab andmebaasi avada ka hiljem.";
+
+    public static string StoreNotOpened(string path) =>
+        $"Andmebaasi fail on nüüd olemas, kuid seda ei saanud avada:\n{path}\n\n"
+        + "Fail võib olla kahjustatud, mõne teise programmi poolt lukus või ei ole see andmebaas. Vali „Proovi uuesti“, kui lukk vabaneb, või otsi õige fail.";
+
+    public const string StoreTryAgain = "Proovi uuesti";
+    public const string StoreFind = "Otsi fail…";
+    public const string StoreOpenChoice = "Ava andmebaas…";
+    public const string StoreCreate = "Loo uus andmebaas…";
+    public const string StoreContinueWithout = "Jätka ilma andmebaasita";
+
+    // the offer after an import: the search, and the registers with it
+    public const string ImportOfferTitle = "Pärast importi";
+    public const string ImportOfferSearchAndCheck = "Otsi maksed ja kontrolli registrid";
+    public const string ImportOfferSearchOnly = "Ainult otsi maksed";
+    public const string ImportOfferNotNow = "Mitte praegu";
+
+    /// <param name="anythingNew">A file came in new; none did when the files were all there before (the month not yet searched).</param>
+    /// <param name="someRefused">A file of the same import was refused (its line in the log says why).</param>
+    public static string ImportOffer(bool lookups, bool replaces, bool anythingNew, bool someRefused) =>
+        (anythingNew
+            ? someRefused ? "Osa faile on imporditud, osa jäi importimata (vaata logi)." : "Failid on imporditud."
+            : someRefused ? "Uusi faile ei imporditud (vaata logi), kuid kuu makseid pole veel otsitud." : "Failid olid juba imporditud, kuid kuu makseid pole veel otsitud.")
+        + " Kas otsida nüüd maksed?\n\n"
+        + "Otsing leiab failidest isikutele tehtud maksed."
+        + (replaces ? " Kuu varasem otsingu tulemus asendatakse uuega; tehtud otsused jäävad alles." : "")
+        + (lookups ? "\n\nRegistrite kontroll küsib iga isiku kohta EMTA ja Pensionikeskuse avalikelt lehtedelt, üks isik korraga; see algab pärast otsingut." : "");
+
+    // the summary of a search or a register check: the problems found, counted by kind
+    public const string LastSummary = "Viimane kokkuvõte…";
+    public const string SummaryTitle = "Kokkuvõte";
+    public const string NoSummaryYet = "Selle ettevõtte kohta pole veel kokkuvõtet.";
+    public const string SummaryUnreadable = "Selle ettevõtte viimast kokkuvõtet ei saa lugeda.";
+    public const string SummaryNone = "Probleeme ei leitud.";
+    public const string SummarySearch = "Otsing";
+    public const string SummaryPayments = "Maksed";
+    public const string SummaryRegisters = "Registrid";
+    public const string SummarySectionColumn = "Osa";
+    public const string SummaryCodeColumn = "Kood";
+    public const string SummaryKindColumn = "Probleem";
+    public const string SummaryCountColumn = "Arv";
+    public const string SummaryWhoColumn = "Kes / kus";
+    public const string SummaryDetailColumn = "Selgitus";
+    public const string SummaryHint = "Vali probleem, et näha, keda või milliseid ridu see puudutab. Topeltklõps isikul valib ta põhiaknas.";
+    public const string SummaryCheckNotCompleted = "Registrite kontroll ei jõudnud lõpuni (katkestati või ebaõnnestus): kokkuvõte näitab, mis selleks ajaks oli teada.";
+    public const string SummaryNotKept = "Kokkuvõtet ei saanud andmebaasi salvestada: „Viimane kokkuvõte…“ seda hiljem ei ava.";
+    public const string SummaryNoPerson = "kuu failid";
+    public const string SummaryWholeCheck = "kontroll tervikuna";
+    public const string SummaryPersonGone = "Seda isikut ei ole kuu vaates enam.";
+    public const string SummaryOtherCompany = "Kokkuvõte on teise ettevõtte kohta: vali enne see ettevõte.";
+
+    /// <summary>A month as the summary names it: 10.2026.</summary>
+    public static string SummaryMonth(int year, int month) => $"{month:00}.{year}";
+
+    public static string SummaryMonthMissing(int year, int month) => $"Kokkuvõtte kuud {SummaryMonth(year, month)} ei saa põhiaknas valida.";
+
+    /// <summary>The summary's header: whose, which month, when, what it covers and how many.</summary>
+    public static string SummaryHeader(Core.Review.RunSummary summary)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        var runs = summary.Searched && summary.CheckedRegisters ? $"„{RunMatch}“ ja „{RunLookups}“" : summary.Searched ? $"„{RunMatch}“" : $"„{RunLookups}“";
+        var made = summary.MadeAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        var lines = new List<string>
+        {
+            $"{summary.CompanyName} ({summary.RegistryCode}), kuu {SummaryMonth(summary.Year, summary.Month)}",
+            $"Tehtud {made}: {runs}",
+            summary.Total == 0 ? SummaryNone : $"Probleeme kokku: {summary.Total}",
+        };
+        if (summary.CheckedRegisters && !summary.CheckCompleted)
+        {
+            lines.Add(SummaryCheckNotCompleted);
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>A kind of problem in a few words, by its code — every code the search, the review, the payments' checks, the
+    /// register check and the undeclared income can be said under; null for a code not known here (the code alone is shown).</summary>
+    public static string? ShortTitle(string code) => ShortTitles.TryGetValue(code, out var title) ? title : null;
+
+    private static readonly Dictionary<string, string> ShortTitles = new(StringComparer.Ordinal)
+    {
+        // the search's and the review's problems
+        [MatchProblem.AmbiguousMask] = "Otsingumask võib tähendada teist isikut",
+        [MatchProblem.SharedRow] = "Rida leiti mitmele isikule",
+        [MatchProblem.NoFilters] = "Paigutusel pole kategooriate filtreid",
+        [MatchProblem.NoEmploymentInMonth] = "Töötamine ei kata kuud",
+        [MatchProblem.SeveralEntries] = "Isik on TÖR-is mitu korda",
+        [MatchProblem.NoName] = "TÖR-i real puudub nimi",
+        [MatchProblem.HeaderRow] = "Päiserida andmete seas",
+        [MatchProblem.NotDone] = "Tehing ei liigutanud raha",
+        [MatchProblem.BadAmount] = "Summat ei saanud lugeda",
+        [MatchProblem.DuplicateRow] = "Rida on teise rea koopia",
+        [MatchProblem.PayeeAmbiguous] = "Saaja nimed on kahel isikul",
+        [MatchProblem.PayeeHandLine] = "Saajal on sama summaga käsitsi rida",
+        [MatchProblem.PayeeCodeElsewhere] = "Rea isikukood on teisel isikul",
+        [MatchProblem.NamesakeOtherCode] = "Samanimeline isik teise koodiga",
+        [MatchProblem.DecisionMoved] = "Otsus viidi originaalreale",
+        [MatchProblem.DecisionOnCopy] = "Otsus on koopia real",
+        [MatchProblem.OtherEmployer] = "Teise tööandja TÖR-i read",
+        [MatchProblem.IncludedWithoutRow] = "„Kaasa“, kuid TÖR-is ei ole",
+        [MatchProblem.OutsideTorSalary] = "Palk isikule, keda TÖR ei loetle",
+        [MatchProblem.OldReading] = "Fail on loetud vanal viisil",
+        [MatchProblem.StateUnread] = "Tehingu olek on lugemata",
+        [MatchProblem.RowsBelowLastPayee] = "Read viimasest saajast allpool",
+        [MatchProblem.NameContained] = "Nimi sisaldub teise isiku nimes",
+
+        // the payments' refusals and notices
+        [ReviewChecks.NoPerson] = "Maksel ei ole isikut",
+        [ReviewChecks.NoPayeeId] = "Isikul ei ole koodi",
+        [ReviewChecks.ResidencyNotChecked] = "Residentsus on kontrollimata",
+        [ReviewChecks.NoType] = "Väljamakse liik puudub",
+        [ReviewChecks.OutsideTor] = "Isik ei ole TÖR-is",
+        [ReviewChecks.TwoContracts] = "Kaks eri liiki töötamist",
+        [ReviewChecks.UnknownType] = "Tundmatu väljamakse liik",
+        [ReviewChecks.NotInPeriod] = "Makse on teises kuus",
+        [ReviewChecks.NotCounted] = "Makse ei lähe arvesse",
+        [ReviewChecks.ForeignCurrency] = "Summa ei ole eurodes",
+        [ReviewChecks.MoneyIn] = "Laekumine, mitte väljamakse",
+        [ReviewChecks.CodeInvalid] = "Kood ei ole Eesti isikukood",
+        [ReviewChecks.TypeTaxesDiffer] = "Käsitsi valitud liigiga muutuvad maksud",
+        [ReviewChecks.PayOnFreeWork] = "Palk tasuta töötamise kandele",
+        [PaymentChecks.RatesExceedOne] = "Maksumäärad kokku 100 % või üle",
+        [PaymentChecks.NegativeAmount] = "Negatiivne summa",
+        [PaymentChecks.ZeroNotAllowed] = "Summa 0 ei ole lubatud",
+        [PaymentChecks.TypePayeeMismatch] = "Liik ei sobi residentsusega",
+        [PaymentChecks.A1CountriesMissing] = "A1 riigid puuduvad",
+        [PaymentChecks.A1CountriesInconsistent] = "A1 riigid ei sobi kokku",
+        [PaymentChecks.PensionNotChecked] = "II sammas on kontrollimata",
+        [PaymentChecks.PensionRateUnknown] = "II samba määr on teadmata",
+        [PaymentChecks.PensionRateInvalid] = "II samba määr ei sobi",
+        [PaymentChecks.ExemptionWithoutApplication] = "Maksuvaba ilma avalduseta",
+        [PaymentChecks.ExemptionAboveLegal] = "Maksuvaba üle seaduse piiri",
+        [PaymentChecks.ExemptionSubCent] = "Maksuvaba ei ole täissentides",
+        [PaymentChecks.MinimumShareInvalid] = "Miinimumi kuu osa ei sobi",
+        [PaymentChecks.TreatyRateInvalid] = "Maksulepingu määr ei sobi",
+        [PaymentChecks.ExemptionNotEea] = "Maksuvaba EMP-välise riigi residendile",
+
+        // the register check
+        [LookupRunner.Skipped] = "Registritest ei küsitud",
+        [LookupRunner.Failed] = "Registri päring ebaõnnestus",
+        [LookupRunner.Disagrees] = "Register erineb käsitsi määratust",
+        [LookupRunner.RateUnknown] = "II samba määr jäi teadmata",
+        [LookupRunner.Reset] = "II samba andmed on teadmata",
+        [LookupNote.NoRun] = "Kuu makseid ei ole otsitud",
+
+        // why income is not declared, as the Probleemid column says it
+        [Core.Review.Undeclared.Excluded] = "Isik on deklaratsioonist välja jäetud",
+        [Core.Review.Undeclared.Refused] = "Rida ei saa koostada",
+        [Core.Review.Undeclared.Unticked] = "„Deklareeri“ on maha võetud",
+        [Core.Review.Undeclared.NotDeclared] = "Ei lähe deklaratsiooni",
+        [Core.Review.Undeclared.Held] = "Liik ootab keeldutud makset",
+        [Core.Review.Undeclared.TypeHeld] = "Liik ootab keeldutud makset",
+    };
     public const string NoPeriodYet = "periood on tühi — impordi failid";
     public const string Cancelled = "katkestatud";
     public const string Done = "valmis";

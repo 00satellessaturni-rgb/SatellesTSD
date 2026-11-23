@@ -454,6 +454,9 @@ public class LookupRunnerTests
 
             Assert.Equal(["48712219406", "38810140309"], report.Persons.Select(p => p.PersonalCode)); // register order
             Assert.Contains(report.Problems, p => p.StartsWith(LookupRunner.Skipped) && p.Contains("no personal code"));
+            // the register row named by its key, as the review makes its person when the month is opened
+            var peeter = store.LoadMatchResult(period.Id)!.Persons.Single(p => p.Person.PersonalCode is null);
+            Assert.Equal(peeter.Key, Assert.Single(report.ProblemNotes, n => n.Variant == LookupNote.RegisterNoCode).PersonKey);
             var mari = store.FindPerson(company.Id, "48712219406")!;
             Assert.Equal(("MARI", "MAASIKAS", "1", true, 0.02m), (mari.FirstName, mari.LastName, mari.TorEmploymentTypeId, mari.FundedPensionMember, mari.PensionRate)); // created from the register
             var jaanAfter = store.FindPerson(company.Id, "38810140309")!;
@@ -704,10 +707,19 @@ public class LookupRunnerTests
             var codeless = workspace.AddPerson(company.Id, "Peeter", "Pihl", null, null);
             workspace.SetPerson(view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ"), codeless.Id);
 
-            var report = await Runner(store, new FakeResidency(), new FakePension()).RunAsync(period.Id);
+            var reports = new List<LookupProgress>();
+            var report = await Runner(store, new FakeResidency(), new FakePension()).RunAsync(period.Id, progress: new Reported(reports.Add));
 
             Assert.DoesNotContain(report.Persons, p => p.PersonId == codeless.Id); // nothing to ask by
             Assert.Single(report.Problems, p => p.StartsWith(LookupRunner.Skipped, StringComparison.Ordinal) && p.Contains("paid in the month", StringComparison.Ordinal));
+            // the person named by their id too, for a window that goes to them
+            var note = Assert.Single(report.ProblemNotes, n => n.Variant == LookupNote.PaidNoCode);
+            Assert.Equal((Guid?)codeless.Id, note.PersonId);
+            // the run's own problems are told before the first query too: a run stopped midway still has them
+            Assert.Equal(report.Problems, reports[0].Problems);
+            Assert.Equal(report.ProblemNotes, reports[0].ProblemNotes);
+            Assert.Null(reports[0].Outcome);
+            Assert.All(reports.Skip(1), r => Assert.Empty(r.Problems));
         }
     }
 

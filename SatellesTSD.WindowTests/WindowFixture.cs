@@ -114,6 +114,8 @@ internal sealed class WindowFixture : IDisposable
             StartPosition = FormStartPosition.Manual,
             Location = new Point(-4000, -4000),
             Confirming = confirm ?? ((_, _) => true),
+            Choosing = (_, _, _) => -1, // a question of choices left unanswered (the offer after an import: not now) unless a test answers it
+            SummaryOpening = _ => { }, // a run's summary is made and kept, never shown modally, unless a test reads it
             ServicesFactory = Services,
         };
         form.Failing = e => Failures.Add(e);

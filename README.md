@@ -22,8 +22,11 @@ VBA) is in [docs/reference](docs/reference).
 
 1. Unpack `SatellesTSD-v<version>.zip` (or copy the folder) anywhere the user can write — not a network
    drive, not a build folder. Run `SatellesTSD.exe`.
-2. First run: the window asks for the store file. Cancel the picker and use **Uus andmebaas…** to create one
-   (the suggested name is `SatellesTSD.db`); put it in a folder that is backed up. The choice is remembered
+2. First run: the window says no store is chosen yet and offers **Ava andmebaas…**, **Loo uus andmebaas…** (the
+   suggested name is `SatellesTSD.db`; put it in a folder that is backed up) or **Jätka ilma andmebaasita**. When
+   the remembered store is not found (moved, renamed, or on a network drive such as S: not connected yet) the window
+   says where it looked and offers **Proovi uuesti**, **Otsi fail…**, **Loo uus andmebaas…** and **Jätka ilma
+   andmebaasita**; going on without keeps the remembered file for the next start. The choice is remembered
    in `%AppData%\SatellesTSD\settings.json`, with the company and the month last shown, the window's size and
    place, the card's width and the persons grid's height, the Vaade choices (the log one line high, the persons
    grid salary-only) and the Seaded choice (the declaration's cut).
@@ -55,7 +58,7 @@ reads and writes the settings there instead of `%AppData%` (both take a path aft
 ## A month, step by step
 
 The commands sit in the menus — **Andmebaas** (the store, the updates, Sulge), **Ettevõte**, **Periood**
-(import, search, the register lookups, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
+(import, search, the register lookups, the latest summary, Katkesta), **Isik** (a new person, a line by hand), **Tööriistad**
 (the report, the calculator, the non-residents of every company), **Vaade** (the log one line high, one toggle; the persons grid showing only PALK NETO KOKKU
 of the sources) and **Seaded** (the declaration's cut, step 6; **Palk kahe kehtiva lepingu korral**, how a salary is typed on a day two
 contracts are in force: by the employment contract, asked on each payment, or by the contract begun latest; your own statement layouts in **Väljavõtte paigutused…**, which
@@ -86,7 +89,12 @@ person picked, every payment of the month, one per category, the payments withou
    the payments found (the Otsingu kontroll) with the category, the payment type and whether it is declared.
    A statement row without a payee name (a fee, a card payment, a balance line) is listed too, under
    "— leidmata read —" with no category, so that every transaction is in front of you; it is never
-   searched for a person, but you can name one.
+   searched for a person, but you can name one. After an import the window offers the search at once — with the
+   register check after it, the search alone, or not now. After every search and every month's register check a
+   summary opens: the problems found, counted by kind (the search's, the payments', the registers'); a kind picked
+   lists the persons or rows it concerns, and a double-click on a person goes to them in the main window. A check
+   stopped midway is summarised by what it got to, and says so. **Periood › Viimane kokkuvõte…** opens the
+   company's latest summary again, after a restart too.
 4. **Kontrolli registrid**: residency from EMTA, II-pillar membership and rate from Pensionikeskus, one
    person at a time; the person panel shows what was found and lets you confirm or set the facts by hand. A second
    run in the month reuses the answers it has; **Kontrolli registrist** on the person's card asks both registers

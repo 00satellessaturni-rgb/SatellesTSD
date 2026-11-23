@@ -16,4 +16,15 @@ public interface IReviewStore
 
     /// <summary>The period's decisions: the overlays first, then the lines added by hand, each in order of saving.</summary>
     IReadOnlyList<ReviewLine> ReviewLines(Guid periodId);
+
+    /// <summary>Keeps a run's summary as the company's latest, in place of the one before (a company keeps one, whatever
+    /// its month). The company must be in the store.</summary>
+    void SaveRunSummary(StoredRunSummary summary);
+
+    /// <summary>The company's latest run summary, or null when none was made yet.</summary>
+    StoredRunSummary? RunSummary(Guid companyId);
 }
+
+/// <summary>A run's summary as kept: the company's latest, the month it was made for, when (UTC), and the summary as it was
+/// shown (<see cref="RunSummary"/> as JSON).</summary>
+public sealed record StoredRunSummary(Guid CompanyId, Guid? PeriodId, DateTime MadeAt, string SummaryJson);

@@ -22,7 +22,8 @@ public sealed class AppServices : IDisposable
     }
 
     /// <summary>The services with registers of the caller's own (a test's, never the live sites); null takes the real clients.</summary>
-    internal AppServices(string storePath, IResidencyLookup? residency, IPensionLookup? pension, LookupOptions? lookupOptions)
+    /// <param name="withoutLookups">No registers at all (a test of the window without them): the pipeline has no lookups.</param>
+    internal AppServices(string storePath, IResidencyLookup? residency, IPensionLookup? pension, LookupOptions? lookupOptions, bool withoutLookups = false)
     {
         StorePath = storePath;
         Store = SqliteStore.Open(storePath);
@@ -30,14 +31,14 @@ public sealed class AppServices : IDisposable
         {
             var catalog = LayoutCatalog.Default.WithOverrides(Store.Layouts());
             var importer = new Importer(catalog, new ExcelTableReader());
-            if (residency is null)
+            if (residency is null && !withoutLookups)
             {
                 var emta = EmtaResidencyClient.Create();
                 _emta = emta;
                 residency = emta;
             }
 
-            if (pension is null)
+            if (pension is null && !withoutLookups)
             {
                 var pensionikeskus = PensionikeskusClient.Create();
                 _pensionikeskus = pensionikeskus;

@@ -16,7 +16,21 @@ public sealed record LookupOptions(TimeSpan MinInterval, bool Force = false)
 
 /// <summary>How far a lookup run is: <see cref="Done"/> of <see cref="Total"/> persons asked, with the outcome of the one
 /// just done (none for the first report, which tells the total before any query).</summary>
-public sealed record LookupProgress(int Done, int Total, PersonLookupOutcome? Outcome);
+public sealed record LookupProgress(int Done, int Total, PersonLookupOutcome? Outcome)
+{
+    /// <summary>The first report's: the run's own problems (no search, a person without a code), known before anyone is
+    /// asked — so a run stopped or failed midway still has them to say, not only one that hands back its report.</summary>
+    public IReadOnlyList<string> Problems { get; init; } = [];
+
+    /// <summary>The run's own problems by their codes and figures, one for one with <see cref="Problems"/>.</summary>
+    public IReadOnlyList<LookupNote> ProblemNotes { get; init; } = [];
+
+    public bool Equals(LookupProgress? other) =>
+        other is not null && Done == other.Done && Total == other.Total && Equals(Outcome, other.Outcome)
+        && Problems.SequenceEqual(other.Problems, StringComparer.Ordinal) && ProblemNotes.SequenceEqual(other.ProblemNotes);
+
+    public override int GetHashCode() => HashCode.Combine(Done, Total, Problems.Count);
+}
 
 /// <summary>A fact the accountant set by hand that a register's answer speaks against: what the register says for the
 /// control date and what stands on the person (decision 159).</summary>
@@ -41,8 +55,11 @@ public sealed record LookupDisagreement(LookupKind Kind, bool Register, decimal?
 /// <param name="ByHand">DISAGREES: the fact as the accountant set it.</param>
 /// <param name="ByHandRate">DISAGREES: the rate as the accountant set it.</param>
 /// <param name="Ended">FAILED's <see cref="LookupNote.MembershipUnknown"/>: the day the contributions end, when the page names it.</param>
+/// <param name="PersonId">SKIPPED of a run: the store person named, when there is one (a codeless person paid in the month, the card a register row stands for).</param>
+/// <param name="PersonKey">SKIPPED of a run: the register row named, as the search keys it (the review makes its person when the month is opened).</param>
 public sealed record LookupNote(string Code, string? Variant = null, LookupKind? Kind = null, bool? Value = null, decimal? Rate = null, DateOnly? Day = null,
-    DateTime? At = null, string? Name = null, string? Failure = null, bool? Derived = null, bool? ByHand = null, decimal? ByHandRate = null, DateOnly? Ended = null)
+    DateTime? At = null, string? Name = null, string? Failure = null, bool? Derived = null, bool? ByHand = null, decimal? ByHandRate = null, DateOnly? Ended = null,
+    Guid? PersonId = null, string? PersonKey = null)
 {
     // the steps
     public const string Asked = "ASKED";
@@ -295,7 +312,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         var controlDate = ControlDateOf(period);
         var problems = new LookupSaid();
         var persons = PersonsOf(period, problems);
-        progress?.Report(new LookupProgress(0, persons.Count, null));
+        progress?.Report(new LookupProgress(0, persons.Count, null) { Problems = problems.Texts.ToList(), ProblemNotes = problems.Notes.ToList() });
         var outcomes = new List<PersonLookupOutcome>();
         foreach (var (person, payoutDate) in persons)
         {
@@ -599,7 +616,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
 
                 if (string.IsNullOrWhiteSpace(card?.PersonalCode))
                 {
-                    problems.Add(new LookupNote(Skipped, LookupNote.RegisterNoCode, Name: matchPerson.Person.FullName), $"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
+                    problems.Add(new LookupNote(Skipped, LookupNote.RegisterNoCode, Name: matchPerson.Person.FullName, PersonId: card?.Id, PersonKey: matchPerson.Key), $"{Skipped}: {matchPerson.Person.FullName} has no personal code in the register nor on the card; nothing to ask.");
                     continue;
                 }
 
@@ -630,7 +647,7 @@ public sealed class LookupRunner(IStore store, IResidencyLookup residency, IPens
         foreach (var codeless in stored.Where(p => p.PersonalCode is null && paid.ContainsKey(p.Id) && !registerIds.ContainsValue(p.Id) // a register person without a code was said above
                      && persons.All(listed => listed.Item1.Id != p.Id)))
         {
-            problems.Add(new LookupNote(Skipped, LookupNote.PaidNoCode, Name: codeless.FullName), $"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask — set the residency on the card.");
+            problems.Add(new LookupNote(Skipped, LookupNote.PaidNoCode, Name: codeless.FullName, PersonId: codeless.Id), $"{Skipped}: {codeless.FullName} is paid in the month and has no personal code; nothing to ask — set the residency on the card.");
         }
 
         return persons;

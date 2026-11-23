@@ -1281,6 +1281,17 @@ public sealed partial class SqliteStore : IStore
         """
         ALTER TABLE payment ADD COLUMN settled INTEGER NOT NULL DEFAULT 0;
         """,
+
+        // v14 — the latest summary of a search or a register check, one per company (plan item 67): kept as it was shown, so
+        // it is opened again after the window closed or the program quit. The month is named, not tied: it is a record.
+        """
+        CREATE TABLE run_summary (
+            company_id   TEXT PRIMARY KEY REFERENCES company(id),
+            period_id    TEXT,
+            made_at      TEXT NOT NULL,
+            summary_json TEXT NOT NULL
+        );
+        """,
     ];
 
     // ---------------------------------------------------------------- helpers
