@@ -57,9 +57,9 @@ public class DeclareTests
 
     /// <summary>A run reviewed and ready: Mari a checked resident, not a II-pillar member, with the exemption applied and,
     /// unless a test wants it, the social-tax minimum switched off (so a month without her salary makes no zero line).</summary>
-    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string strangerCurrency = "EUR")
+    private static Box Ready(bool twin = false, bool minimum = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string strangerCurrency = "EUR", string? mariPauseReason = null)
     {
-        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond, mariEndOn: mariEndOn, mariPauseFrom: mariPauseFrom, mariEndBlank: mariEndBlank, strangerCurrency: strangerCurrency);
+        var (store, company, period, _) = ReviewFixtures.Setup(twin: twin, salary: salary, mariType: mariType, mariEnded: mariEnded, mariPaused: mariPaused, mariRestarted: mariRestarted, mariSecond: mariSecond, mariEndOn: mariEndOn, mariPauseFrom: mariPauseFrom, mariEndBlank: mariEndBlank, strangerCurrency: strangerCurrency, mariPauseReason: mariPauseReason);
         new MatchRunner(store).Run(period.Id);
         var clock = new FixedClock(new DateTime(2026, 11, 4, 10, 0, 0));
         var workspace = new ReviewWorkspace(store, TaxRates.Year2026, clock);
@@ -163,6 +163,72 @@ public class DeclareTests
         // in force on no day, so nothing counts — the board seat's days do not stand in for the Tööleping's
         var endless = Entry(new DateOnly(2024, 1, 1), null, "4", "1", 1);
         Assert.Equal(0m, PeriodDeclarer.MonthShare(board, [endless, board], 2026, 10));
+    }
+
+    [Fact]
+    public void A_pause_for_unpaid_leave_still_owes_the_minimum_with_pay_and_without()
+    {
+        // the register's own word decides: "Tasustamata puhkus" (or "palgata"), in any case; no other reason, and no valid row
+        TorEntry Paused(string? reason, DateOnly? from = null, DateOnly? start = null) =>
+            new(1, "1", ReviewFixtures.MariCode, "MARI", "MAASIKAS", "EE", start ?? new DateOnly(2024, 1, 1), null, "1", "Tööleping", TorStates.Paused, "Peatatud", null, null, null, null, [], null, from, null, reason);
+        Assert.True(Paused("Tasustamata puhkus").PausedForUnpaidLeave);
+        Assert.True(Paused("poolte kokkuleppel TASUSTAMATA puhkus").PausedForUnpaidLeave);
+        Assert.True(Paused("Palgata puhkus").PausedForUnpaidLeave);
+        Assert.False(Paused("Lapsehoolduspuhkus").PausedForUnpaidLeave);
+        Assert.False(Paused(null).PausedForUnpaidLeave);
+        // its days count for the minimum, whether or not the register says since when; never the days before the contract began
+        var leave = Paused("Tasustamata puhkus", new DateOnly(2026, 10, 17));
+        Assert.Equal((false, true), (leave.InForceOn(new DateOnly(2026, 10, 20)), leave.OwesMinimumOn(new DateOnly(2026, 10, 20))));
+        Assert.True(Paused("Tasustamata puhkus").OwesMinimumOn(new DateOnly(2026, 10, 20)));
+        Assert.False(Paused("Tasustamata puhkus", start: new DateOnly(2026, 10, 21)).OwesMinimumOn(new DateOnly(2026, 10, 20)));
+        Assert.Equal(1m, PeriodDeclarer.MonthShare(leave, [], 2026, 10));
+        Assert.Equal(16m / 30m, PeriodDeclarer.MonthShare(Paused("Lapsehoolduspuhkus", new DateOnly(2026, 10, 17)), [], 2026, 10)); // another pause: its days are left out, as before
+
+        // paused through the month for unpaid leave, a small pay: topped up to the whole minimum, and the build says why
+        using (var paid = Ready(minimum: true, mariPaused: true, salary: 100m, mariPauseReason: "Tasustamata puhkus"))
+        {
+            var report = paid.Declarer.Build(paid.Period.Id);
+            var mari = Assert.Single(report.Persons, p => p.PersonId == paid.Mari.Id);
+            Assert.Equal(1m, mari.MinimumShare);
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal));
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.UnpaidLeave, StringComparison.Ordinal));
+            var line = Assert.Single(paid.Lines);
+            Assert.Equal(TaxRates.Year2026.SocialTaxMinimumBase, line.Result!.Gross + line.Result.SocialTaxMinimumIncrease);
+
+            // no pay declared in the month: a zero line carries the whole minimum
+            paid.Workspace.SetDeclare(paid.Salary, false);
+            report = paid.Declarer.Build(paid.Period.Id);
+            mari = Assert.Single(report.Persons, p => p.PersonId == paid.Mari.Id);
+            var zero = Assert.Single(paid.Lines);
+            Assert.Equal((0m, TaxRates.Year2026.SocialTaxMinimumBase), (zero.Result!.Gross, zero.Result.SocialTaxMinimumIncrease));
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.UnpaidLeave, StringComparison.Ordinal)); // the zero line's own note says it
+
+            // a foreign A1: no Estonian social tax, so no minimum — and nothing is said of one
+            paid.Workspace.SetDeclare(paid.Salary, true);
+            paid.Store.UpdatePerson(paid.Mari with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "FI" });
+            report = paid.Declarer.Build(paid.Period.Id);
+            mari = Assert.Single(report.Persons, p => p.PersonId == paid.Mari.Id);
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.UnpaidLeave, StringComparison.Ordinal));
+        }
+
+        // the card's "kaasa" on an unpaid leave: the register's reason is the one named, not the card's choice
+        using (var kaasa = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 10, 17), salary: 100m, mariPauseReason: "Tasustamata puhkus"))
+        {
+            kaasa.Store.UpdatePerson(kaasa.Mari with { Declaration = DeclarationChoice.Include });
+            var mari = Assert.Single(kaasa.Declarer.Build(kaasa.Period.Id).Persons, p => p.PersonId == kaasa.Mari.Id);
+            Assert.Equal(1m, mari.MinimumShare);
+            Assert.Single(mari.Problems, p => p.StartsWith(PeriodDeclarer.UnpaidLeave, StringComparison.Ordinal));
+            Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.Included, StringComparison.Ordinal));
+        }
+
+        // the same month paused for parental leave: no zero line, as before
+        using (var parental = Ready(minimum: true, mariPaused: true, salary: 100m))
+        {
+            parental.Workspace.SetDeclare(parental.Salary, false);
+            parental.Declarer.Build(parental.Period.Id);
+            Assert.Empty(parental.Lines);
+        }
     }
 
     [Fact]

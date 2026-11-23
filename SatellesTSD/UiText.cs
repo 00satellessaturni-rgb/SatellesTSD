@@ -1439,8 +1439,9 @@ internal static class UiText
                 + $" – vajuta „{RunLookups}“ või kinnita see isiku kaardil. {ZeroDraftGoes}",
             Core.Declare.PeriodDeclarer.ZeroLine => n.Variant switch
             {
-                "valid" or "ended" or "paused" => $"kuul kehtib töötamine (TÖR liik {n.TypeId}"
-                    + (n.Variant == "ended" ? $"; registris lõpetatud {Day(n.Day)}" : n.Variant == "paused" ? $"; registris peatatud alates {Day(n.Day)}" : "")
+                "valid" or "ended" or "paused" or "unpaidLeave" => $"kuul kehtib töötamine (TÖR liik {n.TypeId}"
+                    + (n.Variant == "ended" ? $"; registris lõpetatud {Day(n.Day)}" : n.Variant == "paused" ? $"; registris peatatud alates {Day(n.Day)}"
+                        : n.Variant == "unpaidLeave" ? "; registris peatatud tasustamata puhkuseks" + (n.Day is null ? "" : $" alates {Day(n.Day)}") + ", mille ajal on miinimum endiselt tasuda" : "")
                     + (n.FromCard ? "; liik kaardilt kõigile maksetele" : "")
                     + $"), kuid kuu jooksul pole miinimumi kandvat makset: miinimumi kannab nullrida väljamakse liigiga {n.PaymentType}.",
                 "asIfEmployed" => $"deklareeritakse nagu kehtiv töötamine ({Kaasa}), TÖR liik {n.TypeId}; kuu jooksul pole miinimumi kandvat makset: miinimumi kannab nullrida väljamakse liigiga {n.PaymentType}.",
@@ -1458,11 +1459,13 @@ internal static class UiText
                 $"residentsus ja II sammas on päritud seisuga {Day(n.Day)}, ülevaatuse järgi on isiku kontrollpäev nüüd {Day(n.OtherDay)}; vajuta uuesti „{RunLookups}“.",
             Core.Declare.PeriodDeclarer.NoResidenceCountry =>
                 $"mitteresident deklareeritakse ilma maksuresidentsuse riigita (RR_MAKSURESIDENTSUSE_RIIK); MTA võrdleb seda oma registriga (KR_ISIK_6, punane viga) – sisesta isiku kaardile „{ResidenceCountry}“, kui see on teada.",
+            Core.Declare.PeriodDeclarer.UnpaidLeave =>
+                "registris on töötamine peatatud tasustamata puhkuseks" + (n.Day is null ? "" : $" alates {Day(n.Day)}") + "; miinimum arvestatakse ka peatamise päevade eest.",
             Core.Declare.PeriodDeclarer.NoEmploymentInMonth => n.Variant switch
             {
                 "notCovered" => $"ükski registri töötamine ei kata seda kuud; {NoMinimum}.",
                 "notListed" => $"kuu TÖR-is isikut ei ole; {NoMinimum} (kui isik kuul töötas, vali kaardil {DeclarationLabel} „kaasa“).",
-                "paused" => $"töötamine on kogu kuu peatatud (või register ei ütle, millest alates); {NoMinimum}.",
+                "paused" => $"töötamine on kogu kuu peatatud (või register ei ütle, millest alates); {NoMinimum}. Kui peatamise põhjus on tasustamata puhkus, mida register nii ei nimeta, on miinimum siiski tasuda: vali {Kaasa}.",
                 "notInForce" => $"ükski miinimumi kandev registri kanne ei kehti kuul ühelgi päeval (lõpetatud kanne ilma lõppkuupäevata või kande olek „{n.Subject}“, mida programm ei tunne); {NoMinimum}.",
                 _ => null,
             },

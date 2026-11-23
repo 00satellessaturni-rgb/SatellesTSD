@@ -130,6 +130,34 @@ public sealed record TorEntry(
         };
     }
 
+    /// <summary>The pause is an unpaid leave ("Tasustamata puhkus" in "Peatamise alus"; "palgata puhkus" as it is also
+    /// called): registered as a pause when it lasts a whole calendar month or longer, and unlike the other pauses
+    /// (parental leave, military service) it leaves the employer owing social tax on the monthly base (decision 254).</summary>
+    public bool PausedForUnpaidLeave =>
+        StateId == TorStates.Paused && PauseReason is { } reason
+        && (reason.Contains("tasustamata", StringComparison.OrdinalIgnoreCase) || reason.Contains("palgata", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Whether the day counts for the social-tax minimum: a day the employment is in force
+    /// (<see cref="InForceOn"/>), and a day of a pause for unpaid leave — the contract stands and the minimum is owed
+    /// for it, whether or not the register says since when the pause runs (decision 254).</summary>
+    public bool OwesMinimumOn(DateOnly day) =>
+        InForceOn(day) || (PausedForUnpaidLeave && !(StartDate is { } start && day < start) && !(EndDate is { } end && day > end));
+
+    /// <summary>Whether some day of the month counts for the minimum (<see cref="OwesMinimumOn"/>).</summary>
+    public bool OwesMinimumIn(int year, int month)
+    {
+        var first = new DateOnly(year, month, 1);
+        for (var day = first; day.Month == month; day = day.AddDays(1))
+        {
+            if (OwesMinimumOn(day))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Whether the employment was in force on some day of the month (<see cref="InForceOn"/>).</summary>
     public bool InForceIn(int year, int month)
     {

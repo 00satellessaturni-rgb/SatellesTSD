@@ -37,6 +37,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     }
     public const string NoPayee = "NO_PAYEE";
     public const string NoEmploymentInMonth = "NO_EMPLOYMENT_IN_MONTH";
+    public const string UnpaidLeave = "UNPAID_LEAVE";
     public const string ModeChanged = "MODE_CHANGED";
     public const string RatesMissing = "RATES_MISSING";
     public const string RunStale = "RUN_STALE";
@@ -103,8 +104,9 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// whole month; the standing entry alone when no row carries it. Each row counts the days it is in force by decision
     /// 181's rule (<see cref="TorEntry.InForceOn"/>): its days of pause (from "Peatamise alguse aeg" to "Peatamise lõpu
     /// aeg", or on) are left out, a paused row that does not say since when, an ended row that names no end and a row in a
-    /// state the app does not know add nothing; the standing entry declared "kaasa" counts every day as if valid. A day two
-    /// rows cover counts once.</summary>
+    /// state the app does not know add nothing; the standing entry declared "kaasa" counts every day as if valid. A pause
+    /// for unpaid leave is no such pause: its days count, the minimum is owed for them (decision 254). A day two rows
+    /// cover counts once.</summary>
     /// <param name="treatPausedAsValid">The person card's "kaasa": the entry standing for the month counts its days as if
     /// valid, its pause included.</param>
     public static decimal MonthShare(TorEntry? entry, IReadOnlyList<TorEntry> others, int year, int month, bool treatPausedAsValid = false)
@@ -126,7 +128,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             {
                 // by its dates and its state, as the zero line asks it (decision 181): an ended row with no end date, or a
                 // state the app does not know, counts no day (the fifth audit, item 16); "kaasa" counts every day
-                if (asValid || e.InForceOn(day))
+                if (asValid || e.OwesMinimumOn(day)) // a pause for unpaid leave counts its days too (decision 254)
                 {
                     covered[day.Day - 1] = true;
                 }
@@ -480,7 +482,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // "valid" is the month's, by the row's dates, not the state the export was taken in: a contract that ran through the
         // month and was ended or paused after it (as an export downloaded the next month shows it) carries the month's
         // minimum like a valid one (decision 181)
-        bool InForce(TorEntry? e) => e is not null && e.InForceIn(period.Year, period.Month);
+        // a row paused for unpaid leave carries the minimum through its pause, with or without pay (decision 254)
+        bool InForce(TorEntry? e) => e is not null && e.OwesMinimumIn(period.Year, period.Month);
         var carrier = InForce(entry) && Carries(entry!.TypeId) ? entry
             : reviewPerson.Register?.Entries.Where(e => InForce(e) && Carries(e.TypeId)).OrderByDescending(e => e.StartDate ?? DateOnly.MinValue).FirstOrDefault() ?? entry;
         var zeroTypeId = InForce(carrier) ? cardType ?? carrier!.TypeId
@@ -547,7 +550,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 zeroNote = InForce(carrier)
                     ? new BuildNote(ZeroLine, $"{ZeroLine}: a valid employment{(carrier!.StateId == TorStates.Valid ? "" : carrier.StateId == TorStates.Ended ? $" in the month (the register has it ended on {carrier.EndDate:dd.MM.yyyy})" : $" in the month (the register has it paused from {carrier.PauseStart:dd.MM.yyyy})")}{(cardType is null ? "" : ", the card's employment type for every payment,")} of type {zeroTypeId} with no pay carrying the minimum this month; a zero line of type {zeroCode} carries it.")
                     {
-                        Variant = carrier.StateId == TorStates.Valid ? "valid" : carrier.StateId == TorStates.Ended ? "ended" : "paused",
+                        Variant = carrier.StateId == TorStates.Valid ? "valid" : carrier.StateId == TorStates.Ended ? "ended" : carrier.PausedForUnpaidLeave ? "unpaidLeave" : "paused",
                         Day = carrier.StateId == TorStates.Valid ? null : carrier.StateId == TorStates.Ended ? carrier.EndDate : carrier.PauseStart,
                         FromCard = cardType is not null, TypeId = zeroTypeId, PaymentType = zeroCode,
                     }
@@ -594,7 +597,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 TypeId = zeroTypeId,
             });
         }
-        else if (include && person.SocialTaxMinimumApplies && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom } && Carries(entry.TypeId)
+        else if (include && person.SocialTaxMinimumApplies && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom, PausedForUnpaidLeave: false } && Carries(entry.TypeId) // an unpaid leave owes the minimum without the card's word (254)
             && pausedFrom <= lastDay && (entry.PauseEnd is not { } pausedTo || pausedTo >= new DateOnly(period.Year, period.Month, 1))
             && (entry.StartDate is not { } begun || begun <= lastDay))
         {
@@ -674,6 +677,18 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             problems.Add(new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the month's register does not list the person; the minimum is not owed on this pay (set the card's Deklareerimine to \"kaasa\" if the person was employed in the month).")
             { Variant = "notListed" });
         }
+        else if (person.SocialTaxMinimumApplies && share > 0m
+            // said only where the month's pay carries the minimum and nothing holds it back: with a zero line the zero
+            // line's own note says it; under a foreign A1, or with the minimum held, nothing is counted to speak of
+            && zeroNote is null && minimumHeldBy.Count == 0 && (keptMinimum || monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)))
+            && (reviewPerson.Register?.Entries ?? []).Concat(entry is null ? [] : [entry]).FirstOrDefault(e => e.PausedForUnpaidLeave && Carries(e.TypeId)
+                && (e.PauseStart is not { } from || from <= lastDay) && (e.PauseEnd is not { } to || to >= new DateOnly(period.Year, period.Month, 1))
+                && e.OwesMinimumIn(period.Year, period.Month)) is { } leave)
+        {
+            // paused for unpaid leave on days of the month: the minimum is owed for them all the same, and it is said
+            problems.Add(new BuildNote(UnpaidLeave, $"{UnpaidLeave}: the register has the employment paused for unpaid leave{(leave.PauseStart is { } since ? $" from {since:dd.MM.yyyy}" : "")}; the minimum is owed for the pause's days as well.")
+            { Day = leave.PauseStart });
+        }
         else if (share == 0m)
         {
             // the employment is paused for every day of the month (or its pause has no start), or in force on no day of it
@@ -684,7 +699,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             if (owed)
             {
                 problems.Add(entry is { StateId: TorStates.Paused }
-                    ? new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay.") { Variant = "paused" }
+                    ? new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay. If the pause is an unpaid leave the register does not name as one, the minimum is owed: set the card's Deklareerimine to \"kaasa\".") { Variant = "paused" }
                     : new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (an ended row with no end date, or kande olek '{entry?.StateId}' the app does not know); the minimum is not owed on this pay.")
                     { Variant = "notInForce", Subject = entry?.StateId });
             }

@@ -29,14 +29,14 @@ internal static class ReviewFixtures
     /// <param name="outsider">A salary-pattern payment ("Septembrikuu palk", 500.00 on 25 October) to this payee, whom the
     /// register does not list: the second pass files it as "TÖR-väline palgad".</param>
     /// <param name="noRegister">The workbook has no register sheet: the month is searched without a TÖR file.</param>
-    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null, bool conflicting = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string? outsider = null, bool noRegister = false, string outsiderCurrency = "EUR")
+    public static byte[] Workbook(decimal salary = 905.92m, bool twin = false, bool jaanCodeless = false, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null, bool conflicting = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string? outsider = null, bool noRegister = false, string outsiderCurrency = "EUR", string? mariPauseReason = null)
     {
         mariEnded |= mariEndOn is not null || mariEndBlank;
         mariPaused |= mariPauseFrom is not null;
         List<object?[]> register =
         [
             TorHeaders.All.ToArray<object?>(),
-            ["1", 48712219406d, "MAASIKAS", "MARI", mariRestarted ? new DateTime(2026, 10, 16) : new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : mariPaused ? 3 : 2, mariEnded ? "Lõpetatud" : mariPaused ? "Peatatud" : "Kehtiv", mariEnded && !mariEndBlank ? mariEndOn ?? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", mariPaused ? mariPauseFrom ?? new DateTime(2026, 8, 3) : null, mariPaused ? 2 : null, mariPaused ? "Lapsehoolduspuhkus" : null, mariPaused && mariPauseFrom is null ? new DateTime(2027, 6, 30) : null, null, null, null, null, 10235688, "Näidis OÜ"],
+            ["1", 48712219406d, "MAASIKAS", "MARI", mariRestarted ? new DateTime(2026, 10, 16) : new DateTime(2024, 2, 15), mariType, mariType == 1 ? "Tööleping" : "Muu", mariEnded ? 4 : mariPaused ? 3 : 2, mariEnded ? "Lõpetatud" : mariPaused ? "Peatatud" : "Kehtiv", mariEnded && !mariEndBlank ? mariEndOn ?? new DateTime(2026, 9, 30) : null, null, null, null, null, null, null, null, "EE", mariPaused ? mariPauseFrom ?? new DateTime(2026, 8, 3) : null, mariPaused ? 2 : null, mariPaused ? mariPauseReason ?? "Lapsehoolduspuhkus" : null, mariPaused && mariPauseFrom is null ? new DateTime(2027, 6, 30) : null, null, null, null, null, 10235688, "Näidis OÜ"],
             ["2", jaanCodeless ? null : jaanCode ?? (object)38810140309d, "TAMM", "JAAN", new DateTime(2020, 1, 1), 600, "VÕS leping", 4, "Lõpetatud", new DateTime(2026, 9, 30), null, null, null, null, null, null, null, "EE", null, null, null, null, null, null, null, null, 10235688, "Näidis OÜ"],
         ];
         if (mariSecond)
@@ -85,12 +85,12 @@ internal static class ReviewFixtures
             : Tables.Xlsx(("Töötajate loend", register.ToArray(), false), ("LHV", statement.ToArray(), false));
     }
 
-    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null, bool conflicting = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string? outsider = null, bool noRegister = false, string outsiderCurrency = "EUR")
+    public static (SqliteStore Store, Company Company, Period Period, ImportFile File) Setup(string registryCode = "10235688", bool twin = false, bool jaanCodeless = false, decimal salary = 905.92m, int mariType = 1, bool mariEnded = false, bool mariPaused = false, bool mariRestarted = false, bool mariSecond = false, string strangerCurrency = "EUR", string? renter = null, string? renterCode = null, string renterDirection = "D", string? jaanCode = null, bool conflicting = false, DateTime? mariEndOn = null, DateTime? mariPauseFrom = null, bool mariEndBlank = false, string? outsider = null, bool noRegister = false, string outsiderCurrency = "EUR", string? mariPauseReason = null)
     {
         var store = SqliteStore.InMemory();
         var company = store.AddCompany(registryCode, "Näidis OÜ");
         var period = store.GetOrCreatePeriod(company.Id, 2026, 10);
-        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency, renter, renterCode, renterDirection, jaanCode, conflicting, mariEndOn, mariPauseFrom, mariEndBlank, outsider, noRegister, outsiderCurrency);
+        var bytes = Workbook(salary, twin, jaanCodeless, mariType, mariEnded, mariPaused, mariRestarted, mariSecond, strangerCurrency, renter, renterCode, renterDirection, jaanCode, conflicting, mariEndOn, mariPauseFrom, mariEndBlank, outsider, noRegister, outsiderCurrency, mariPauseReason);
         var file = store.AddImport(company.Id, Importer.Read("palgad.xlsx", bytes), bytes);
         store.LinkImport(period.Id, file.Id);
         return (store, company, period, file);
