@@ -812,6 +812,13 @@ public class ReviewWorkspaceTests
             Assert.Empty(Salary(workspace.Load(period.Id)).Checks);
             workspace.SetTypeCode(Salary(workspace.Load(period.Id)), "120");
             Assert.Equal([PaymentChecks.TypePayeeMismatch], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
+            // the employer's III-pillar contribution: its tax-free part is not computed, so the payment is refused, and
+            // the build leaves it out (decision 255)
+            workspace.SetTypeCode(Salary(workspace.Load(period.Id)), "25");
+            Assert.Equal([PaymentChecks.ThirdPillarNotComputed], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
+            var built = new PeriodDeclarer(store, TaxRates.Year2026).Build(period.Id);
+            Assert.DoesNotContain(store.Payments(period.Id), p => p.Line.TypeCode == "25");
+            Assert.Contains(built.Persons.SelectMany(p => p.Problems), p => p.Contains(PaymentChecks.ThirdPillarNotComputed, StringComparison.Ordinal));
             workspace.SetTypeCode(Salary(workspace.Load(period.Id)), "999");
             Assert.Equal([ReviewChecks.UnknownType], Salary(workspace.Load(period.Id)).Checks.Select(c => c.Code));
 

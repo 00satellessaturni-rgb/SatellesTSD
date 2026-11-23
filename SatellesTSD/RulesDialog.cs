@@ -151,7 +151,7 @@ public sealed class RulesDialog : Form
                 flags.FundedPension ? "2/4/6 %" : UiText.RulesNone,
                 type.ZeroAllowed ? UiText.Yes : UiText.RulesNone,
                 type.TreatyRateAllowed ? UiText.RulesAllowed : UiText.RulesNone,
-                type.ThirdPillarExemptionAllowed ? UiText.RulesAllowed : UiText.RulesNone);
+                type.ThirdPillarExemptionAllowed ? UiText.RulesNotComputed : UiText.RulesNone); // the law allows it, the app does not compute it (decision 255)
             var gridRow = _grid.Rows[index];
             gridRow.Tag = row;
             if (row.TreatyRefused)

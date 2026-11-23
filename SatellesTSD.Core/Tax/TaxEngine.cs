@@ -142,6 +142,14 @@ public sealed class TaxEngine
             throw new ArgumentOutOfRangeException(nameof(input), "The social-tax minimum increase cannot be negative.");
         }
 
+        if (input.Type.ThirdPillarExemptionAllowed)
+        {
+            // the tax-free part MVT_640 is not computed: without it the income tax — and from a net amount the gross and
+            // every tax on it — would be too high, so nothing is computed at all (decision 255)
+            throw TaxRefusal.Of(PaymentChecks.ThirdPillarNotComputed,
+                $"Payment type {input.Type.Code} has a tax-free part (MVT_640) the app does not compute; declare this payment by hand in e-MTA.", input.Type.Code);
+        }
+
         if ((payee.Residency == Residency.NonResident) != (input.Type.Payee == Residency.NonResident))
         {
             throw TaxRefusal.Of(PaymentChecks.TypePayeeMismatch,

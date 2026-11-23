@@ -25,6 +25,11 @@ public static class PaymentChecks
     public const string NegativeAmount = "NEGATIVE_AMOUNT";
     public const string ZeroNotAllowed = "ZERO_NOT_ALLOWED";
     public const string TypePayeeMismatch = "TYPE_PAYEE_MISMATCH";
+
+    /// <summary>The type's tax-free part MVT_640 (the employer's III-pillar contribution: 15 % of the year's taxed payments
+    /// to the person, at most 6000 a year) is not computed by the app, so the payment's taxes would be too high: refused,
+    /// to be declared by hand in e-MTA (decision 255).</summary>
+    public const string ThirdPillarNotComputed = "THIRD_PILLAR_NOT_COMPUTED";
     public const string A1CountriesMissing = "A1_COUNTRIES_MISSING";
 
     /// <summary>An A1 case whose countries say the other case (MTA's KR_YLD2_07/09): an Estonian A1 has the A1 country EE
@@ -111,6 +116,11 @@ public static class PaymentChecks
         else if (amount == 0m && !type.ZeroAllowed)
         {
             refusals.Add(new Refusal(ZeroNotAllowed, $"Payment type {type.Code} does not allow an amount of 0.", [type.Code]));
+        }
+
+        if (type.ThirdPillarExemptionAllowed)
+        {
+            refusals.Add(new Refusal(ThirdPillarNotComputed, $"Payment type {type.Code} has a tax-free part (MVT_640: 15 % of the year's taxed payments, at most 6000 a year) the app does not compute; declare this payment by hand in e-MTA.", [type.Code]));
         }
 
         if ((facts.Residency == Residency.NonResident) != (type.Payee == Residency.NonResident))

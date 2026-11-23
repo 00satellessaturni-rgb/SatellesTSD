@@ -65,6 +65,7 @@ public class ReviewTextsWindowTests
         made.AddRange(PaymentChecks.Check(salary!, resident with { BasicExemptionApplied = false, BasicExemptionMonthly = 9999.5m }, 100m, rates));
         made.AddRange(PaymentChecks.Check(salary!, resident with { BasicExemptionMonthly = 100.005m }, 100m, rates));
         made.AddRange(PaymentChecks.Check(salary!, resident with { SocialTaxMinimumShare = 1.25m }, 100m, rates));
+        made.AddRange(PaymentChecks.Check(PaymentTypes.Get("25"), resident, 373.01m, rates)); // the III-pillar contribution: its tax-free part is not computed
         made.Add(new Refusal(PaymentChecks.RatesExceedOne, "english")); // the rates of the year never add up to it
 
         // every code either class refuses with is made above, and worded with no English left in it
@@ -85,6 +86,9 @@ public class ReviewTextsWindowTests
         Assert.Equal(UiText.OutsideTorTip(true), Said(ReviewChecks.OutsideTor, r => r.Args![0] == nameof(OutsideTorReason.NoRegister)));
         Assert.Equal(UiText.OutsideTorTip(false), Said(ReviewChecks.OutsideTor, r => r.Args![0] == nameof(OutsideTorReason.NotListed)));
         Assert.Equal("Väljamakse liik 10 on mõeldud residendile, kuid isik on mitteresident: vali teise residentsuse liik või kontrolli isiku residentsust.", Said(PaymentChecks.TypePayeeMismatch));
+        Assert.StartsWith("Väljamakse liigil 25 on maksuvaba osa (MVT_640", Said(PaymentChecks.ThirdPillarNotComputed), StringComparison.Ordinal);
+        Assert.Contains("võta real märge „Deklareeri“ maha", Said(PaymentChecks.ThirdPillarNotComputed), StringComparison.Ordinal); // what to do with the row here
+        Assert.EndsWith("deklareeri makse e-MTA-s käsitsi.", Said(PaymentChecks.ThirdPillarNotComputed), StringComparison.Ordinal);
         Assert.Equal("Eesti A1 tõendi korral peab A1 riik olema EE ja töö riik muu kui EE (KR_YLD2_09, KR_YLD2_07).", Said(PaymentChecks.A1CountriesInconsistent, r => r.Args![0] == nameof(A1Case.EstonianA1WorkAbroad)));
         Assert.Equal("Välisriigi A1 tõendi korral peab A1 riik olema muu kui EE ja töö riik EE (KR_YLD2_07).", Said(PaymentChecks.A1CountriesInconsistent, r => r.Args![0] == nameof(A1Case.ForeignA1WorkInEstonia)));
         Assert.StartsWith("II samba määr 150 % ei sobi", Said(PaymentChecks.PensionRateInvalid), StringComparison.Ordinal);

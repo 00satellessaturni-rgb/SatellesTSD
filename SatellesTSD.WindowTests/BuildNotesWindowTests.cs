@@ -199,6 +199,10 @@ public class BuildNotesWindowTests
         Assert.Equal("väljamakse liik 10 on mitteresidendile, isik on resident", UiText.TaxRefusedText(TaxRefusal.Of(PaymentChecks.TypePayeeMismatch, "x", "10", detail: nameof(Residency.Resident))));
         Assert.Equal("väljamakse liik 120 on residendile, isik on mitteresident", UiText.TaxRefusedText(TaxRefusal.Of(PaymentChecks.TypePayeeMismatch, "x", "120", detail: nameof(Residency.NonResident))));
         Assert.Contains("on saadetud", UiText.TaxRefusedText(TaxRefusal.Of(TaxRefusal.NotDraft, "x", nameof(PaymentStatus.Sent))), StringComparison.Ordinal);
+        Assert.Equal("väljamakse liigi 25 maksuvaba osa (MVT_640) programm ei arvuta; võta makselt märge „Deklareeri“ maha ja deklareeri see e-MTA-s käsitsi", UiText.TaxRefusedText(TaxRefusal.Of(PaymentChecks.ThirdPillarNotComputed, "x", "25")));
+        // the engine itself refuses the type, so the Calculator shows the same words and no figures
+        var refused = Assert.Throws<InvalidOperationException>(() => new MonthAllocator(new TaxEngine(TaxRates.Year2026)).Allocate([new MonthPayment("1", PaymentTypes.Get("25"), 373.01m, true, new DateOnly(2026, 10, 5))], PayeeTaxFacts.ResidentEmployee()));
+        Assert.Equal(PaymentChecks.ThirdPillarNotComputed, TaxRefusal.CodeOf(refused));
     }
 
     [Fact]

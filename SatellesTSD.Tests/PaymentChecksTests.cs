@@ -16,6 +16,7 @@ public class PaymentChecksTests
         yield return Case(PaymentChecks.NegativeAmount, Salary, PayeeTaxFacts.ResidentEmployee(), -1m);
         yield return Case(PaymentChecks.ZeroNotAllowed, PaymentTypes.Get("21"), PayeeTaxFacts.ResidentEmployee(), 0m);
         yield return Case(PaymentChecks.TypePayeeMismatch, PaymentTypes.Get("120"), PayeeTaxFacts.ResidentEmployee(), 100m);
+        yield return Case(PaymentChecks.ThirdPillarNotComputed, PaymentTypes.Get("25"), PayeeTaxFacts.ResidentEmployee(), 373.01m);
         yield return Case(PaymentChecks.A1CountriesMissing, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.EstonianA1WorkAbroad }, 100m);
         yield return Case(PaymentChecks.A1CountriesInconsistent, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.EstonianA1WorkAbroad, A1Country = "EE", WorkCountry = "EE" }, 100m);
         yield return Case(PaymentChecks.A1CountriesInconsistent, Salary, PayeeTaxFacts.ResidentEmployee() with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "EE", WorkCountry = "FI" }, 100m);

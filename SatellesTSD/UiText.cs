@@ -500,6 +500,7 @@ internal static class UiText
         [PaymentChecks.NegativeAmount] = "Negatiivne summa",
         [PaymentChecks.ZeroNotAllowed] = "Summa 0 ei ole lubatud",
         [PaymentChecks.TypePayeeMismatch] = "Liik ei sobi residentsusega",
+        [PaymentChecks.ThirdPillarNotComputed] = "III samba maksuvaba osa ei arvutata",
         [PaymentChecks.A1CountriesMissing] = "A1 riigid puuduvad",
         [PaymentChecks.A1CountriesInconsistent] = "A1 riigid ei sobi kokku",
         [PaymentChecks.PensionNotChecked] = "II sammas on kontrollimata",
@@ -1066,6 +1067,10 @@ internal static class UiText
             },
             PaymentChecks.NegativeAmount => "Tagasimakseid (negatiivseid summasid) ei toetata.",
             PaymentChecks.ZeroNotAllowed when a is [var type] => $"Väljamakse liik {type} ei luba summat 0.",
+            PaymentChecks.ThirdPillarNotComputed when a is [var type] =>
+                $"Väljamakse liigil {type} on maksuvaba osa (MVT_640: kuni 15 % isikule aasta jooksul tehtud tulumaksuga maksustatud väljamaksetest, kõige rohkem 6000 € aastas), mida programm ei arvuta – "
+                + $"ilma selleta tuleksid maksud liiga suured. Seda makset programm ei deklareeri: võta real märge „{Declare}“ maha "
+                + "(kui programm on selle makse rea juba varem esitanud, tühistab ta selle siis T-reaga) ja deklareeri makse e-MTA-s käsitsi.",
             PaymentChecks.TypePayeeMismatch when a is [var type, var payee, var residency] =>
                 $"Väljamakse liik {type} on mõeldud {(payee == nameof(Core.Model.Residency.NonResident) ? "mitteresidendile" : "residendile")}, kuid isik on {Res(residency)}: vali teise residentsuse liik või kontrolli isiku residentsust.",
             PaymentChecks.A1CountriesMissing => $"A1 tõendi korral on isiku kaardil vaja nii „{A1Country}“ kui ka „{WorkCountry}“.",
@@ -1532,6 +1537,7 @@ internal static class UiText
             Core.Tax.PaymentChecks.PensionNotChecked => $"väljamakse liik {subject} peab kinni kogumispensioni, kuid isiku II samba staatus on kontrollimata",
             Core.Tax.PaymentChecks.PensionRateUnknown => $"väljamakse liik {subject} peab kinni kogumispensioni, kuid isiku II samba määr on teadmata",
             Core.Tax.PaymentChecks.PensionRateInvalid => $"II samba määr {(figure is { } rate ? (rate * 100m).ToString("0.####", culture) + " %" : "")} ei ole lubatud (peab olema üle 0 % ja alla 100 %)",
+            Core.Tax.PaymentChecks.ThirdPillarNotComputed => $"väljamakse liigi {subject} maksuvaba osa (MVT_640) programm ei arvuta; võta makselt märge „{Declare}“ maha ja deklareeri see e-MTA-s käsitsi",
             Core.Tax.PaymentChecks.TypePayeeMismatch => Core.Tax.TaxRefusal.DetailOf(refusal) == nameof(Core.Model.Residency.NonResident)
                 ? $"väljamakse liik {subject} on residendile, isik on mitteresident"
                 : $"väljamakse liik {subject} on mitteresidendile, isik on resident",
@@ -1701,6 +1707,7 @@ internal static class UiText
     public const string RulesTreatyRefused = "keelatud lepingumäär";
     public const string RulesTreatyRefusedTip = "Lepingumäär peab olema täisprotsent 0-st kuni liigi oma määrani; muu määraga makse arvutus keelab (TREATY_RATE_INVALID).";
     public const string RulesAllowed = "lubatud";
+    public const string RulesNotComputed = "ei arvutata";
     public const string RulesOtherPayee = "Teise residentsusega saaja kood: arvutus keelab selle valitud isikule (TYPE_PAYEE_MISMATCH).";
     public const string RulesRatesTitle = "Määrad ja summad";
     public const string RulesRateName = "Maks või summa";
@@ -1742,6 +1749,7 @@ internal static class UiText
         "Vanadus- või paindliku vanaduspensioni saajalt kindlustatu töötuskindlustusmakset ei peeta kinni (KR_TK_2), samuti pensioniea saabumise kuule järgnevast kuust (TKindlS § 42 lg 1 p 1; kuu isikukoodi sünniaja ja kaardi pensioniea aasta järgi).",
         "Välisriigi A1 tõendiga töötaja Eestis: sotsiaalmaks, töötuskindlustusmakse ja II sammas puuduvad. Eesti A1 tõendiga töö välismaal: tulumaks puudub. A1 mõjub ainult liikidel, millel on A1 variant.",
         $"Lepingumäär asendab tulumaksu määra ainult mitteresidendile residentsustõendiga, liikidel {string.Join(", ", PaymentTypes.All.Where(t => t.TreatyRateAllowed).Select(t => t.Code))}; täisprotsent, mitte üle liigi oma määra (TREATY_RATE_INVALID).",
+        $"MVT_640 (tööandja III samba sissemakse maksuvaba osa: kuni 15 % aasta maksustatud väljamaksetest, kõige rohkem 6000 € aastas) – programm seda ei arvuta; liiki {string.Join(", ", PaymentTypes.All.Where(t => t.ThirdPillarExemptionAllowed).Select(t => t.Code))} ei deklareerita (THIRD_PILLAR_NOT_COMPUTED): makselt võetakse märge „{Declare}“ maha ja see deklareeritakse e-MTA-s käsitsi.",
         "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäide kasutab 820 €, küsimus on lahtine.",
     ];
 
