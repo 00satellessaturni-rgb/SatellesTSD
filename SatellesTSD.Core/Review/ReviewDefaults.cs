@@ -54,7 +54,10 @@ public static class ReviewDefaults
         }
 
         var inForce = register.Entries.Where(e => e.InForceOn(d)).ToList(); // by its dates and its pause (decision 181)
-        if (inForce.Select(e => EmploymentTypes.DefaultCode(e.TypeId, residency) ?? e.TypeId).Distinct(StringComparer.Ordinal).Count() < 2)
+        // two rows are one contract for the pay when they declare it alike — under the card's A1: a type whose social tax is
+        // paid abroad (504) declares nothing without a foreign A1, so beside a Tööleping it is another contract (decision 259)
+        if (inForce.Select(e => EmploymentTypes.Find(e.TypeId) is { ForeignA1Only: true } && person?.A1 != A1Case.ForeignA1WorkInEstonia
+                ? e.TypeId : EmploymentTypes.DefaultCode(e.TypeId, residency) ?? e.TypeId).Distinct(StringComparer.Ordinal).Count() < 2)
         {
             return new TypePick(old, false, []);
         }
@@ -97,7 +100,13 @@ public static class ReviewDefaults
         return byDay?.TypeId ?? register?.Entry.TypeId ?? person?.TorEmploymentTypeId;
     }
 
-    public static string? TypeCodeFor(Category? category, string? torEmploymentTypeId, Residency residency)
+    /// <summary>A salary under a register type whose social tax is paid abroad (504), on a card that does not say a foreign
+    /// A1 with work in Estonia: it gets no code by default, so that it is never declared with Estonian social tax unasked
+    /// (decision 259).</summary>
+    public static bool NeedsForeignA1(Category? category, string? torEmploymentTypeId, A1Case a1) =>
+        category is { IsSalary: true } && EmploymentTypes.Find(torEmploymentTypeId) is { ForeignA1Only: true } && a1 != A1Case.ForeignA1WorkInEstonia;
+
+    public static string? TypeCodeFor(Category? category, string? torEmploymentTypeId, Residency residency, A1Case a1 = A1Case.None)
     {
         if (category is null)
         {
@@ -106,7 +115,7 @@ public static class ReviewDefaults
 
         if (category.IsSalary)
         {
-            return EmploymentTypes.DefaultCode(torEmploymentTypeId, residency);
+            return NeedsForeignA1(category, torEmploymentTypeId, a1) ? null : EmploymentTypes.DefaultCode(torEmploymentTypeId, residency);
         }
 
         return category.Code is { } code && CategoryCodes.TryGetValue(code, out var pair)

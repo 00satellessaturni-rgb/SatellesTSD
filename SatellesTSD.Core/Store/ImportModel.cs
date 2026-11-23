@@ -200,6 +200,9 @@ public static class LayoutsRefusal
     public const string RepeatedId = "LAYOUTS_REPEATED_ID";
     public const string Collides = "LAYOUTS_COLLIDE";
 
+    /// <summary>The subject of a <see cref="Collides"/> refusal met when a saved layout is deleted (the built-in one coming back collides).</summary>
+    public const string OnDelete = "delete";
+
     public static ImportException Of(string code, string message, string? subject = null, string? detail = null, Exception? inner = null)
     {
         var refusal = new ImportException(message, inner);

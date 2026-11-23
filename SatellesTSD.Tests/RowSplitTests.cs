@@ -258,6 +258,10 @@ public class RowSplitTests
             Assert.All(Rent(workspace, period), p => Assert.Equal((false, false), (p.DefaultDeclare, p.Declare)));
             var problems = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati).Problems;
             Assert.Single(problems, p => p.Code == MatchProblem.PayeeHandLine); // said once for the row
+            // and the Deklareerimata list names the hand line as the reason for every share, never an empty one
+            var undeclared = Assert.Single(workspace.Load(period.Id).Persons, p => p.PersonId == kati).Undeclared;
+            Assert.All(undeclared.Where(u => u.Payment.Payee == "KATI KASK" && !u.Payment.IsByHand), u => Assert.Equal(MatchProblem.PayeeHandLine, u.Codes[0]));
+            Assert.Equal(2, undeclared.Count(u => u.Codes is [MatchProblem.PayeeHandLine, ..]));
         }
     }
 

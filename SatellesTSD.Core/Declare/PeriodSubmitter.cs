@@ -417,11 +417,31 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
 
     /// <summary>A period opened for corrections from which nothing was sent: confirmed before, no file exported since (a
     /// withdrawn export leaves no submission). Only then can the reopen be undone (the fifth audit, item 8).</summary>
-    public bool CanUndoReopen(Guid periodId)
+    public bool CanUndoReopen(Guid periodId) => UndoReopenTarget(FindPeriod(periodId), _store.Submissions(periodId)) is not null;
+
+    /// <summary>The state an undone reopen takes the period back to, none when there is no reopen to undo (decision 258):
+    /// Confirmed when it was confirmed and no file was exported since; else, when a file stands (a withdrawn export
+    /// leaves none), the state that file had brought it to — Uploaded when the upload was marked after the file was
+    /// made, Exported otherwise. A Draft from which nothing was ever sent is a plain draft.</summary>
+    public static PeriodState? UndoReopenTarget(Period period, IReadOnlyList<Submission> submissions)
     {
-        var period = FindPeriod(periodId);
-        return period is { State: PeriodState.Draft, ConfirmedAt: { } confirmed }
-            && !_store.Submissions(periodId).Any(s => s.CreatedAt > confirmed);
+        ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(submissions);
+        if (period.State != PeriodState.Draft)
+        {
+            return null;
+        }
+
+        DateTime? latest = submissions.Count == 0 ? null : submissions.Max(s => s.CreatedAt);
+        if (period.ConfirmedAt is { } confirmed && (latest is null || latest <= confirmed))
+        {
+            return PeriodState.Confirmed;
+        }
+
+        return latest is null ? null
+            : period.UploadedAt is { } uploaded && uploaded >= latest ? PeriodState.Uploaded
+            : period.ExportedAt is not null ? PeriodState.Exported
+            : null;
     }
 
     /// <summary>Undoes Ava parandamiseks when nothing is to be resent: the period is Confirmed again under its earlier
@@ -431,9 +451,10 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
     public void UndoReopen(Guid periodId)
     {
         var period = FindPeriod(periodId);
-        if (!CanUndoReopen(periodId))
+        var submissions = _store.Submissions(periodId);
+        if (UndoReopenTarget(period, submissions) is not { } target)
         {
-            throw new DeclareException(WrongState, $"The period is {period.State}; only a confirmed period reopened with no file exported since goes back to confirmed.")
+            throw new DeclareException(WrongState, $"The period is {period.State}; only a period opened for corrections, with a file or a confirmation to go back to, has a reopen to undo.")
             {
                 Variant = StateUndoReopen,
                 Subject = period.State.ToString(),
@@ -446,11 +467,25 @@ public sealed class PeriodSubmitter(IStore store, string? schemaRoot = null, Tim
             throw new DeclareException(LinesPending, $"{drafts.Count} draft line(s) differ from the server: {string.Join(", ", drafts.Select(p => p.LineNumber))}; export them as a correction.")
             {
                 Variant = StateUndoReopen,
+                Subject = target.ToString(), // where the undo would have gone: the window words "what MTA holds" or "the file exported" by it
                 DraftLines = drafts.Select(p => p.LineNumber).ToList(),
             };
         }
 
-        _store.SetPeriodState(periodId, PeriodState.Confirmed, period.ConfirmedAt!.Value);
+        // back under the time the state was first reached: undoing a reopen confirms, uploads or exports nothing anew. The
+        // export's time is the standing file's own — a later file exported and withdrawn since left its time on the period
+        _store.InTransaction(() =>
+        {
+            if (target is PeriodState.Exported or PeriodState.Uploaded)
+            {
+                _store.SetPeriodState(periodId, PeriodState.Exported, submissions.Max(s => s.CreatedAt));
+            }
+
+            if (target != PeriodState.Exported)
+            {
+                _store.SetPeriodState(periodId, target, target == PeriodState.Confirmed ? period.ConfirmedAt!.Value : period.UploadedAt!.Value);
+            }
+        });
     }
 
     /// <summary>Reads a feedback report (or a ZIP of them) onto the submission's lines; a confirmation report is answered, not recorded.</summary>

@@ -26,8 +26,8 @@ public class RulesMatrixTests
         }
 
         var resident = RulesMatrix.Rows(new RuleCase()).ToDictionary(r => r.Type.Code);
-        Assert.Equal(["1", "507", "501"], resident["10"].Employments.Select(e => e.TorTypeId));
-        Assert.Equal(["601"], resident["21"].Employments.Select(e => e.TorTypeId));
+        Assert.Equal(["1", "507", "501", "504"], resident["10"].Employments.Select(e => e.TorTypeId));
+        Assert.Equal(["601", "603"], resident["21"].Employments.Select(e => e.TorTypeId));
         Assert.Equal(new EffectiveFlags(A1Case.None, true, true, true, true, true, 0.22m, ExemptionKind.Mvt610), resident["10"].Flags);
         Assert.False(resident["120"].PayeeMatches);
 

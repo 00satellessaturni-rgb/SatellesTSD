@@ -551,7 +551,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         {
             var found = line.Category is null ? null : catalog.Find(line.Category);
             var pick = ReviewDefaults.PickFor(run is not null ? registerByPersonId.GetValueOrDefault(person.Id) : null, person, line.Date, found is { IsSalary: true }, person.Residency, TwoContracts);
-            var typeCode = line.TypeCode ?? (pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, person.Residency));
+            var typeCode = line.TypeCode ?? (pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, person.Residency, person.A1));
             return typeCode is not null && (line.Declare ?? true);
         }
     }
@@ -922,7 +922,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var found = category is null ? null : catalog.Find(category);
         var residency = person?.Residency ?? Residency.Resident;
         var pick = ReviewDefaults.PickFor(register, person, hit.Row.Date, found is { IsSalary: true }, residency, TwoContracts);
-        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency);
+        var a1 = person?.A1 ?? A1Case.None;
+        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency, a1);
         var typeCode = overlay?.TypeCode ?? defaultType;
         var asking = pick.Ask && typeCode is null; // a type set by hand ends the question (decision 209)
         // the amount counts when it was read, the row is one person's, it is no copy of an earlier source's row, and it is in euros
@@ -935,7 +936,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var defaultDeclare = (typeCode is not null || asking) && hit.InPeriod && amountOk && euro && person is not null && !twin && !moneyIn;
         var declare = overlay?.Declare ?? defaultDeclare;
         var outsideTor = OutsideTorOf(category, typeCode, register, monthHasRegister);
-        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction, asking ? pick.InForce : null, outsideTor);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, amountOk, hit.InPeriod, period.Year, RatesFor(period.Year), hit.Row.Currency, duplicate, hit.Row.Direction, asking ? pick.InForce : null, outsideTor,
+            foreignA1For: !pick.Ask && ReviewDefaults.NeedsForeignA1(found, pick.TorTypeId, a1) ? pick.TorTypeId : null);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -970,6 +972,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             DefaultDeclare = defaultDeclare,
             Declare = declare,
             HandLineTwin = handLineTwin,
+            DeclaredByHandLine = twin,
             InPeriod = hit.InPeriod,
             Counted = hit.Counted,
             Flags = hit.Flags,
@@ -997,7 +1000,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var found = line.Category is null ? null : catalog.Find(line.Category);
         var residency = person?.Residency ?? Residency.Resident;
         var pick = ReviewDefaults.PickFor(register, person, line.Date, found is { IsSalary: true }, residency, TwoContracts);
-        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency);
+        var a1 = person?.A1 ?? A1Case.None;
+        var defaultType = pick.Ask ? null : ReviewDefaults.TypeCodeFor(found, pick.TorTypeId, residency, a1);
         var typeCode = line.TypeCode ?? defaultType;
         var asking = pick.Ask && typeCode is null;
         var inPeriod = line.Date is { } date && date.Year == period.Year && date.Month == period.Month;
@@ -1005,7 +1009,8 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var defaultDeclare = (typeCode is not null || asking) && inPeriod && person is not null;
         var declare = line.Declare ?? defaultDeclare;
         var outsideTor = OutsideTorOf(line.Category, typeCode, register, monthHasRegister);
-        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year), twoContracts: asking ? pick.InForce : null, outsideTor: outsideTor);
+        var blockers = ReviewChecks.Of(person, typeCode, amount, true, inPeriod, period.Year, RatesFor(period.Year), twoContracts: asking ? pick.InForce : null, outsideTor: outsideTor,
+            foreignA1For: !pick.Ask && ReviewDefaults.NeedsForeignA1(found, pick.TorTypeId, a1) ? pick.TorTypeId : null);
         return new ReviewPayment
         {
             PeriodId = period.Id,
@@ -1174,7 +1179,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             {
                 // no error of the review's: another currency is declared in euros by hand (87), money in is no payout (141)
                 var byChoice = !ReviewChecks.IsEuro(payment.Currency) || payment.Direction == Direction.Credit;
-                list.Add(new Undeclared(payment, Undeclared.NotDeclared, Codes(payment.Blockers), byChoice));
+                // a hand line that already declares the row is the first reason to give, whatever else stands in its way
+                var why = Codes(payment.Blockers);
+                list.Add(new Undeclared(payment, Undeclared.NotDeclared, payment.DeclaredByHandLine ? [MatchProblem.PayeeHandLine, .. why] : why, byChoice));
             }
         }
 

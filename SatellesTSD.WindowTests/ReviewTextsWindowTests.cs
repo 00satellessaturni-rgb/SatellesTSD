@@ -50,6 +50,7 @@ public class ReviewTextsWindowTests
         made.AddRange(ReviewChecks.Of(null, "10", 100m, true, true, 2026, rates, duplicate: true));
         made.AddRange(ReviewChecks.Of(Person.New(company, "Mari", "Kask", "X-1"), "99", 100m, true, true, 2026, rates));
         made.AddRange(ReviewChecks.Of(Person.New(company, "Mari", "Kask", null), null, 100m, true, true, 2026, rates, twoContracts: ["1", "600"]));
+        made.AddRange(ReviewChecks.Of(Person.New(company, "Mari", "Kask", "48712219406"), null, 100m, true, true, 2026, rates, foreignA1For: "504"));
         made.Add(ReviewChecks.OutsideTorRefusal(OutsideTorReason.NoRegister));
         made.Add(ReviewChecks.OutsideTorRefusal(OutsideTorReason.NotListed));
         made.AddRange(PaymentChecks.Check(salary!, resident, -1m, rates));
@@ -83,6 +84,7 @@ public class ReviewTextsWindowTests
         Assert.StartsWith("Isiku kood „X-1“ ei ole Eesti isikukood", Said(ReviewChecks.CodeInvalid), StringComparison.Ordinal);
         Assert.Equal("Väljamakse liiki 99 ei ole liikide tabelis.", Said(ReviewChecks.UnknownType));
         Assert.StartsWith("Makse päeval kehtib kaks eri liiki töötamist (TÖR 1, 600): vali veerus „Väljamakse liik“", Said(ReviewChecks.TwoContracts), StringComparison.Ordinal);
+        Assert.StartsWith("Registri töötamise liik 504 tähendab, et sotsiaalmaks makstakse välisriigis: märgi isiku kaardil A1 juhuks välisriigi A1 tõend", Said(ReviewChecks.ForeignA1Needed), StringComparison.Ordinal);
         Assert.Equal(UiText.OutsideTorTip(true), Said(ReviewChecks.OutsideTor, r => r.Args![0] == nameof(OutsideTorReason.NoRegister)));
         Assert.Equal(UiText.OutsideTorTip(false), Said(ReviewChecks.OutsideTor, r => r.Args![0] == nameof(OutsideTorReason.NotListed)));
         Assert.Equal("Väljamakse liik 10 on mõeldud residendile, kuid isik on mitteresident: vali teise residentsuse liik või kontrolli isiku residentsust.", Said(PaymentChecks.TypePayeeMismatch));

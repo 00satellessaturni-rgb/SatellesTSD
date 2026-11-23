@@ -465,7 +465,18 @@ public sealed class PeriodPipeline(IStore store, Importer importer, IResidencyLo
     /// <summary>Forgets a layout the owner saved: a built-in one of the same id comes back; refused when the catalog would then collide.</summary>
     public void DeleteLayout(string layoutId)
     {
-        _store.DeleteLayout(layoutId);
+        try
+        {
+            _store.DeleteLayout(layoutId);
+        }
+        catch (ImportException e) when (LayoutsRefusal.CodeOf(e) is null)
+        {
+            // the built-in layout that would come back has the header row of another saved one: coded, so the window says
+            // it in Estonian as it says the import's collision (the fifth audit's rule for every text; decision 257)
+            var inner = e.InnerException?.Message ?? e.Message;
+            throw LayoutsRefusal.Of(LayoutsRefusal.Collides, e.Message, subject: LayoutsRefusal.OnDelete, detail: inner[(inner.IndexOf('\n', StringComparison.Ordinal) + 1)..], inner: e);
+        }
+
         RefreshImporter();
     }
 

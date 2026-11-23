@@ -603,18 +603,56 @@ public class DeclareTests
         clock.At = clock.At.AddMinutes(5);
         submitter.Export(box.Period.Id, box.Folder, "PARANDUSPOHJUS_1");
         submitter.MarkUploaded(box.Period.Id);
+        var uploadedAt = Now().UploadedAt!.Value;
+        clock.At = clock.At.AddMinutes(5);
         submitter.Reopen(box.Period.Id);
-        Assert.False(submitter.CanUndoReopen(box.Period.Id));
-        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => submitter.UndoReopen(box.Period.Id)).Code);
+        // with nothing to change the month would be stuck a Draft (no draft to export, nothing to confirm or withdraw):
+        // the undo takes it back to where the file had brought it — uploaded, under the upload's own time (decision 258)
+        Assert.True(submitter.CanUndoReopen(box.Period.Id));
+        box.Declarer.Build(box.Period.Id);
+        submitter.UndoReopen(box.Period.Id);
+        Assert.Equal((PeriodState.Uploaded, (DateTime?)uploadedAt, (DateTime?)confirmed), (Now().State, Now().UploadedAt, Now().ConfirmedAt));
+        Assert.False(submitter.CanUndoReopen(box.Period.Id)); // not a Draft: nothing to undo
 
-        // a month never confirmed has no confirmation to go back to
+        // a month never confirmed: exported and reopened goes back to exported; uploaded and reopened, to uploaded
         using var never = Ready();
+        Period Never() => never.Store.Periods(never.Company.Id).Single(p => p.Id == never.Period.Id);
+        Assert.False(never.Submitter.CanUndoReopen(never.Period.Id)); // a plain draft: nothing was ever sent
         never.Declarer.Build(never.Period.Id);
         never.Submitter.Export(never.Period.Id, never.Folder);
+        var exportedAt = Never().ExportedAt!.Value;
+        never.Submitter.Reopen(never.Period.Id);
+        Assert.Equal(PeriodState.Exported, PeriodSubmitter.UndoReopenTarget(Never(), never.Store.Submissions(never.Period.Id)));
+        never.Declarer.Build(never.Period.Id);
+        never.Submitter.UndoReopen(never.Period.Id);
+        Assert.Equal((PeriodState.Exported, (DateTime?)exportedAt), (Never().State, Never().ExportedAt));
         never.Submitter.MarkUploaded(never.Period.Id);
         never.Submitter.Reopen(never.Period.Id);
-        Assert.False(never.Submitter.CanUndoReopen(never.Period.Id));
-        Assert.Equal(PeriodSubmitter.WrongState, Assert.Throws<DeclareException>(() => never.Submitter.UndoReopen(never.Period.Id)).Code);
+        Assert.Equal(PeriodState.Uploaded, PeriodSubmitter.UndoReopenTarget(Never(), never.Store.Submissions(never.Period.Id)));
+
+        // a later file exported and withdrawn leaves its time on the period; the undo goes back under the standing file's own
+        using (var twice = Ready())
+        {
+            Period Twice() => twice.Store.Periods(twice.Company.Id).Single(p => p.Id == twice.Period.Id);
+            twice.Declarer.Build(twice.Period.Id);
+            var first = twice.Submitter.Export(twice.Period.Id, twice.Folder).Submission.CreatedAt;
+            twice.Submitter.Reopen(twice.Period.Id);
+            twice.Workspace.SavePerson(twice.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+            twice.Declarer.Build(twice.Period.Id);
+            var second = twice.Submitter.Export(twice.Period.Id, twice.Folder);
+            twice.Submitter.Withdraw(second.Submission.Id);
+            twice.Workspace.SavePerson(twice.Mari with { FundedPensionMember = false, PensionRate = null });
+            twice.Declarer.Build(twice.Period.Id);
+            twice.Submitter.UndoReopen(twice.Period.Id);
+            Assert.Equal((PeriodState.Exported, (DateTime?)first), (Twice().State, Twice().ExportedAt));
+        }
+
+        // a change made meanwhile is a correction to send: the undo is refused and names the line, as for a confirmed month
+        never.Workspace.SavePerson(never.Mari with { FundedPensionMember = true, PensionRate = 0.02m });
+        never.Declarer.Build(never.Period.Id);
+        var held = Assert.Throws<DeclareException>(() => never.Submitter.UndoReopen(never.Period.Id));
+        Assert.Equal((PeriodSubmitter.LinesPending, nameof(PeriodState.Uploaded)), (held.Code, held.Subject)); // where it would have gone: the window words it by this
+        Assert.Equal(PeriodState.Draft, Never().State);
     }
 
     [Fact]
@@ -2110,7 +2148,7 @@ public class DeclareTests
             Assert.Empty(box.Salary.Checks);
             var report = box.Declarer.Build(box.Period.Id);
             var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
-            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal) && p.Contains("in force on a day", StringComparison.Ordinal));
+            Assert.Contains(mari.Problems, p => p.StartsWith(PeriodDeclarer.NoEmploymentInMonth, StringComparison.Ordinal) && p.Contains("names no end date", StringComparison.Ordinal));
             Assert.Equal((0m, 0m), (mari.MinimumDue, mari.MinimumShortfall));
             Assert.DoesNotContain(mari.Problems, p => p.StartsWith(PeriodDeclarer.ZeroLine, StringComparison.Ordinal));
             var line = Assert.Single(box.Lines);

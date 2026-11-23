@@ -90,6 +90,10 @@ public sealed class ReviewPayment
     /// fifth audit, item 11).</summary>
     public bool HandLineTwin { get; init; }
 
+    /// <summary>The row (this share of it, a part too) is one a hand line of the same amount already declares for the payee
+    /// this month, so it is not declared by default: the reason the Deklareerimata list gives for it (decision 257).</summary>
+    public bool DeclaredByHandLine { get; init; }
+
     public bool InPeriod { get; init; }
 
     /// <summary>The run's own Counted flag (a Matched verdict, a readable amount, not shared).</summary>

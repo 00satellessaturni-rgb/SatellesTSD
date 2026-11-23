@@ -486,7 +486,7 @@ public sealed class LayoutsDialog : Form
         }
         catch (Exception e)
         {
-            Tell(e.Message);
+            Tell(UiText.Worded(e) ?? e.Message); // a coded refusal in Estonian, as the import beside it says its own
         }
 
         Fill();

@@ -170,6 +170,19 @@ public sealed class RunOfferWindowTests
                 Assert.Equal(1, offers);
                 Run(form, form.ImportFilesAsync([statement]), "the same file again");
                 Assert.Equal(1, offers); // already in, and the month is searched
+
+                // a file the store holds for another month is new to this one: the month's search has not seen it, so the
+                // offer is made, and says a file came in
+                var other = Statement(fixture, "teine.xlsx", "2026100500000010");
+                var november = form.Services!.Store.GetOrCreatePeriod(form.View!.Period.CompanyId, 2026, 11);
+                Assert.True(form.Services.Pipeline.ImportFile(november.Id, "teine.xlsx", File.ReadAllBytes(other)).Succeeded);
+                string? asked = null;
+                form.Choosing = (text, _, _) => { offers++; asked = text; return -1; };
+                Run(form, form.ImportFilesAsync([other]), "the other month's file");
+                Assert.Equal(2, offers);
+                Assert.StartsWith("Failid on imporditud.", asked, StringComparison.Ordinal);
+                Run(form, form.ImportFilesAsync([other]), "the other month's file again");
+                Assert.Equal(2, offers); // listed here now: nothing new to offer for (the state line says the search is out of date)
             }));
         }
 

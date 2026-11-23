@@ -698,10 +698,20 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             facts = person.FactsFor(period.Year, period.Month, 1m) with { SocialTaxMinimumApplies = false };
             if (owed)
             {
-                problems.Add(entry is { StateId: TorStates.Paused }
+                // why no day counts, told from the rows the share was measured by (the rows carrying the minimum, else the
+                // standing entry alone), not from the standing entry's own state: a valid board seat beside a Tööleping
+                // paused or ended without a date is not "a state the app does not know" (decision 257)
+                var known = new[] { entry }.OfType<TorEntry>().Concat(reviewPerson.Register?.Entries ?? []).ToList();
+                var carrying = known.Where(e => Carries(e.TypeId) && e.Overlaps(period.Year, period.Month)).ToList();
+                var measured = carrying.Count > 0 ? carrying : known.Take(1).ToList();
+                var unknownState = measured.FirstOrDefault(e => e.StateId is not (TorStates.Valid or TorStates.Paused or TorStates.Ended));
+                problems.Add(measured.Any(e => e.StateId == TorStates.Paused)
                     ? new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the employment is paused through the month (or the register does not say since when); the minimum is not owed on this pay. If the pause is an unpaid leave the register does not name as one, the minimum is owed: set the card's Deklareerimine to \"kaasa\".") { Variant = "paused" }
-                    : new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (an ended row with no end date, or kande olek '{entry?.StateId}' the app does not know); the minimum is not owed on this pay.")
-                    { Variant = "notInForce", Subject = entry?.StateId });
+                    : measured.Any(e => e is { StateId: TorStates.Ended, EndDate: null })
+                        ? new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the register row carrying the minimum is ended (kande olek {TorStates.Ended}) and names no end date, so no day of the month counts; the minimum is not owed on this pay.")
+                        { Variant = "endedNoEnd" }
+                        : new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: no register row carrying the minimum is in force on a day of the month (kande olek '{unknownState?.StateId ?? entry?.StateId}' the app does not know); the minimum is not owed on this pay.")
+                        { Variant = "notInForce", Subject = unknownState?.StateId ?? entry?.StateId });
             }
         }
 

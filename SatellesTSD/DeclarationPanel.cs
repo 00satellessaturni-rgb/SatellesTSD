@@ -274,7 +274,7 @@ public sealed class DeclarationPanel : UserControl
         _confirmed.Enabled = state is PeriodState.Uploaded or PeriodState.Exported;
         // a month reopened with nothing sent since its confirmation: the same button undoes the reopen, so the row of
         // buttons stays as it is (the fifth audit, item 8; PeriodSubmitter.CanUndoReopen is the same test)
-        var undo = draft && _view?.Period.ConfirmedAt is { } confirmed && !_submissionList.Any(s => s.CreatedAt > confirmed);
+        var undo = _view is { } shown && PeriodSubmitter.UndoReopenTarget(shown.Period, _submissionList) is not null;
         _reopen.Text = undo ? UiText.UndoReopen : UiText.Reopen;
         _reopen.Enabled = undo || (state is not null && !draft);
         EnableSubmissionButtons();

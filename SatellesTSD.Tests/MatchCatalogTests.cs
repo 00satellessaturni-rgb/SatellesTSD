@@ -12,9 +12,14 @@ public class MatchCatalogTests
     {
         var standard = MatchCatalog.Default.FilterSets["standard"];
         var workbook = WorkbookCatalog.Catalog.FilterSets["standard"];
-        Assert.Equal(workbook["Palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["Palgad"]);
-        Assert.Equal(workbook["TÖR-väline palgad"].Replace("*advance payment*;", "*advance payment*,*proovip?ev*;", StringComparison.Ordinal), standard["TÖR-väline palgad"]);
-        Assert.Equal(workbook["Kompensatsioon"].Replace(";*haigus*", ";*haigus*,*proovip?ev*", StringComparison.Ordinal), standard["Kompensatsioon"]); // a trial day is salary, never a per diem
+        // a trial day is salary, never a per diem (decision 107); pay on termination is pay, never the codeless Kompensatsioon (decision 257)
+        // the salary lists name the employment contract with the ending word, so a rent contract's "ülesütlemine" is not
+        // theirs; Kompensatsioon steps back from any "ülesütlemis…", which costs nothing
+        const string Added = ",*proovip?ev*,*koondami*,*t??lepingu*l?pe*,*t??lepingu*l?ppe*,*t??lepingu*?les?tlemis*,*?les?tlemish?vitis*";
+        const string LeftAlone = ",*proovip?ev*,*koondami*,*t??lepingu*l?pe*,*t??lepingu*l?ppe*,*?les?tlemis*";
+        Assert.Equal(workbook["Palgad"].Replace("*advance payment*;", "*advance payment*" + Added + ";", StringComparison.Ordinal), standard["Palgad"]);
+        Assert.Equal(workbook["TÖR-väline palgad"].Replace("*advance payment*;", "*advance payment*" + Added + ";", StringComparison.Ordinal), standard["TÖR-väline palgad"]);
+        Assert.Equal(workbook["Kompensatsioon"].Replace(";*haigus*", ";*haigus*" + LeftAlone, StringComparison.Ordinal), standard["Kompensatsioon"]);
         Assert.All(workbook.Keys.Where(k => k is not ("Palgad" or "TÖR-väline palgad" or "Kompensatsioon")), k => Assert.Equal(workbook[k], standard[k]));
     }
 
@@ -170,7 +175,13 @@ public class MatchCatalogTests
 /// "proovipäev" counts as salary), for the tests that hold the catalog to the CONFIG sheet and the workbook's reports.</summary>
 internal static class WorkbookCatalog
 {
-    public static readonly string[] OwnerAdditions = [",*proovip?ev*"];
+    // the longer addition first: taking the trial day's mask out alone would leave the rest behind
+    public static readonly string[] OwnerAdditions =
+    [
+        ",*proovip?ev*,*koondami*,*t??lepingu*l?pe*,*t??lepingu*l?ppe*,*t??lepingu*?les?tlemis*,*?les?tlemish?vitis*", // the salary lists
+        ",*proovip?ev*,*koondami*,*t??lepingu*l?pe*,*t??lepingu*l?ppe*,*?les?tlemis*", // what Kompensatsioon leaves alone
+        ",*proovip?ev*",
+    ];
 
     public static MatchCatalog Catalog { get; } = MatchCatalog.Parse(OwnerAdditions.Aggregate(MatchCatalog.Default.ToJson(), (json, added) => json.Replace(added, "", StringComparison.Ordinal)));
 }

@@ -1123,13 +1123,15 @@ public sealed class MainForm : Form
 
         try
         {
-            _services.Submitter.UndoReopen(_view.Period.Id);
-            Log(UiText.UndoReopenDone);
+            var periodId = _view.Period.Id;
+            _services.Submitter.UndoReopen(periodId);
+            Log(UiText.UndoReopenDone(_services.Store.Periods(_view.Period.CompanyId).First(p => p.Id == periodId).State));
         }
         catch (DeclareException e) when (e.Code == PeriodSubmitter.LinesPending)
         {
-            Log($"{UiText.UndoReopen}: {UiText.UndoReopenDraftsLog(e.DraftLines)} ({e.Message})");
-            Inform(UiText.UndoReopenHasDrafts(e.DraftLines.Count), UiText.UndoReopen);
+            var exportedOnly = e.Subject == nameof(PeriodState.Exported); // never marked uploaded: nothing is known to be in e-MTA
+            Log($"{UiText.UndoReopen}: {UiText.UndoReopenDraftsLog(e.DraftLines, exportedOnly)} ({e.Message})");
+            Inform(UiText.UndoReopenHasDrafts(e.DraftLines.Count, exportedOnly), UiText.UndoReopen);
         }
         catch (Exception e)
         {
@@ -2941,6 +2943,19 @@ public sealed class MainForm : Form
         }
 
         var periodId = period.Id;
+        // the files the month lists before the import: a file the store holds for another month is new to this one, and
+        // the month's search has not seen it (decision 256)
+        HashSet<Guid> listedBefore;
+        try
+        {
+            listedBefore = services.Store.PeriodImports(periodId).Select(f => f.Id).ToHashSet();
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+            return;
+        }
+
         List<ImportOutcome> outcomes = [];
         await RunBusyAsync(async () =>
         {
@@ -2971,14 +2986,15 @@ public sealed class MainForm : Form
             }
         });
         ReloadView();
-        await OfferSearchAsync(outcomes, periodId);
+        await OfferSearchAsync(outcomes, periodId, listedBefore);
     }
 
     /// <summary>After an import, the search offered at once — with the registers' check after it when the window has the
     /// registers, or alone, or not now. Offered when something new came in, or when the files were all there before but
     /// the month has no search yet; never for a month past its draft (or one the view no longer shows). The offer says
     /// what the search and the check do, so neither asks again.</summary>
-    private async Task OfferSearchAsync(IReadOnlyList<ImportOutcome> outcomes, Guid periodId)
+    /// <param name="listedBefore">The files the month listed before the import: one not among them is new to the month.</param>
+    private async Task OfferSearchAsync(IReadOnlyList<ImportOutcome> outcomes, Guid periodId, IReadOnlySet<Guid> listedBefore)
     {
         if (_services is null || _view is not { Editable: true } view || view.Period.Id != periodId)
         {
@@ -2986,7 +3002,9 @@ public sealed class MainForm : Form
         }
 
         var succeeded = outcomes.Where(o => o.Succeeded).ToList();
-        if (succeeded.Count == 0 || (succeeded.All(o => o.AlreadyImported) && view.Run is not null))
+        // new to the month: not among its files before — whether the store held the file for another month or not
+        bool New(ImportOutcome o) => o.File is { } file ? !listedBefore.Contains(file.Id) : !o.AlreadyImported;
+        if (succeeded.Count == 0 || (!succeeded.Any(New) && view.Run is not null))
         {
             return; // nothing in, or nothing new into a month already searched: the search would find what it found
         }
@@ -2996,7 +3014,7 @@ public sealed class MainForm : Form
             ? [UiText.ImportOfferSearchAndCheck, UiText.ImportOfferSearchOnly, UiText.ImportOfferNotNow]
             : [UiText.ImportOfferSearchOnly, UiText.ImportOfferNotNow];
         // the first sentence says what the import did: something new, some refused, or nothing new into a month not yet searched
-        var text = UiText.ImportOffer(lookups, view.Run is not null, anythingNew: succeeded.Any(o => !o.AlreadyImported), someRefused: succeeded.Count < outcomes.Count);
+        var text = UiText.ImportOffer(lookups, view.Run is not null, anythingNew: succeeded.Any(New), someRefused: succeeded.Count < outcomes.Count);
         var chosen = Choose(text, UiText.ImportOfferTitle, choices);
         var choice = chosen >= 0 && chosen < choices.Count ? choices[chosen] : UiText.ImportOfferNotNow;
         if (choice == UiText.ImportOfferSearchAndCheck)

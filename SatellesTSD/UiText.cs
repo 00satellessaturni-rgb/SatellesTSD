@@ -171,6 +171,11 @@ internal static class UiText
         Core.Review.Undeclared.Unticked => "märge \"Deklareeri\" on maha võetud",
         Core.Review.Undeclared.Refused => "rida ei saa koostada: " + string.Join(", ", u.Codes),
         Core.Review.Undeclared.Held => "liigi kokkuvõte ootab sama liigi keeldutud makset",
+        // by default not declared, with no refusal to name (a rent row a line added by hand already declares, say)
+        _ when u.Codes.Count > 0 && u.Codes[0] == MatchProblem.PayeeHandLine =>
+            "isikul on sel kuul sama summaga käsitsi lisatud rida, mis makse juba deklareerib (märgi „Deklareeri“ ainult siis, kui mõlemad on päris maksed)"
+            + (u.Codes.Count == 1 ? "" : "; lisaks: " + string.Join(", ", u.Codes.Skip(1))),
+        _ when u.Codes.Count == 0 => "ei lähe vaikimisi deklaratsiooni",
         _ => "ei lähe deklaratsiooni: " + string.Join(", ", u.Codes),
     };
 
@@ -486,6 +491,7 @@ internal static class UiText
         [ReviewChecks.NoPayeeId] = "Isikul ei ole koodi",
         [ReviewChecks.ResidencyNotChecked] = "Residentsus on kontrollimata",
         [ReviewChecks.NoType] = "Väljamakse liik puudub",
+        [ReviewChecks.ForeignA1Needed] = "Vaja välisriigi A1 tõendit",
         [ReviewChecks.OutsideTor] = "Isik ei ole TÖR-is",
         [ReviewChecks.TwoContracts] = "Kaks eri liiki töötamist",
         [ReviewChecks.UnknownType] = "Tundmatu väljamakse liik",
@@ -681,10 +687,13 @@ internal static class UiText
             Core.Store.LayoutsRefusal.NullEntry => "Failis on paigutuste seas tühi kirje (null).",
             Core.Store.LayoutsRefusal.Unusable => $"Paigutust ei saa kasutada ({subject}): igal paigutusel peab olema ID, pank, päised ja kuupäeva, saaja ja summa veerg päiste seas; kuupäevamustrid peavad olema kasutatavad ja olekute loendis ei tohi olla tühja kirjet.",
             Core.Store.LayoutsRefusal.RepeatedId => $"Failis on sama ID mitu korda ({subject}): üks paigutus ühe ID kohta.",
+            Core.Store.LayoutsRefusal.Collides when subject == Core.Store.LayoutsRefusal.OnDelete =>
+                "Paigutust ei saa kustutada: tagasi tulev sisseehitatud paigutus kattuks teise salvestatud paigutuse päisereaga. Kustuta enne see teine paigutus.",
             Core.Store.LayoutsRefusal.Collides => "Paigutuse päiserida on juba teisel paigutusel: faili lehte ei saaks neist eristada. Muuda päiseid või kasuta sisseehitatud paigutuse ID-d.",
             _ => null,
         };
-        return said is null ? null : said + " Midagi ei salvestatud." + (detail is null ? "" : Environment.NewLine + detail);
+        var nothing = subject == Core.Store.LayoutsRefusal.OnDelete ? " Midagi ei kustutatud." : " Midagi ei salvestatud.";
+        return said is null ? null : said + nothing + (detail is null ? "" : Environment.NewLine + detail);
     }
     public const string ModeEach = "iga makse eraldi reana";
     public const string ModeTotals = "koondina liigi kaupa";
@@ -707,14 +716,26 @@ internal static class UiText
     public const string Reopen = "Ava parandamiseks";
     // the reopen undone while nothing was sent since the confirmation (the fifth audit, item 8)
     public const string UndoReopen = "Loobu parandamisest";
-    public const string UndoReopenConfirm = "Loobuda parandamisest? Read koostatakse uuesti; kui midagi ei ole vaja saata, on periood taas kinnitatud (e-MTA kinnitus jääb kehtima).";
-    public const string UndoReopenDone = "Loobu parandamisest: periood on taas kinnitatud.";
+    public const string UndoReopenConfirm = "Loobuda parandamisest? Read koostatakse uuesti; kui midagi ei ole vaja saata, läheb periood tagasi olekusse, milles see enne avamist oli (kinnitatud, üles laaditud või eksporditud; e-MTA-s ei muutu midagi).";
 
-    public static string UndoReopenHasDrafts(int count) => $"Ülevaatus erineb e-MTA-s olevast: {count} rida tuleb saata parandusena. Periood jääb mustandiks; ekspordi read või muuda ülevaatus tagasi ja vajuta uuesti „{UndoReopen}“.";
+    /// <summary>The log's line of an undone reopen: the state the period is back in.</summary>
+    public static string UndoReopenDone(PeriodState state) => "Loobu parandamisest: periood on taas " + state switch
+    {
+        Core.Store.PeriodState.Confirmed => "kinnitatud.",
+        Core.Store.PeriodState.Uploaded => "üles laaditud (kinnitamata).",
+        _ => "eksporditud (üles laadimata).",
+    };
+
+    /// <param name="exportedOnly">The month would go back to exported, never marked uploaded: the lines differ from the file
+    /// written, and nothing is known to be in e-MTA.</param>
+    public static string UndoReopenHasDrafts(int count, bool exportedOnly = false) => exportedOnly
+        ? $"Ülevaatus erineb eksporditud failist: {count} rida tuleb uuesti eksportida. Periood jääb mustandiks; ekspordi read või muuda ülevaatus tagasi ja vajuta uuesti „{UndoReopen}“."
+        : $"Ülevaatus erineb e-MTA-s olevast: {count} rida tuleb saata parandusena. Periood jääb mustandiks; ekspordi read või muuda ülevaatus tagasi ja vajuta uuesti „{UndoReopen}“.";
 
     /// <summary>The log's line of the same refusal: <see cref="UndoReopenHasDrafts"/> in its keyed form.</summary>
-    public static string UndoReopenDraftsLog(IReadOnlyList<string> keys) =>
-        $"Ülevaatus erineb e-MTA-s olevast: {keys.Count} rida tuleb saata parandusena ({string.Join(", ", keys)}).";
+    public static string UndoReopenDraftsLog(IReadOnlyList<string> keys, bool exportedOnly = false) => exportedOnly
+        ? $"Ülevaatus erineb eksporditud failist: {keys.Count} rida tuleb uuesti eksportida ({string.Join(", ", keys)})."
+        : $"Ülevaatus erineb e-MTA-s olevast: {keys.Count} rida tuleb saata parandusena ({string.Join(", ", keys)}).";
 
     public const string ResolveAccepted = "Kinnita rida käsitsi";
     public const string ResolveRejected = "Lükka rida tagasi";
@@ -1056,7 +1077,9 @@ internal static class UiText
             ReviewChecks.ResidencyNotChecked => $"Isiku residentsust ei ole kontrollitud – ei registrist ega käsitsi („{RunLookups}“ või kaardil „{ConfirmByHand}“).",
             ReviewChecks.NotInPeriod => "Makse kuupäev ei ole perioodi kuus; see kuulub teise kuu faili.",
             ReviewChecks.NotCounted => "Summat ei saanud lugeda või leiti reale kaks isikut; makse ei lähe arvesse.",
-            ReviewChecks.TwoContracts when a is { Count: > 0 } => $"Makse päeval kehtib kaks eri liiki töötamist (TÖR {string.Join(", ", a)}): vali veerus „{PaymentType}“ makse liik või märgi kaardil „{SimTypeFromCard}“.",
+            ReviewChecks.TwoContracts when a is { Count: > 0 } => $"Makse päeval kehtib kaks eri liiki töötamist (TÖR {string.Join(", ", a)}): vali veerus „{PaymentType}“ makse liik või märgi kaardil „{TypeFromCard}“.",
+            ReviewChecks.ForeignA1Needed when a is [var torType] =>
+                $"Registri töötamise liik {torType} tähendab, et sotsiaalmaks makstakse välisriigis: märgi isiku kaardil A1 juhuks välisriigi A1 tõend (töö Eestis) koos riikidega või vali veerus „{PaymentType}“ makse liik käsitsi. Seni makset ei deklareerita.",
             ReviewChecks.NoType => "Väljamakse liik puudub: kategoorial ei ole selle isiku jaoks koodi või töötamise liik on teadmata.",
             ReviewChecks.UnknownType when a is [var type] => $"Väljamakse liiki {type} ei ole liikide tabelis.",
             ReviewChecks.OutsideTor when a is [var reason] => reason switch
@@ -1287,11 +1310,11 @@ internal static class UiText
                     $"Periood on olekus „{PeriodState(st)}“. Kinnitatuks saab märkida ainult eksporditud või üles laaditud perioodi.",
                 Core.Declare.PeriodSubmitter.StateReopen => "Periood on juba mustand ja muudetav; parandamiseks pole seda vaja avada.",
                 Core.Declare.PeriodSubmitter.StateUndoReopen when state is { } st =>
-                    $"Periood on olekus „{PeriodState(st)}“. Parandamisest saab loobuda ainult siis, kui kinnitatud periood avati parandamiseks ja pärast seda ei ole ühtegi faili eksporditud.",
+                    $"Periood on olekus „{PeriodState(st)}“. Parandamisest saab loobuda ainult siis, kui periood on avatud parandamiseks ja sellel on kinnitus või eksporditud fail, mille juurde tagasi minna.",
                 _ => null,
             },
             Core.Declare.PeriodSubmitter.LinesPending => refusal.Variant == Core.Declare.PeriodSubmitter.StateUndoReopen
-                ? UndoReopenDraftsLog(refusal.DraftLines)
+                ? UndoReopenDraftsLog(refusal.DraftLines, refusal.Subject == nameof(Core.Store.PeriodState.Exported))
                 : refusal.DraftLines.Count + refusal.OpenLines.Count + refusal.RefusedLines.Count + refusal.RefusedOverLines.Count > 0 ? ConfirmRefused(refusal) : null,
             _ => null,
         };
@@ -1471,7 +1494,8 @@ internal static class UiText
                 "notCovered" => $"ükski registri töötamine ei kata seda kuud; {NoMinimum}.",
                 "notListed" => $"kuu TÖR-is isikut ei ole; {NoMinimum} (kui isik kuul töötas, vali kaardil {DeclarationLabel} „kaasa“).",
                 "paused" => $"töötamine on kogu kuu peatatud (või register ei ütle, millest alates); {NoMinimum}. Kui peatamise põhjus on tasustamata puhkus, mida register nii ei nimeta, on miinimum siiski tasuda: vali {Kaasa}.",
-                "notInForce" => $"ükski miinimumi kandev registri kanne ei kehti kuul ühelgi päeval (lõpetatud kanne ilma lõppkuupäevata või kande olek „{n.Subject}“, mida programm ei tunne); {NoMinimum}.",
+                "endedNoEnd" => $"miinimumi kandev registri kanne on lõpetatud (kande olek 4), kuid lõppkuupäeva register ei anna, nii et ükski kuu päev ei lähe arvesse; {NoMinimum}.",
+                "notInForce" => $"ükski miinimumi kandev registri kanne ei kehti kuul ühelgi päeval (kande olek „{n.Subject}“, mida programm ei tunne); {NoMinimum}.",
                 _ => null,
             },
             Core.Declare.PeriodDeclarer.MinimumWithPension =>
@@ -1750,6 +1774,7 @@ internal static class UiText
         "Välisriigi A1 tõendiga töötaja Eestis: sotsiaalmaks, töötuskindlustusmakse ja II sammas puuduvad. Eesti A1 tõendiga töö välismaal: tulumaks puudub. A1 mõjub ainult liikidel, millel on A1 variant.",
         $"Lepingumäär asendab tulumaksu määra ainult mitteresidendile residentsustõendiga, liikidel {string.Join(", ", PaymentTypes.All.Where(t => t.TreatyRateAllowed).Select(t => t.Code))}; täisprotsent, mitte üle liigi oma määra (TREATY_RATE_INVALID).",
         $"MVT_640 (tööandja III samba sissemakse maksuvaba osa: kuni 15 % aasta maksustatud väljamaksetest, kõige rohkem 6000 € aastas) – programm seda ei arvuta; liiki {string.Join(", ", PaymentTypes.All.Where(t => t.ThirdPillarExemptionAllowed).Select(t => t.Code))} ei deklareerita (THIRD_PILLAR_NOT_COMPUTED): makselt võetakse märge „{Declare}“ maha ja see deklareeritakse e-MTA-s käsitsi.",
+        $"TÖR liik 504 (sotsiaalmaks välisriigis) annab palgale liigi {EmploymentTypes.DefaultCode("504", Core.Model.Residency.Resident)}/{EmploymentTypes.DefaultCode("504", Core.Model.Residency.NonResident)} ainult siis, kui kaardil on välisriigi A1 tõend (töö Eestis); muidu makset vaikimisi ei deklareerita (FOREIGN_A1_NEEDED).",
         "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäide kasutab 820 €, küsimus on lahtine.",
     ];
 

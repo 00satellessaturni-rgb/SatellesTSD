@@ -13,6 +13,10 @@ public static class ReviewChecks
     public const string ResidencyNotChecked = "RESIDENCY_NOT_CHECKED";
     public const string NoType = "NO_TYPE";
 
+    /// <summary>A salary under a register type whose social tax is paid abroad (504) has no payment type until the card
+    /// says a foreign A1 with work in Estonia (decision 259); the argument is the register's type.</summary>
+    public const string ForeignA1Needed = "FOREIGN_A1_NEEDED";
+
     /// <summary>A salary-pattern payment ("TÖR-väline palgad") to a person the month's register does not list, or of a month
     /// searched with no register: refused under its own name in place of NO_TYPE, saying what to do. Nothing else changes:
     /// the category stays codeless, the row undeclared and out of the Deklareerimata sum (decisions 10, 40, 100).</summary>
@@ -52,7 +56,7 @@ public static class ReviewChecks
     /// a payment of no type is then asked, TWO_CONTRACTS, not NO_TYPE.</param>
     /// <param name="outsideTor">The payment is of "TÖR-väline palgad" and the person is not in the month's register (or the
     /// month has none): a payment of no type is then refused as OUTSIDE_TOR, not NO_TYPE.</param>
-    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown, IReadOnlyList<string>? twoContracts = null, OutsideTorReason? outsideTor = null)
+    public static IReadOnlyList<Refusal> Of(Person? person, string? typeCode, decimal amount, bool amountOk, bool inPeriod, int year, TaxRates rates, string? currency = null, bool duplicate = false, Import.Direction direction = Import.Direction.Unknown, IReadOnlyList<string>? twoContracts = null, OutsideTorReason? outsideTor = null, string? foreignA1For = null)
     {
         ArgumentNullException.ThrowIfNull(rates);
         var refusals = new List<Refusal>();
@@ -107,6 +111,7 @@ public static class ReviewChecks
         {
             refusals.Add(twoContracts is { Count: > 0 }
                 ? new Refusal(TwoContracts, $"Two employments of different types are in force on the payment's day (TÖR {string.Join(", ", twoContracts)}); choose the payment type, or the card's employment type for every payment.", [.. twoContracts])
+                : foreignA1For is { } torType ? new Refusal(ForeignA1Needed, $"The register's employment type {torType} has the social tax paid in another state: set the card's A1 case to a foreign A1 with work in Estonia (and its countries), or choose the payment type by hand.", [torType])
                 : outsideTor is { } reason ? OutsideTorRefusal(reason)
                 : new Refusal(NoType, "No payment type: the category has no code for this person, or the employment type is unknown."));
         }

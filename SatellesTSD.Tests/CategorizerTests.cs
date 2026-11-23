@@ -17,6 +17,15 @@ public class CategorizerTests
     [InlineData("Septembrikuu palk", "[Palgad]")]
     [InlineData("August 2026 tasu", "[Palgad]")]
     [InlineData("Avanss", "[Palgad]")]
+    [InlineData("Koondamishüvitis", "[Palgad]")] // pay on termination is taxed as pay (type 33 is the accountant's to set), never the codeless Kompensatsioon
+    [InlineData("Hüvitis töölepingu lõpetamisel", "[Palgad]")]
+    [InlineData("hüvitis töölepingu ülesütlemisel", "[Palgad]")]
+    [InlineData("Hüvitis töölepingu lõppemisel", "[Palgad]")]
+    [InlineData("töölepingu lõppemise hüvitis", "[Palgad]")]
+    [InlineData("Koondamine hüvitis", "[Palgad]")]
+    [InlineData("Ülesütlemishüvitis", "[Palgad]")]
+    [InlineData("Töölepingu alusel päevaraha", "[Kompensatsioon]")] // the contract named, nothing of its end
+    [InlineData("Lähetuse hüvitis", "[Kompensatsioon]")]
     [InlineData("töötasu", "[Palgad]")]
     [InlineData("tasu", "[Palgad]")]
     [InlineData("proovipäev", "[Palgad]")]

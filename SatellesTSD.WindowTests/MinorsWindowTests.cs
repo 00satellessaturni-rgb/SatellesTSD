@@ -242,17 +242,17 @@ public class MinorsWindowTests
         using var fixture = new WindowFixture();
         Ui.Run(() => fixture.Drive(form =>
         {
-            form.Services!.Store.UpdatePerson(StoredMari(form) with { TorEmploymentTypeId = "504" });
+            form.Services!.Store.UpdatePerson(StoredMari(form) with { TorEmploymentTypeId = "599" });
             form.Reload();
             Ui.Pump();
             Mari(form);
             var card = form.PersonEditor;
-            Assert.Equal("504", card.TorTypeBox.SelectedItem?.ToString());
+            Assert.Equal("599", card.TorTypeBox.SelectedItem?.ToString());
 
             card.DeclarationBox.SelectedIndex = 1;
             card.SaveButton.PerformClick();
             Ui.Until(() => !form.IsBusy, what: "the save of another field");
-            Assert.Equal(("504", DeclarationChoice.Include), (StoredMari(form).TorEmploymentTypeId, StoredMari(form).Declaration));
+            Assert.Equal(("599", DeclarationChoice.Include), (StoredMari(form).TorEmploymentTypeId, StoredMari(form).Declaration));
             Assert.Empty(fixture.Failures);
         }));
     }

@@ -37,6 +37,46 @@ public class ReviewWorkspaceTests
     private static ReviewPayment Stranger(ReviewView view) => view.Unmatched.Payments.Single(p => p.Payee == "Kinnisvara OÜ");
 
     [Fact]
+    public void A_register_type_with_the_social_tax_paid_abroad_gets_its_wage_code_only_under_a_foreign_A1()
+    {
+        // TÖR type 504: income tax in Estonia, social tax in another state — never a wage with Estonian social tax by default
+        var (store, company, period, _) = ReviewFixtures.Setup(mariType: 504);
+        using (store)
+        {
+            new MatchRunner(store).Run(period.Id);
+            var workspace = Workspace(store);
+            var salary = Salary(workspace.Load(period.Id));
+            Assert.Equal((null, false), (salary.TypeCode, salary.Declare));
+            var refusal = Assert.Single(salary.Blockers, b => b.Code != ReviewChecks.ResidencyNotChecked); // not ticked by default: what stands in its way is named all the same
+            Assert.Equal((ReviewChecks.ForeignA1Needed, "504"), (refusal.Code, refusal.Args![0]));
+
+            // the card says a foreign A1 with work in Estonia: a wage (10), declared by default, with income tax alone
+            var mari = workspace.Load(period.Id).Persons[0].Person!;
+            workspace.SavePerson(mari with { A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "FI", WorkCountry = "EE", FundedPensionMember = false }, confirmResidency: true);
+            salary = Salary(workspace.Load(period.Id));
+            Assert.Equal(("10", true), (salary.TypeCode, salary.Declare));
+            Assert.Empty(salary.Checks);
+            new PeriodDeclarer(store, TaxRates.Year2026).Build(period.Id);
+            var line = Assert.Single(store.Payments(period.Id), p => p.PersonId == mari.Id);
+            Assert.Equal((0m, 0m, 0m), (line.Result!.SocialTax, line.Result.UnemploymentEmployee, line.Result.FundedPension));
+
+            // a type picked by hand ends the question, as for any payment
+            store.UpdatePerson(store.Persons(company.Id).Single(p => p.Id == mari.Id) with { A1 = A1Case.None, A1Country = null, WorkCountry = null });
+            workspace.SetTypeCode(Salary(workspace.Load(period.Id)), "10");
+            Assert.DoesNotContain(Salary(workspace.Load(period.Id)).Blockers, c => c.Code == ReviewChecks.ForeignA1Needed);
+        }
+
+        // 603, a board seat by visa, is declared as 601 is: a board member's fee (21), no minimum
+        var (other, _, month, _) = ReviewFixtures.Setup(mariType: 603);
+        using (other)
+        {
+            new MatchRunner(other).Run(month.Id);
+            Assert.Equal("21", Salary(Workspace(other).Load(month.Id)).TypeCode);
+            Assert.Equal((false, "156"), (EmploymentTypes.Find("603")!.SocialTaxMinimum, EmploymentTypes.DefaultCode("603", Residency.NonResident)));
+        }
+    }
+
+    [Fact]
     public void The_basic_exemptions_application_is_taken_off_every_non_resident_the_month_shows_and_nobody_else()
     {
         var (store, company, period, workspace) = Run();
@@ -246,6 +286,14 @@ public class ReviewWorkspaceTests
 
         var twoContracts = Register(Entry(1, new DateOnly(2023, 1, 1), "1"), Entry(2, new DateOnly(2026, 9, 1), "507"));
         Assert.False(Pick(twoContracts, TwoContractsRule.Ask).Ask); // both declare as 10: no conflict
+
+        // a Tööleping beside a row whose social tax is paid abroad (504): another contract unless the card says a foreign A1,
+        // under which both are a wage — so the rule chooses, and the salary is not left refused for want of an A1
+        var abroad = Register(Entry(1, new DateOnly(2023, 1, 1), "1"), Entry(2, new DateOnly(2026, 9, 1), "504"));
+        Assert.Equal("1", Pick(abroad, TwoContractsRule.SalaryToEmploymentContract).TorTypeId);
+        Assert.True(Pick(abroad, TwoContractsRule.Ask).Ask);
+        var withA1 = Person.New(Guid.NewGuid(), "Mari", "Maasikas", ReviewFixtures.MariCode) with { A1 = A1Case.ForeignA1WorkInEstonia };
+        Assert.False(ReviewDefaults.PickFor(abroad, withA1, day, true, Residency.Resident, TwoContractsRule.Ask).Ask);
         var paused = Register(Entry(1, new DateOnly(2023, 1, 1), "1", pauseFrom: new DateOnly(2026, 10, 1)), Entry(2, new DateOnly(2026, 9, 1), "600"));
         Assert.Equal(("600", false), (Pick(paused, TwoContractsRule.Ask).TorTypeId, Pick(paused, TwoContractsRule.Ask).Ask)); // a paused Tööleping is not in force
         var noContract = Register(Entry(1, new DateOnly(2023, 1, 1), "600"), Entry(2, new DateOnly(2026, 9, 1), "601"));
