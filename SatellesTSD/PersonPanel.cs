@@ -43,6 +43,7 @@ public sealed class PersonPanel : UserControl
     private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
     private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true, Margin = new Padding(20, 3, 3, 3) };
     private readonly TextBox _applicationDate = new() { MaxLength = 10 };
+    private readonly Label _workAbilityNote = new() { Text = UiText.StatePaysSocialTaxNote, AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(380, 0), Margin = new Padding(20, 0, 3, 3) };
     private readonly ComboBox _declaration = Combo(DeclarationChoices);
     private readonly ComboBox _a1 = Combo(A1Choices);
     private readonly TextBox _a1Country = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
@@ -97,8 +98,11 @@ public sealed class PersonPanel : UserControl
         Row(_statePays, span: true);
         Row(UiText.WorkAbilityApplicationDate, _applicationDate);
         _tips.SetToolTip(_applicationDate, UiText.WorkAbilityApplicationDateTip);
-        // what the app cannot check, said where the application is ticked (KR_SM_03): not a tip alone
-        Row(new Label { Text = UiText.StatePaysSocialTaxNote, AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(380, 0), Margin = new Padding(20, 0, 3, 3) }, span: true);
+        // what the app cannot check, said where the application is ticked (KR_SM_03): not a tip alone. Shown only while the
+        // status is ticked (the owner, 2026-11-24): a card of anyone else has no use for it
+        Row(_workAbilityNote, span: true);
+        _workAbility.CheckedChanged += (_, _) => _workAbilityNote.Visible = _workAbility.Checked;
+        _workAbilityNote.Visible = _workAbility.Checked;
         Row(UiText.DeclarationLabel, _declaration);
         Row(UiText.A1, _a1);
         Row(UiText.A1Country, _a1Country);

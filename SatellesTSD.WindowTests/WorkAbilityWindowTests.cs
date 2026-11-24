@@ -81,11 +81,25 @@ public class WorkAbilityWindowTests
     {
         Ui.Run(() =>
         {
-            using var card = new PersonPanel();
+            using var form = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-2000, -2000) };
+            var card = new PersonPanel { Dock = DockStyle.Fill };
+            form.Controls.Add(card);
+            form.Show();
             card.Present(Worker(), editable: true, 2026, TaxRates.Year2026);
             static IEnumerable<Control> All(Control c) => c.Controls.Cast<Control>().SelectMany(child => All(child).Prepend(child));
             var note = Assert.Single(All(card).OfType<Label>(), l => l.Text == UiText.StatePaysSocialTaxNote);
             Assert.Contains("KR_SM_03", note.Text, StringComparison.Ordinal);
+            // shown only while the status is ticked: by the accountant's tick, and as a card is shown
+            Assert.False(note.Visible);
+            card.WorkAbilityBox.Checked = true;
+            Assert.True(note.Visible);
+            card.WorkAbilityBox.Checked = false;
+            Assert.False(note.Visible);
+            card.Present(Worker(status: true), editable: true, 2026, TaxRates.Year2026);
+            Assert.True(note.Visible);
+            card.Present(Worker(), editable: true, 2026, TaxRates.Year2026);
+            Assert.False(note.Visible);
+            form.Close();
             // the minimum's tip no longer tells the accountant to untick it by hand for a person with the status, and says
             // the status does not change the tick
             Assert.Contains(UiText.ReducedWorkAbility, UiText.MinimumPensionTip, StringComparison.Ordinal);
