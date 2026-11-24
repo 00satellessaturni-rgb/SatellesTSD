@@ -42,6 +42,8 @@ public sealed class SimulationDialog : Form
     private readonly CheckBox _exemption = new() { Text = UiText.ExemptionApplied, AutoSize = true, Checked = true };
     private readonly TextBox _exemptionMonthly = new() { Width = 80 };
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true, Checked = true };
+    private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
+    private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true };
     private readonly ComboBox _a1 = Combo([new Choice(nameof(A1Case.None), UiText.RulesA1None), new Choice(nameof(A1Case.EstonianA1WorkAbroad), UiText.RulesA1Estonian), new Choice(nameof(A1Case.ForeignA1WorkInEstonia), UiText.RulesA1Foreign)], 200);
     private readonly TextBox _a1Country = new() { Width = 60, CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
     private readonly TextBox _workCountry = new() { Width = 60, CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
@@ -60,6 +62,7 @@ public sealed class SimulationDialog : Form
     private readonly Button _open = new() { Text = UiText.SimOpen, AutoSize = true };
     private readonly Button _save = new() { Text = UiText.SimSave, AutoSize = true };
     private readonly PensionMinimumLink _pensionMinimum;
+    private readonly WorkAbilityLink _workAbilityLink;
     private bool _filling;
 
     /// <param name="savedCatalog">The store in use's saved catalog document (the owner's phrases), so the example's rows are
@@ -98,6 +101,8 @@ public sealed class SimulationDialog : Form
         Field("", _exemption);
         Field(UiText.ExemptionMonthly, _exemptionMonthly);
         Field("", _minimum);
+        Field("", _workAbility);
+        Field("", _statePays);
         Field("A1", _a1);
         Field(UiText.SimA1Country, _a1Country);
         Field(UiText.SimWorkCountry, _workCountry);
@@ -158,7 +163,7 @@ public sealed class SimulationDialog : Form
         {
             ("key", UiText.SimLineKey, 70), ("action", UiText.SimAction, 50), ("type", UiText.RulesCode, 50), ("date", UiText.SimDate, 85),
             ("net", UiText.SimNet, 85), ("gross", UiText.SimGross, 85), ("tm", "TM", 75), ("mvt", UiText.RulesExemption, 75), ("sm", "SM", 75),
-            ("increase", UiText.SimIncrease, 85), ("tk", "TK", 65), ("ttk", "TTK", 65), ("kp", "KP", 65), ("source", UiText.SimSource, 260),
+            ("increase", UiText.SimIncrease, 85), ("reduction", UiText.SimReduction, 85), ("tk", "TK", 65), ("ttk", "TTK", 65), ("kp", "KP", 65), ("source", UiText.SimSource, 260),
         })
         {
             _lines.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, Width = width, SortMode = DataGridViewColumnSortMode.NotSortable });
@@ -187,7 +192,10 @@ public sealed class SimulationDialog : Form
         _exemption.CheckedChanged += (_, _) => _exemptionMonthly.Enabled = _exemption.Checked;
         _member.SelectedIndexChanged += (_, _) => _rate.Enabled = ((Choice)_member.SelectedItem!).Value == "1";
         // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237); a scenario filled in is left as it is
-        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
+        // and so does the work-ability status, as on the card; its application opens only with it
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips, _workAbility);
+        _workAbilityLink = new WorkAbilityLink(_workAbility, _statePays, () => true);
+        _tips.SetToolTip(_statePays, UiText.StatePaysSocialTaxNote);
         // the A1 case picked by hand fills its fixed country with EE when that box is empty, as the card does
         // (decision 222); a scenario filled in (the example, a file) is shown as written, so a missing country still
         // reaches the run's A1_COUNTRIES_MISSING
@@ -215,6 +223,8 @@ public sealed class SimulationDialog : Form
     internal ComboBox PensionMemberBox => _member;
     internal CheckBox MinimumBox => _minimum;
     internal CheckBox OnPensionBox => _onPension;
+    internal CheckBox WorkAbilityBox => _workAbility;
+    internal CheckBox StatePaysBox => _statePays;
     internal ToolTip Tips => _tips;
     internal TextBox PensionAgeYearBox => _pensionAgeYear;
     internal CheckBox ExemptionBox => _exemption;
@@ -317,7 +327,9 @@ public sealed class SimulationDialog : Form
             treaty is { } percent ? percent / 100m : null,
             ((Choice)_torType.SelectedItem!).Value is { Length: > 0 } cardType ? cardType : null,
             _typeFromCard.Checked,
-            Enum.Parse<DeclarationChoice>(((Choice)_declaration.SelectedItem!).Value));
+            Enum.Parse<DeclarationChoice>(((Choice)_declaration.SelectedItem!).Value),
+            _workAbility.Checked,
+            _workAbility.Checked && _statePays.Checked);
 
         var employments = new List<SimEmployment>();
         foreach (DataGridViewRow row in _employments.Rows)
@@ -426,6 +438,9 @@ public sealed class SimulationDialog : Form
             _exemption.Checked = p.BasicExemptionApplied;
             _exemptionMonthly.Text = p.BasicExemptionMonthly?.ToString("0.00", Et) ?? "";
             _minimum.Checked = p.SocialTaxMinimumApplies;
+            _workAbility.Checked = p.ReducedWorkAbility; // before the application: its untick takes the application off
+            _statePays.Checked = p.ReducedWorkAbility && p.StatePaysSocialTax;
+            _workAbilityLink.Refresh();
             _pensionMinimum.Reset();
             // the countries before the case: the guard alone keeps a scenario's empty country empty (decision 222)
             _a1Country.Text = p.A1Country ?? "";
@@ -499,7 +514,7 @@ public sealed class SimulationDialog : Form
             _lines.Rows.Add(
                 line.LineNumber, UiText.ActionText(line.Action), line.Line.TypeCode, line.Line.DocumentDate is { } day ? DayText(day) : "",
                 Money(r?.Net ?? line.NetPaid), Money(r?.Gross ?? line.Line.Amount), Money(r?.IncomeTax), Money(r?.ExemptionUsed), Money(r?.SocialTax),
-                Money(r?.SocialTaxMinimumIncrease), Money(r?.UnemploymentEmployee), Money(r?.UnemploymentEmployer), Money(r?.FundedPension), Core.Report.ReportText.SourceText(line.SourceRef));
+                Money(r?.SocialTaxMinimumIncrease), Money(r?.WorkAbilityReduction), Money(r?.UnemploymentEmployee), Money(r?.UnemploymentEmployer), Money(r?.FundedPension), Core.Report.ReportText.SourceText(line.SourceRef));
         }
 
         _review.Text = UiText.SimReport(result);

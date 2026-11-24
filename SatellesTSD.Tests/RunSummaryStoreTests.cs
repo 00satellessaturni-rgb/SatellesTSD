@@ -86,7 +86,7 @@ public class RunSummaryStoreTests
 
             using var v14 = SqliteStore.Open(path);
             Assert.Equal((long)SqliteStore.SchemaVersion, v14.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
-            Assert.Equal(14, SqliteStore.SchemaVersion);
+            Assert.True(SqliteStore.SchemaVersion >= 14); // v14 brought the table; a later version keeps it
             Assert.Null(v14.RunSummary(companyId));
             var stored = new StoredRunSummary(companyId, periodId, new DateTime(2026, 11, 23, 9, 30, 0, DateTimeKind.Utc), Sample(companyId, periodId).ToJson());
             v14.SaveRunSummary(stored);

@@ -37,6 +37,8 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <param name="Declaration">Whether the person is declared as the rules say, always, or never (the person card's "Deklareerimine"; see <see cref="DeclarationChoice"/>).</param>
 /// <param name="TypeFromCard">The card's <paramref name="TorEmploymentTypeId"/> stands for every payment of the person (the card's "Töötamise liik kõigile maksetele"), over the register's contract covering each payment's date.</param>
 /// <param name="FactsControlDate">The control date the registers were last asked for when a lookup set the residency or the pension (a lookup of another month's period moves it); the build says so when it is outside the month built.</param>
+/// <param name="ReducedWorkAbility">The card's „Osaline või puuduv töövõime“: no social-tax minimum (SMS § 2 lg 4 p 6). A tick with no dates, like the pension's: the accountant unticks it when the term ends.</param>
+/// <param name="StatePaysSocialTax">The card's application tick under it: Töötukassa pays the social tax on up to one kuumäär of the month's wages (SMS § 6 lg 1 p 5, lg 3; TSD_OPTV_SM_VAHENDUS). Only with <paramref name="ReducedWorkAbility"/>.</param>
 public sealed record Person(
     Guid Id,
     Guid CompanyId,
@@ -66,8 +68,14 @@ public sealed record Person(
     string? RegisterKey = null,
     DeclarationChoice Declaration = DeclarationChoice.Auto,
     bool TypeFromCard = false,
-    DateOnly? FactsControlDate = null)
+    DateOnly? FactsControlDate = null,
+    bool ReducedWorkAbility = false,
+    bool StatePaysSocialTax = false)
 {
+    /// <summary>Whether the social-tax minimum is owed as the card stands: its tick, and not a person with partial or no work
+    /// ability (SMS § 2 lg 4 p 6, by the status alone) — so a tick left on beside the status builds no zero line.</summary>
+    public bool MinimumOwed => SocialTaxMinimumApplies && !ReducedWorkAbility;
+
     public static Person New(Guid companyId, string firstName, string lastName, string? personalCode, Residency residency = Residency.Resident) =>
         new(Guid.Empty, companyId, firstName, lastName, personalCode, null, residency, null, null, null, null, null,
             false, null, false, null, true, A1Case.None, null, null, null, null, null);
@@ -90,9 +98,10 @@ public sealed record Person(
     public PayeeTaxFacts FactsFor(int year, int month, decimal socialTaxMinimumShare = 1m) => new(
         Residency, ResidenceCountry, FundedPensionMember, PensionRate, OnOldAgeOrFlexiblePension,
         AgeYear is { } pensionAgeYear && year >= pensionAgeYear,
-        BasicExemptionApplied, BasicExemptionMonthly, SocialTaxMinimumApplies, socialTaxMinimumShare,
+        BasicExemptionApplied, BasicExemptionMonthly, MinimumOwed, socialTaxMinimumShare,
         A1, A1Country, WorkCountry, TreatyIncomeTaxRate,
-        PensionAge.ReachedBefore(PensionAgeYear, PersonalCode, year, month));
+        PensionAge.ReachedBefore(PensionAgeYear, PersonalCode, year, month),
+        ReducedWorkAbility, StatePaysSocialTax);
 
     /// <summary>How the person is named on the declaration: the Estonian personal code, else the MTA non-resident code.</summary>
     public PayeeId? PayeeId =>

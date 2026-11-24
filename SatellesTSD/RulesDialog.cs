@@ -18,6 +18,8 @@ public sealed class RulesDialog : Form
     private readonly CheckBox _pensionAge = new() { Text = UiText.RulesPensionAge, AutoSize = true };
     private readonly CheckBox _exemption = new() { Text = UiText.ExemptionApplied, AutoSize = true, Checked = true };
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true, Checked = true };
+    private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
+    private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true };
     private readonly ComboBox _a1 = Combo([new Choice(nameof(A1Case.None), UiText.RulesA1None), new Choice(nameof(A1Case.EstonianA1WorkAbroad), UiText.RulesA1Estonian), new Choice(nameof(A1Case.ForeignA1WorkInEstonia), UiText.RulesA1Foreign)]);
     private readonly TextBox _treaty = new() { Width = 50 };
     private readonly TextBox _search = new() { Width = 200 };
@@ -26,6 +28,7 @@ public sealed class RulesDialog : Form
     private readonly DataGridView _grid = Grid();
     private readonly DataGridView _ratesGrid = Grid();
     private readonly TextBox _notes = new() { ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
+    private readonly ToolTip _tips = new();
 
     public RulesDialog(TaxRates? rates, int year)
     {
@@ -37,7 +40,7 @@ public sealed class RulesDialog : Form
         MinimizeBox = false;
 
         var toggles = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(4) };
-        toggles.Controls.AddRange([_residency, _member, _onPension, _pensionAge, _exemption, _minimum, _a1,
+        toggles.Controls.AddRange([_residency, _member, _onPension, _pensionAge, _exemption, _minimum, _workAbility, _statePays, _a1,
             new Label { Text = UiText.RulesTreaty, AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, _treaty]);
         var searchRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(4) };
         searchRow.Controls.AddRange([new Label { Text = UiText.RulesSearch, AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, _search, _onlyCase, _shown]);
@@ -50,7 +53,7 @@ public sealed class RulesDialog : Form
         {
             ("code", UiText.RulesCode, 48), ("name", UiText.RulesName, 300), ("section", UiText.RulesSection, 40), ("payee", UiText.RulesPayee, 90),
             ("tor", UiText.RulesTor, 150), ("tm", UiText.RulesIncomeTax, 70), ("mvt", UiText.RulesExemption, 72), ("sm", UiText.RulesSocialTax, 80),
-            ("min", UiText.RulesMinimum, 78), ("tk", UiText.RulesUnemploymentEmployee, 80), ("ttk", UiText.RulesUnemploymentEmployer, 80),
+            ("min", UiText.RulesMinimum, 78), ("optv", UiText.RulesWorkAbility, 96), ("tk", UiText.RulesUnemploymentEmployee, 80), ("ttk", UiText.RulesUnemploymentEmployer, 80),
             ("kp", UiText.RulesFundedPension, 70), ("zero", UiText.RulesZero, 70), ("treaty", UiText.RulesTreatyAllowed, 78), ("mvt640", UiText.RulesThirdPillar, 66),
         })
         {
@@ -88,7 +91,11 @@ public sealed class RulesDialog : Form
         AcceptButton = close;
         CancelButton = close;
 
-        foreach (var box in new[] { _member, _onPension, _pensionAge, _exemption, _minimum, _onlyCase })
+        // the application only with the status, as on the card (its untick takes the application off before the fill)
+        _ = new WorkAbilityLink(_workAbility, _statePays, () => true);
+        _tips.SetToolTip(_statePays, UiText.StatePaysSocialTaxNote);
+        Disposed += (_, _) => _tips.Dispose();
+        foreach (var box in new[] { _member, _onPension, _pensionAge, _exemption, _minimum, _workAbility, _statePays, _onlyCase })
         {
             box.CheckedChanged += (_, _) => Fill();
         }
@@ -110,6 +117,8 @@ public sealed class RulesDialog : Form
     internal CheckBox PensionAgeBox => _pensionAge;
     internal CheckBox ExemptionBox => _exemption;
     internal CheckBox MinimumBox => _minimum;
+    internal CheckBox WorkAbilityBox => _workAbility;
+    internal CheckBox StatePaysBox => _statePays;
     internal ComboBox A1Box => _a1;
     internal TextBox TreatyBox => _treaty;
     internal TextBox SearchBox => _search;
@@ -124,7 +133,9 @@ public sealed class RulesDialog : Form
         _exemption.Checked,
         _minimum.Checked,
         Enum.Parse<A1Case>(((Choice)_a1.SelectedItem!).Value),
-        decimal.TryParse(_treaty.Text.Trim().Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var percent) && percent is >= 0m and <= 100m ? percent / 100m : null);
+        decimal.TryParse(_treaty.Text.Trim().Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var percent) && percent is >= 0m and <= 100m ? percent / 100m : null,
+        _workAbility.Checked,
+        _workAbility.Checked && _statePays.Checked);
 
     private void Fill()
     {
@@ -146,6 +157,10 @@ public sealed class RulesDialog : Form
                 flags.ExemptionKind switch { ExemptionKind.Mvt610 => "MVT_610", ExemptionKind.Mvt650 => "MVT_650", _ => UiText.RulesNone },
                 flags.SocialTax ? Percent(_rates.SocialTax) : UiText.RulesNone,
                 flags.SocialTaxMinimum ? UiText.Yes : UiText.RulesNone,
+                // matrix column O for the case: deducted when the case has the status and the application, else whether the
+                // type allows it at all under the case's A1 (a foreign A1 carries no Estonian social tax)
+                flags.WorkAbilityReduction ? UiText.RulesWorkAbilityApplied(_rates.SocialTaxMinimumBase)
+                : flags.SocialTax && type.WorkAbilityReductionOn(flags.A1) ? UiText.RulesAllowed : UiText.RulesNone,
                 flags.UnemploymentEmployee ? Percent(_rates.UnemploymentEmployee) : UiText.RulesNone,
                 flags.UnemploymentEmployer ? Percent(_rates.UnemploymentEmployer) : UiText.RulesNone,
                 flags.FundedPension ? "2/4/6 %" : UiText.RulesNone,

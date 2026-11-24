@@ -4,7 +4,9 @@ using SatellesTSD.Core.Model;
 namespace SatellesTSD.Core.Tax;
 
 /// <summary>The person's case the rules matrix is drawn for (decision 203): the facts that change which taxes a payment
-/// carries. A1 stands for a posted worker's certificate; the country it names does not change the taxes.</summary>
+/// carries. A1 stands for a posted worker's certificate; the country it names does not change the taxes. The work-ability
+/// status takes the minimum off; the application under it allows TSD_OPTV_SM_VAHENDUS on the types of column O (only with
+/// the status, as on the card).</summary>
 public sealed record RuleCase(
     Residency Residency = Residency.Resident,
     bool FundedPensionMember = true,
@@ -13,7 +15,9 @@ public sealed record RuleCase(
     bool BasicExemptionApplied = true,
     bool SocialTaxMinimumApplies = true,
     A1Case A1 = A1Case.None,
-    decimal? TreatyIncomeTaxRate = null)
+    decimal? TreatyIncomeTaxRate = null,
+    bool ReducedWorkAbility = false,
+    bool StatePaysSocialTax = false)
 {
     /// <summary>The engine's own facts for the case: the II-pillar rate is the default 2 %, the A1 countries a stand-in.</summary>
     public PayeeTaxFacts Facts => new(
@@ -27,7 +31,9 @@ public sealed record RuleCase(
         A1: A1,
         A1Country: A1 == A1Case.None ? null : "FI",
         WorkCountry: A1 == A1Case.None ? null : "FI",
-        TreatyIncomeTaxRate: TreatyIncomeTaxRate);
+        TreatyIncomeTaxRate: TreatyIncomeTaxRate,
+        ReducedWorkAbility: ReducedWorkAbility,
+        StatePaysSocialTax: ReducedWorkAbility && StatePaysSocialTax);
 }
 
 /// <summary>One payment type under one case: what the type carries by MTA's matrix, the employment types of the register

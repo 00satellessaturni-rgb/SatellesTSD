@@ -31,6 +31,14 @@ namespace SatellesTSD.Core.Tax;
 /// only when the non-resident holds a residency certificate.</param>
 /// <param name="PensionAgeReached">Reached old-age pension age in a month before the payment's (<see cref="PensionAge"/>):
 /// no TSD_TK, whether or not a pension is granted (Töötuskindlustuse seadus § 42 lg 1 p 1); the employer's TSD_TTK stays.</param>
+/// <param name="ReducedWorkAbility">A person with partial or no work ability (osaline või puuduv töövõime, established under
+/// the töövõimetoetuse seadus): the social-tax minimum does not apply, by the status alone (SMS § 2 lg 4 p 6) — the engine
+/// never tops such a person up, whatever <paramref name="SocialTaxMinimumApplies"/> says. A disability alone is not this.</param>
+/// <param name="StatePaysSocialTax">The employer has filed the application by which the state (Töötukassa) pays the social
+/// tax on up to one kuumäär of the person's wages a month (SMS § 6 lg 1 p 5, lg 3): the part is TSD_OPTV_SM_VAHENDUS, on the
+/// types of matrix column O. Only with <paramref name="ReducedWorkAbility"/> — the engine refuses it without
+/// (<see cref="PaymentChecks.WorkAbilityApplicationWithoutStatus"/>). MTA accepts the part only when Töötukassa itself declared
+/// the person in the same or the previous month (KR_SM_03), which the app cannot see.</param>
 public sealed record PayeeTaxFacts(
     Residency Residency,
     string? ResidenceCountry = null,
@@ -46,7 +54,9 @@ public sealed record PayeeTaxFacts(
     string? A1Country = null,
     string? WorkCountry = null,
     decimal? TreatyIncomeTaxRate = null,
-    bool PensionAgeReached = false)
+    bool PensionAgeReached = false,
+    bool ReducedWorkAbility = false,
+    bool StatePaysSocialTax = false)
 {
     /// <summary>A resident employee with the usual facts: II pillar checked and active, exemption applied in full, minimum applies.</summary>
     public static PayeeTaxFacts ResidentEmployee(decimal pensionRate = 0.02m, bool exemptionApplied = true) =>

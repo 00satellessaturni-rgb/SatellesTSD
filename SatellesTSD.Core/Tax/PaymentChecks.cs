@@ -44,6 +44,11 @@ public static class PaymentChecks
     public const string ExemptionSubCent = "EXEMPTION_SUB_CENT";
     public const string MinimumShareInvalid = "MINIMUM_SHARE_INVALID";
 
+    /// <summary>The application by which Töötukassa pays the social tax (SMS § 6 lg 1 p 5) is ticked, but the person's
+    /// partial or no work ability is not: the state pays only for such a person, so nothing is deducted on a guess. The
+    /// card cannot make it (the application's tick follows the status's); facts made otherwise are refused.</summary>
+    public const string WorkAbilityApplicationWithoutStatus = "WORK_ABILITY_APPLICATION_WITHOUT_STATUS";
+
     /// <summary>A treaty income-tax rate the line would use that is below 0, above the type's own rate (a treaty never asks
     /// for more), or not a whole percent — the file carries the rate in hundredths (taxPercentageRate, decimals 2), so a
     /// rate of 12.5 % would be written as 13 % beside a tax computed at 12.5 %. Mirrors no throw (decision 195).</summary>
@@ -200,6 +205,11 @@ public static class PaymentChecks
         if (facts.SocialTaxMinimumShare <= 0m || facts.SocialTaxMinimumShare > 1m)
         {
             refusals.Add(new Refusal(MinimumShareInvalid, $"The month share of the minimum obligation ({facts.SocialTaxMinimumShare}) must be above 0 and at most 1.", [Invariant(facts.SocialTaxMinimumShare)]));
+        }
+
+        if (facts.StatePaysSocialTax && !facts.ReducedWorkAbility)
+        {
+            refusals.Add(new Refusal(WorkAbilityApplicationWithoutStatus, "The application for Töötukassa to pay the social tax is ticked, but the person's partial or no work ability is not; the state pays only for such a person (SMS § 6 lg 1 p 5)."));
         }
 
         if (refusals.Count == 0)

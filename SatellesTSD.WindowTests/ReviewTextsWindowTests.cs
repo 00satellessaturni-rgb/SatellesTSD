@@ -67,6 +67,7 @@ public class ReviewTextsWindowTests
         made.AddRange(PaymentChecks.Check(salary!, resident with { BasicExemptionMonthly = 100.005m }, 100m, rates));
         made.AddRange(PaymentChecks.Check(salary!, resident with { SocialTaxMinimumShare = 1.25m }, 100m, rates));
         made.AddRange(PaymentChecks.Check(PaymentTypes.Get("25"), resident, 373.01m, rates)); // the III-pillar contribution: its tax-free part is not computed
+        made.AddRange(PaymentChecks.Check(salary!, resident with { StatePaysSocialTax = true }, 100m, rates)); // Töötukassa's application without the status
         made.Add(new Refusal(PaymentChecks.RatesExceedOne, "english")); // the rates of the year never add up to it
 
         // every code either class refuses with is made above, and worded with no English left in it
@@ -100,6 +101,7 @@ public class ReviewTextsWindowTests
         Assert.StartsWith("Kaardi „Maksulepingu TM määr“ (12,5 %) peab olema täisprotsent vahemikus 0 kuni liigi oma määr ", Said(PaymentChecks.TreatyRateInvalid), StringComparison.Ordinal);
         Assert.Equal("SM miinimumkohustuse kuu osa (1,25) peab olema üle 0 ja kuni 1.", Said(PaymentChecks.MinimumShareInvalid));
         Assert.StartsWith("Liigiga 10 peetakse kinni II samba makse", Said(PaymentChecks.PensionNotChecked), StringComparison.Ordinal);
+        Assert.StartsWith("„Töötukassa maksab sotsiaalmaksu (taotlus esitatud)“ on märgitud, kuid „Osaline või puuduv töövõime“ ei ole", Said(PaymentChecks.WorkAbilityApplicationWithoutStatus), StringComparison.Ordinal);
 
         // a code the window does not know, a refusal without its figures: the English
         Assert.Null(UiText.RefusalText(new Refusal("SOMETHING_NEW", "english")));

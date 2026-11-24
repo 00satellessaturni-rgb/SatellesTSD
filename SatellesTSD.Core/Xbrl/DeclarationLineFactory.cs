@@ -82,6 +82,13 @@ public static class DeclarationLineFactory
             amounts.Add(new MeasurableAmount(MeasurableAmount.SocialTaxBase, result.SocialTaxBase));
         }
 
+        if (result.WorkAbilityReduction > 0m)
+        {
+            // only where something is deducted: a line without the state's part carries none, as MTA's examples omit the
+            // measurables at 0 (KR_SM_05 refuses it on a type outside column O, KR_SM_06 above TSD_SMVM)
+            amounts.Add(new MeasurableAmount(MeasurableAmount.WorkAbilityReduction, result.WorkAbilityReduction));
+        }
+
         if (result.SocialTaxMinimumIncrease > 0m)
         {
             amounts.Add(new MeasurableAmount(MeasurableAmount.SocialTaxMinimumIncrease, result.SocialTaxMinimumIncrease));

@@ -99,6 +99,8 @@ public sealed class CalculatorDialog : FieldDialog
     private readonly ComboBox _rate = Combo([new Choice("0.02", "2 %"), new Choice("0.04", "4 %"), new Choice("0.06", "6 %")]);
     private readonly CheckBox _onPension = new() { Text = UiText.OnPension, AutoSize = true };
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true, Checked = true };
+    private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
+    private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true };
     private readonly TextBox _share = new() { Text = "1" };
     private readonly TextBox _output = new() { ReadOnly = true, Multiline = true, Height = 220, ScrollBars = ScrollBars.Vertical, Font = new Font(FontFamily.GenericMonospace, 9f) };
     private readonly ToolTip _tips = new();
@@ -119,6 +121,8 @@ public sealed class CalculatorDialog : FieldDialog
         Field(UiText.PensionRate, _rate);
         Field("", _onPension);
         Field("", _minimum);
+        Field("", _workAbility);
+        Field("", _statePays);
         Field(UiText.MinimumShare, _share);
         var compute = new Button { Text = UiText.Compute, AutoSize = true };
         compute.Click += (_, _) => Compute();
@@ -130,7 +134,10 @@ public sealed class CalculatorDialog : FieldDialog
         _pensionAgeReached.CheckedChanged += (_, _) => { if (_pensionAgeReached.Checked) { _pensionAge.Checked = true; } };
         _pensionAge.CheckedChanged += (_, _) => { if (!_pensionAge.Checked) { _pensionAgeReached.Checked = false; } };
         // "Vanaduspensionil" ticked takes the minimum off, unticked gives it back (decision 237); the dialog fills nothing
-        _ = new PensionMinimumLink(_onPension, _minimum, () => false, _tips);
+        // and so does the work-ability status; its application opens only with it, as on the card
+        _ = new PensionMinimumLink(_onPension, _minimum, () => false, _tips, _workAbility);
+        _ = new WorkAbilityLink(_workAbility, _statePays, () => true);
+        _tips.SetToolTip(_statePays, UiText.StatePaysSocialTaxNote);
         Disposed += (_, _) => _tips.Dispose();
         _residency.SelectedIndexChanged += (_, _) =>
         {
@@ -147,12 +154,15 @@ public sealed class CalculatorDialog : FieldDialog
 
     // the window tests drive the dialog through these
     internal TextBox AmountBox => _amount;
+    internal ComboBox DirectionBox => _direction;
     internal TextBox ExemptionBox => _exemptionMonthly;
     internal TextBox ShareBox => _share;
     internal CheckBox PensionAgeBox => _pensionAge;
     internal CheckBox PensionAgeReachedBox => _pensionAgeReached;
     internal CheckBox OnPensionBox => _onPension;
     internal CheckBox MinimumBox => _minimum;
+    internal CheckBox WorkAbilityBox => _workAbility;
+    internal CheckBox StatePaysBox => _statePays;
     internal ToolTip Tips => _tips;
     internal CheckBox ExemptionAppliedBox => _exemptionApplied;
     internal string OutputText => _output.Text;
@@ -222,7 +232,9 @@ public sealed class CalculatorDialog : FieldDialog
             BasicExemptionMonthly: exemption,
             SocialTaxMinimumApplies: _minimum.Checked,
             SocialTaxMinimumShare: share,
-            PensionAgeReached: _pensionAgeReached.Checked);
+            PensionAgeReached: _pensionAgeReached.Checked,
+            ReducedWorkAbility: _workAbility.Checked,
+            StatePaysSocialTax: _workAbility.Checked && _statePays.Checked);
         try
         {
             var allocator = new MonthAllocator(new TaxEngine(_rates));
@@ -240,6 +252,7 @@ public sealed class CalculatorDialog : FieldDialog
                 $"{UiText.UnemploymentEmployer,-28}{UiText.Money(r.UnemploymentEmployer),14}",
                 $"{UiText.SocialTax,-28}{UiText.Money(r.SocialTax),14}",
                 $"{UiText.MinimumIncrease,-28}{UiText.Money(r.SocialTaxMinimumIncrease),14}",
+                $"{UiText.WorkAbilityReduction,-28}{UiText.Money(r.WorkAbilityReduction),14}", // the base the SM above was not computed on
                 $"{UiText.EmployerCost,-28}{UiText.Money(r.EmployerCost),14}",
             ]);
         }

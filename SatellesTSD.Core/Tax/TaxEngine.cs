@@ -10,12 +10,18 @@ namespace SatellesTSD.Core.Tax;
 /// over the person's payments). 0 when none is left or none applies.</param>
 /// <param name="SocialTaxMinimumIncrease">TSD_KUUMSUURENDUS: the increase of the social-tax base so that the month reaches the
 /// minimum obligation. Only on a type that carries the minimum. 0 normally.</param>
+/// <param name="WorkAbilityReductionCap">The part of the month's kuumäär still available to this payment as
+/// TSD_OPTV_SM_VAHENDUS (the allocator spreads one kuumäär over the person's payments in date order), like
+/// <paramref name="ExemptionCap"/>: the engine takes what the payment's social-tax base holds of it, on a type of matrix column
+/// O for a person whose employer has applied (<see cref="PayeeTaxFacts.StatePaysSocialTax"/>), else nothing. Never above one
+/// kuumäär.</param>
 public sealed record TaxInput(
     PaymentType Type,
     decimal Amount,
     bool AmountIsNet,
     decimal ExemptionCap,
-    decimal SocialTaxMinimumIncrease = 0m);
+    decimal SocialTaxMinimumIncrease = 0m,
+    decimal WorkAbilityReductionCap = 0m);
 
 /// <summary>The computed figures of one payment. "Applies" flags say whether a tax exists for this type and payee at
 /// all; <see cref="Xbrl.DeclarationLineFactory"/> decides which lines to write from them (a tax that applies is written
@@ -41,8 +47,18 @@ public sealed record TaxResult(
     decimal IncomeTaxBase,
     decimal IncomeTax,
     ExemptionKind ExemptionKind,
-    decimal ExemptionUsed)
+    decimal ExemptionUsed,
+    bool WorkAbilityReductionApplies = false,
+    decimal WorkAbilityReduction = 0m)
 {
+    // WorkAbilityReductionApplies: the type and the person allow TSD_OPTV_SM_VAHENDUS; WorkAbilityReduction: the part of the
+    // social-tax base the state pays the tax on (SMS § 6 lg 3), taken off before the rate (KR_SM_04). Both last, with
+    // defaults, so a stored result of a build before them reads as none.
+
+    /// <summary>The social-tax base the employer's own TSD_SM is computed on: TSD_SMVM − TSD_OPTV_SM_VAHENDUS +
+    /// TSD_KUUMSUURENDUS (KR_SM_04; the app declares no TSD_KUUMVAHENDUS or TSD_SMVMSK).</summary>
+    public decimal SocialTaxComputedBase => SocialTaxBase - WorkAbilityReduction + SocialTaxMinimumIncrease;
+
     /// <summary>Gross plus the employer's own costs (TSD_TTK and TSD_SM), the workbook's "company expense".</summary>
     public decimal EmployerCost => Gross + UnemploymentEmployer + SocialTax;
 }
@@ -57,7 +73,8 @@ public readonly record struct EffectiveFlags(
     bool UnemploymentEmployer,
     bool FundedPension,
     decimal? IncomeTaxRate,
-    ExemptionKind ExemptionKind)
+    ExemptionKind ExemptionKind,
+    bool WorkAbilityReduction = false)
 {
     public static EffectiveFlags Of(PaymentType type, PayeeTaxFacts payee)
     {
@@ -73,7 +90,13 @@ public readonly record struct EffectiveFlags(
 
         bool socialTax = type.SocialTax && !foreignA1;
         bool minimumOnType = estonianA1 ? type.SocialTaxMinimumWithEstonianA1 : type.SocialTaxMinimum;
-        bool socialTaxMinimum = socialTax && minimumOnType && payee.SocialTaxMinimumApplies;
+        // a person with partial or no work ability owes no minimum, by the status alone (SMS § 2 lg 4 p 6): the card's tick
+        // is taken off with the status, and the engine holds the rule whatever the tick says
+        bool socialTaxMinimum = socialTax && minimumOnType && payee.SocialTaxMinimumApplies && !payee.ReducedWorkAbility;
+        // the state pays the social tax on up to one kuumäär of wages (SMS § 6 lg 1 p 5, lg 3) on the types of matrix column
+        // O, for a person with the status whose employer has applied; the other social-taxed pay (a board fee, a VÕS fee)
+        // is taxed in full (KR_SM_05)
+        bool workAbilityReduction = socialTax && type.WorkAbilityReductionOn(a1) && payee.ReducedWorkAbility && payee.StatePaysSocialTax;
         bool employerInsurance = type.UnemploymentInsurance && !foreignA1;
         // the employee's 1.6 % ends with an old-age or flexible pension, and with the month the pension age is reached
         // (TKindlS § 42 lg 1 p 1, whether or not a pension is granted); the employer's 0.8 % stays
@@ -98,7 +121,7 @@ public readonly record struct EffectiveFlags(
             exemption = payee.PensionAgeThisYear ? ExemptionKind.Mvt650 : ExemptionKind.Mvt610;
         }
 
-        return new EffectiveFlags(a1, socialTax, socialTaxMinimum, employeeInsurance, employerInsurance, fundedPension, incomeTaxRate, exemption);
+        return new EffectiveFlags(a1, socialTax, socialTaxMinimum, employeeInsurance, employerInsurance, fundedPension, incomeTaxRate, exemption, workAbilityReduction);
     }
 }
 
@@ -140,6 +163,23 @@ public sealed class TaxEngine
         if (input.SocialTaxMinimumIncrease < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(input), "The social-tax minimum increase cannot be negative.");
+        }
+
+        if (input.WorkAbilityReductionCap < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(input), "The work-ability deduction's cap cannot be negative.");
+        }
+
+        if (input.WorkAbilityReductionCap > _rates.SocialTaxMinimumBase)
+        {
+            // the law gives one kuumäär a month (SMS § 6 lg 3); MTA's own limit is twice that (KR_SM_07), the law's is kept
+            throw new ArgumentOutOfRangeException(nameof(input), $"The work-ability deduction's cap ({input.WorkAbilityReductionCap}) is above one kuumäär ({_rates.SocialTaxMinimumBase}).");
+        }
+
+        if (payee.StatePaysSocialTax && !payee.ReducedWorkAbility)
+        {
+            throw TaxRefusal.Of(PaymentChecks.WorkAbilityApplicationWithoutStatus,
+                "The application for Töötukassa to pay the social tax is ticked, but the person's partial or no work ability is not; the state pays only for such a person (SMS § 6 lg 1 p 5).");
         }
 
         if (input.Type.ThirdPillarExemptionAllowed)
@@ -201,7 +241,10 @@ public sealed class TaxEngine
 
         decimal socialTaxBase = flags.SocialTax ? gross : 0m;
         decimal increase = flags.SocialTax ? input.SocialTaxMinimumIncrease : 0m;
-        decimal socialTax = flags.SocialTax ? Round2((socialTaxBase + increase) * _rates.SocialTax) : 0m;
+        // the state's part: what is left of the month's kuumäär, never more than the payment's own base (KR_SM_06; with no
+        // TSD_KUUMVAHENDUS declared, KR_SM_10's OPTV + KUUMVAHENDUS ≤ SMVM is the same bound)
+        decimal reduction = flags.WorkAbilityReduction ? Math.Max(0m, Math.Min(Round2(input.WorkAbilityReductionCap), socialTaxBase)) : 0m;
+        decimal socialTax = flags.SocialTax ? Round2((socialTaxBase - reduction + increase) * _rates.SocialTax) : 0m;
 
         return new TaxResult(
             Gross: gross,
@@ -224,7 +267,9 @@ public sealed class TaxEngine
             IncomeTaxBase: w.TmBase,
             IncomeTax: w.Tm,
             ExemptionKind: flags.ExemptionKind,
-            ExemptionUsed: w.Mvt);
+            ExemptionUsed: w.Mvt,
+            WorkAbilityReductionApplies: flags.WorkAbilityReduction,
+            WorkAbilityReduction: reduction);
     }
 
     /// <summary>cCalc2026 tiers: no income tax while the net is within the exemption (gross = net / (1 − p − u)),

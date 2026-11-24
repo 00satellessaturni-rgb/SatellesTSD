@@ -76,6 +76,7 @@ public static class ReportText
     public const string Gross = "Bruto";
     public const string SocialTax = "SM";
     public const string MinimumIncrease = "SM suurendus";
+    public const string WorkAbilityReduction = "SM vähendus (Töötukassa)";
     public const string FundedPension = "KP";
     public const string UnemploymentEmployee = "TK";
     public const string UnemploymentEmployer = "TTK";

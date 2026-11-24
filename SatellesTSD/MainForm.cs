@@ -1078,6 +1078,10 @@ public sealed class MainForm : Form
                 {
                     var month = person.MinimumDue > 0 ? $"; SM miinimum {UiText.Money(person.MinimumDue)} (osa {person.MinimumShare:0.##}), puudujääk {UiText.Money(person.MinimumShortfall)}" : "";
                     Log($"   {person.Name}: maksuvaba {UiText.Money(person.ExemptionOffered)} → üle {UiText.Money(person.ExemptionLeft)}{month}");
+                    if (person.WorkAbilityReductionOffered > 0m)
+                    {
+                        Log($"      {UiText.WorkAbilityMonthText(person)}"); // where the minimum's month is said, the state's part is too
+                    }
                 }
 
                 foreach (var line in person.Lines)

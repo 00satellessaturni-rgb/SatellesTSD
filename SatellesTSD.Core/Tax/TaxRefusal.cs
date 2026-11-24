@@ -32,6 +32,7 @@ public static class TaxRefusal
         PaymentChecks.ZeroNotAllowed, PaymentChecks.ExemptionWithoutApplication, PaymentChecks.ExemptionAboveLegal, PaymentChecks.ExemptionSubCent,
         PaymentChecks.MinimumShareInvalid, PaymentChecks.PensionNotChecked, PaymentChecks.PensionRateUnknown, PaymentChecks.PensionRateInvalid,
         PaymentChecks.TypePayeeMismatch, PaymentChecks.ThirdPillarNotComputed, PaymentChecks.A1CountriesMissing, PaymentChecks.A1CountriesInconsistent, PaymentChecks.NegativeAmount,
+        PaymentChecks.WorkAbilityApplicationWithoutStatus,
         CalcDateAfterPayment, RowTaken, KeyOtherRow, KeyOtherLine, RowOtherCompany, RowNotPayment, NotDraft,
     };
 

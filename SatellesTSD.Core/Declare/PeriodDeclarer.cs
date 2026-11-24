@@ -50,6 +50,11 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// <summary>A note, not a refusal: the card has "Vanaduspensionil" ticked and the minimum on (decision 237).</summary>
     public const string MinimumWithPension = "MINIMUM_WITH_PENSION";
 
+    /// <summary>A note, not a refusal: the card says Töötukassa pays the social tax (SMS § 6 lg 1 p 5), but pay of the month
+    /// is of a type the deduction is not allowed on (matrix column O, KR_SM_05) while part of the kuumäär is left; the
+    /// types are its <see cref="BuildNote.Items"/>.</summary>
+    public const string WorkAbilityNotDeducted = "WORK_ABILITY_NOT_DEDUCTED";
+
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
 
@@ -365,7 +370,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         var declared = new List<(ReviewPayment Payment, string Source)>();
         var refusedTypes = new HashSet<string>(StringComparer.Ordinal); // the totals cut: a type with a refused payment is not rebuilt
         var keptMinimum = false; // a refused payment's line left standing carries the minimum: no zero line beside it
-        var keptPools = new List<string>(); // refused payments' lines on the server that used the month's exemption or minimum
+        var keptPools = new List<string>(); // refused payments' lines on the server that used the month's exemption, minimum or Töötukassa deduction
         var minimumHeldBy = new List<string>(); // refused pay of the month that carries the minimum: the minimum waits for it (decision 207)
         foreach (var payment in reviewPerson.Payments.Where(p => p.Declare))
         {
@@ -493,7 +498,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         // cannot be computed, the line factory's refusal) withdraws it instead, and says that (the fifth audit, item 2)
         BuildNote? zeroNote = null;
         var zeroNoteAt = 0;
-        if (person.SocialTaxMinimumApplies && !keptMinimum && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)) && zeroTypeId is not null
+        if (person.MinimumOwed && !keptMinimum && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)) && zeroTypeId is not null
             && EmploymentTypes.Find(zeroTypeId) is { SocialTaxMinimum: true }
             && EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } zeroCode && PaymentTypes.TryGet(zeroCode, out var zeroType) && zeroType!.SocialTaxMinimum && zeroType.ZeroAllowed
             && CarriesMinimumFor(zeroType, person, period.Year)) // the person's A1 case applied: a foreign A1 carries no Estonian social tax, so no minimum and no zero line
@@ -573,7 +578,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             var paid = noneDeclared
                 ? $" The month has {refusedPay.Count} payment(s) for the person, not declared ({string.Join(", ", refusedPay.SelectMany(p => p.Blockers).Select(b => b.Code).Distinct(StringComparer.Ordinal))}): give the row a category or a payment type{(zeroTypeId is null ? ", or put the TÖR type on the card ('Kaardi töötamise liik kõigile maksetele') for the zero line" : "")}."
                 : "";
-            var unmetCase = person.SocialTaxMinimumApplies && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year))
+            var unmetCase = person.MinimumOwed && !keptMinimum && minimumHeldBy.Count == 0 && !monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year))
                 ? zeroTypeId is null ? noneDeclared ? "noTypeNoneDeclared" : "noType"
                 : EmploymentTypes.Find(zeroTypeId) is not { SocialTaxMinimum: true } ? "typeNoMinimum"
                 : EmploymentTypes.DefaultCode(zeroTypeId, person.Residency) is { } code && PaymentTypes.TryGet(code, out var type) && !CarriesMinimumFor(type!, person, period.Year) ? "a1"
@@ -597,7 +602,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                 TypeId = zeroTypeId,
             });
         }
-        else if (include && person.SocialTaxMinimumApplies && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom, PausedForUnpaidLeave: false } && Carries(entry.TypeId) // an unpaid leave owes the minimum without the card's word (254)
+        else if (include && person.MinimumOwed && entry is { StateId: TorStates.Paused, PauseStart: { } pausedFrom, PausedForUnpaidLeave: false } && Carries(entry.TypeId) // an unpaid leave owes the minimum without the card's word (254)
             && pausedFrom <= lastDay && (entry.PauseEnd is not { } pausedTo || pausedTo >= new DateOnly(period.Year, period.Month, 1))
             && (entry.StartDate is not { } begun || begun <= lastDay))
         {
@@ -677,7 +682,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             problems.Add(new BuildNote(NoEmploymentInMonth, $"{NoEmploymentInMonth}: the month's register does not list the person; the minimum is not owed on this pay (set the card's Deklareerimine to \"kaasa\" if the person was employed in the month).")
             { Variant = "notListed" });
         }
-        else if (person.SocialTaxMinimumApplies && share > 0m
+        else if (person.MinimumOwed && share > 0m
             // said only where the month's pay carries the minimum and nothing holds it back: with a zero line the zero
             // line's own note says it; under a foreign A1, or with the minimum held, nothing is counted to speak of
             && zeroNote is null && minimumHeldBy.Count == 0 && (keptMinimum || monthPayments.Any(m => CarriesMinimumFor(m.Type, person, period.Year)))
@@ -734,12 +739,14 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
 
         if (keptPools.Count > 0 && monthPayments.Count > 0)
         {
-            // a refused payment's line on the server used the month's exemption or minimum: the other payments would be given
-            // them again (MTA refuses the month's exemption twice, KR_KOOND_02) — nothing is allocated until it is put right
-            problems.Add(new BuildNote(NotAllocated, $"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption or minimum; put the payment right (or take it out of the declaration) before the person's other payments are built.")
+            // a refused payment's line on the server used the month's exemption, minimum or Töötukassa deduction: the other
+            // payments would be given them again (MTA refuses the month's exemption twice, KR_KOOND_02; a second kuumäär of
+            // TSD_OPTV_SM_VAHENDUS passes the server's 2 × kuumäär bound, KR_SM_07, yet breaks SMS § 6 lg 3) — nothing is
+            // allocated until it is put right
+            problems.Add(new BuildNote(NotAllocated, $"{NotAllocated}: the line(s) {string.Join(", ", keptPools)} of a refused payment stand on the server and use the month's exemption, minimum or Töötukassa deduction; put the payment right (or take it out of the declaration) before the person's other payments are built.")
             { Variant = "keptPools", Items = keptPools.ToList() });
             // what stands on the server stands, nothing is cancelled; a draft, allocated in an earlier build beside the
-            // refused payment's own draft (gone now), would go out with the month's exemption or minimum once more — it
+            // refused payment's own draft (gone now), would go out with the month's pool once more — it
             // goes, to be allocated afresh once the payment is put right
             Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems, MinimumShare = share };
@@ -758,6 +765,27 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             { Variant = "engine", Cause = e });
             Withdraw(monthPayments.Select(m => m.Key), NotAllocated);
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems, MinimumShare = share };
+        }
+
+        if (allocation.WorkAbilityReductionLeft > 0m
+            && allocation.Payments.Where(a => a.Result is { SocialTaxApplies: true, WorkAbilityReductionApplies: false } && a.Result.Gross > 0m).ToList() is { Count: > 0 } fullTax)
+        {
+            // a note, not a refusal: the state pays the social tax only on wages (matrix column O, KR_SM_05); pay of the other
+            // types — a board fee, a VÕS fee — is taxed in full while part of the month's kuumäär is left unused. A type that
+            // allows the deduction but not under the person's Estonian A1 (33, 138: the Estonian-A1 row's column O is not
+            // known, decision 263) gets a note of its own, so the type is not named as both allowed and not
+            var notAllowed = fullTax.Where(a => !a.Payment.Type.WorkAbilityReductionAllowed).Select(a => a.Payment.Type.Code).Distinct(StringComparer.Ordinal).ToList();
+            var notUnderA1 = fullTax.Where(a => a.Payment.Type.WorkAbilityReductionAllowed).Select(a => a.Payment.Type.Code).Distinct(StringComparer.Ordinal).ToList();
+            if (notAllowed.Count > 0)
+            {
+                problems.Add(new BuildNote(WorkAbilityNotDeducted, $"{WorkAbilityNotDeducted}: the card says Töötukassa pays the social tax, but the month's pay of type {string.Join(", ", notAllowed)} allows no deduction (TSD_OPTV_SM_VAHENDUS only on 10, 33, 37, 120, 138, 167; KR_SM_05): its social tax is the employer's in full.")
+                { Items = notAllowed });
+            }
+            if (notUnderA1.Count > 0)
+            {
+                problems.Add(new BuildNote(WorkAbilityNotDeducted, $"{WorkAbilityNotDeducted}: the card says Töötukassa pays the social tax, but under the person's Estonian A1 the month's pay of type {string.Join(", ", notUnderA1)} gets no deduction (the matrix row of the Estonian A1 does not allow it): its social tax is the employer's in full.")
+                { Variant = "a1", Items = notUnderA1 });
+            }
         }
 
         foreach (var allocated in allocation.Payments)
@@ -801,6 +829,8 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             MinimumDue = allocation.MinimumDue,
             MinimumShortfall = allocation.MinimumShortfall,
             TopUpKey = allocation.TopUpKey is { } top && references.TryGetValue(top, out var topRef) ? topRef.Reference : allocation.TopUpKey,
+            WorkAbilityReductionOffered = allocation.WorkAbilityReductionOffered,
+            WorkAbilityReduction = allocation.WorkAbilityReductionTotal,
         };
     }
 
@@ -999,11 +1029,13 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     private static bool SameLine(PaymentLine a, PaymentLine b) =>
         JsonSerializer.Serialize(a with { Counter = 0, Action = LineAction.R }, Json) == JsonSerializer.Serialize(b with { Counter = 0, Action = LineAction.R }, Json);
 
-    /// <summary>Notes a refused payment's line that stands on the server (not a T) and used the month's exemption or minimum.</summary>
+    /// <summary>Notes a refused payment's line that stands on the server (not a T) and used one of the month's pools: the
+    /// exemption, the minimum or the Töötukassa deduction (TSD_OPTV_SM_VAHENDUS, one kuumäär a month, SMS § 6 lg 3) — the
+    /// allocator starts each month's pools afresh, so the other payments would be given the pool once more.</summary>
     private static void NotePool(StoredPayment? line, List<string> pools)
     {
         if (line is { OnServer: true, Result: { } result } && line.Action != LineAction.T
-            && (result.ExemptionUsed > 0 || result.SocialTaxMinimumApplies))
+            && (result.ExemptionUsed > 0 || result.SocialTaxMinimumApplies || result.WorkAbilityReduction > 0))
         {
             pools.Add(line.LineNumber);
         }

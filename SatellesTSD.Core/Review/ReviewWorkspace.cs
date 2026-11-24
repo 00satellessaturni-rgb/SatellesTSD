@@ -847,6 +847,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var dropResidency = codeChanged && !residencyChanged && fresh.ResidencySource == LookupSource.Emta;
         var dropPension = codeChanged && !pensionChanged && fresh.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
         var exemptionApplied = Pick(edited.BasicExemptionApplied, basis?.BasicExemptionApplied ?? edited.BasicExemptionApplied, fresh.BasicExemptionApplied);
+        var workAbility = Pick(edited.ReducedWorkAbility, basis?.ReducedWorkAbility ?? edited.ReducedWorkAbility, fresh.ReducedWorkAbility);
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
@@ -868,6 +869,10 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             // (EXEMPTION_WITHOUT_APPLICATION), as the lookup and the non-residents' command already drop it (the fifth audit, item 20)
             BasicExemptionMonthly = exemptionApplied ? Pick(edited.BasicExemptionMonthly, basis?.BasicExemptionMonthly, fresh.BasicExemptionMonthly) : null,
             SocialTaxMinimumApplies = Pick(edited.SocialTaxMinimumApplies, basis?.SocialTaxMinimumApplies ?? edited.SocialTaxMinimumApplies, fresh.SocialTaxMinimumApplies),
+            ReducedWorkAbility = workAbility,
+            // the application goes with the status, as the card's tick does: without it the state pays nothing, and the
+            // facts would refuse every payment (WORK_ABILITY_APPLICATION_WITHOUT_STATUS)
+            StatePaysSocialTax = workAbility && Pick(edited.StatePaysSocialTax, basis?.StatePaysSocialTax ?? edited.StatePaysSocialTax, fresh.StatePaysSocialTax),
             Declaration = Pick(edited.Declaration, basis?.Declaration ?? edited.Declaration, fresh.Declaration),
             TypeFromCard = Pick(edited.TypeFromCard, basis?.TypeFromCard ?? edited.TypeFromCard, fresh.TypeFromCard),
             A1 = Pick(edited.A1, basis?.A1 ?? edited.A1, fresh.A1),

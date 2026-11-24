@@ -1839,6 +1839,111 @@ public class DeclareTests
         Assert.Equal(2, box.Lines.Count);
     }
 
+    /// <summary>A person with the status and the application, the exemption not applied here (a second employer): only the
+    /// Töötukassa deduction is a month pool on her lines.</summary>
+    private static void StatePays(Box box) =>
+        box.Workspace.SavePerson(box.Mari with { BasicExemptionApplied = false, ReducedWorkAbility = true, StatePaysSocialTax = true });
+
+    [Fact]
+    public void A_refused_payments_line_that_used_the_months_Tootukassa_deduction_holds_the_persons_other_payments_back()
+    {
+        // the review of plan item 71: the kuumäär is a month pool like the exemption — a line standing on the server with
+        // TSD_OPTV_SM_VAHENDUS, its payment refused, would leave the other payments a fresh kuumäär (SMS § 6 lg 3 gives one;
+        // the server's KR_SM_07 lets two pass)
+        using var box = Ready();
+        StatePays(box);
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        box.Submitter.Resolve(box.Lines.Single().Id, onServer: true);
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+        var accepted = box.Lines.Single().Result!;
+        Assert.Equal((0m, 886m), (accepted.ExemptionUsed, accepted.WorkAbilityReduction));
+
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        var both = box.Declarer.Build(box.Period.Id);
+        Assert.Equal((1, 1), (both.Count(LineChange.Kept), both.Count(LineChange.New)));
+        Assert.Equal(0m, box.Lines.Single(l => l.Status == PaymentStatus.Draft).Result!.WorkAbilityReduction); // the salary took the kuumäär
+
+        // the salary refused, its line standing with OPTV 886: the hand line is not given the kuumäär again
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        var note = Assert.Single(mari.Notes, n => n.Code == PeriodDeclarer.NotAllocated);
+        Assert.Equal(("keptPools", 1), (note.Variant, note.Items.Count));
+        Assert.Equal((0, 1), (report.Count(LineChange.New), report.Count(LineChange.Deleted)));
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft);
+        Assert.Equal(PaymentStatus.Accepted, Assert.Single(box.Lines).Status);
+    }
+
+    [Fact]
+    public void Under_the_totals_cut_a_refused_types_line_that_used_the_Tootukassa_deduction_holds_the_other_types_back()
+    {
+        using var box = Ready();
+        StatePays(box);
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", typeCode: "33", declare: true);
+        box.Workspace.TotalsPerType = true;
+        box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        Assert.Equal(2, box.Lines.Count);
+        Assert.All(box.Lines, l => Assert.True(PeriodDeclarer.IsTotals(l)));
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+        box.Submitter.Reopen(box.Period.Id);
+        Assert.Equal(886m, box.Lines.Single(l => l.Line.TypeCode == "10").Result!.WorkAbilityReduction);
+        Assert.Equal(0m, box.Lines.Single(l => l.Line.TypeCode == "33").Result!.WorkAbilityReduction);
+
+        // the salary refused: the type-10 line stands with the kuumäär, so the type-33 line is not rebuilt with it
+        box.Workspace.SetTypeCode(box.Salary, "999");
+        var report = box.Declarer.Build(box.Period.Id, DeclarationMode.TotalsPerType);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Contains(mari.Notes, n => n.Code == PeriodDeclarer.NotAllocated && n.Variant == "keptPools");
+        Assert.Equal((0, 0), (report.Count(LineChange.New), report.Count(LineChange.Changed)));
+        Assert.DoesNotContain(box.Lines, l => l.Status == PaymentStatus.Draft);
+    }
+
+    [Fact]
+    public void A_person_with_the_status_and_the_cards_minimum_still_ticked_is_told_nothing_of_a_minimum()
+    {
+        // stored data, a simulation file or a hand-built person may carry both: the status takes the minimum off (SMS § 2
+        // lg 4 p 6), so nothing the build says may speak of one owed
+        Person Status(Box box, DeclarationChoice declaration = DeclarationChoice.Auto) =>
+            box.Mari with { ReducedWorkAbility = true, SocialTaxMinimumApplies = true, Declaration = declaration };
+
+        // an unpaid leave, paid: no UNPAID_LEAVE (held twice: the note's own switch, and the month's pay carrying no minimum
+        // for a person with the status — EffectiveFlags — so this case stays green with either alone)
+        using (var leave = Ready(minimum: true, mariPaused: true, salary: 100m, mariPauseReason: "Tasustamata puhkus"))
+        {
+            leave.Store.UpdatePerson(Status(leave));
+            var mari = Assert.Single(leave.Declarer.Build(leave.Period.Id).Persons, p => p.PersonId == leave.Mari.Id);
+            Assert.DoesNotContain(mari.Notes, n => n.Code == PeriodDeclarer.UnpaidLeave);
+            Assert.Equal(0m, Assert.Single(leave.Lines).Result!.SocialTaxMinimumIncrease);
+        }
+
+        // "kaasa" over a pause within the month: no INCLUDED note that the minimum counts the pause's days
+        using (var paused = Ready(minimum: true, mariPauseFrom: new DateTime(2026, 10, 17)))
+        {
+            paused.Workspace.SetDeclare(paused.Salary, false);
+            paused.Store.UpdatePerson(Status(paused, DeclarationChoice.Include));
+            var mari = Assert.Single(paused.Declarer.Build(paused.Period.Id).Persons, p => p.PersonId == paused.Mari.Id);
+            Assert.DoesNotContain(mari.Notes, n => n.Code == PeriodDeclarer.Included);
+            Assert.Empty(paused.Lines);
+        }
+
+        // "kaasa" with no valid employment: the card's choice is said, and no reason why no zero line was made
+        using var none = Ready(minimum: true, mariPaused: true);
+        none.Workspace.SetDeclare(none.Salary, false);
+        none.Store.UpdatePerson(Status(none, DeclarationChoice.Include));
+        var person = Assert.Single(none.Declarer.Build(none.Period.Id).Persons, p => p.PersonId == none.Mari.Id);
+        var included = Assert.Single(person.Notes, n => n.Code == PeriodDeclarer.Included);
+        Assert.Equal(("noValid", (string?)null), (included.Variant, included.Unmet));
+        Assert.Empty(none.Lines);
+    }
+
     [Fact]
     public void Facts_the_registers_gave_for_another_month_are_noted_on_the_build()
     {

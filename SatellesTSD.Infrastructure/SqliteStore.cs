@@ -144,11 +144,11 @@ public sealed partial class SqliteStore : IStore
             INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                                 funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                                 exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-                                residency_source, pension_source, register_key, declaration, card_type, facts_control_date)
+                                residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application)
             VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
                     $member, $rate, $pchecked, $onpension, $pensionyear,
                     $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes,
-                    $rsource, $psource, $rkey, $declaration, $cardtype, $factsdate)
+                    $rsource, $psource, $rkey, $declaration, $cardtype, $factsdate, $workability, $workapplication)
             """,
             PersonParameters(stored));
         tx.Commit();
@@ -166,7 +166,8 @@ public sealed partial class SqliteStore : IStore
                 funded_pension_member = $member, pension_rate = $rate, pension_checked_on = $pchecked, on_pension = $onpension, pension_age_year = $pensionyear,
                 exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
                 a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes,
-                residency_source = $rsource, pension_source = $psource, register_key = $rkey, declaration = $declaration, card_type = $cardtype, facts_control_date = $factsdate
+                residency_source = $rsource, pension_source = $psource, register_key = $rkey, declaration = $declaration, card_type = $cardtype, facts_control_date = $factsdate,
+                work_ability = $workability, work_ability_application = $workapplication
             WHERE id = $id
             """,
             PersonParameters(Normalize(person)));
@@ -204,7 +205,7 @@ public sealed partial class SqliteStore : IStore
         SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-               residency_source, pension_source, register_key, declaration, card_type, facts_control_date
+               residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application
         FROM person
         """;
 
@@ -217,6 +218,7 @@ public sealed partial class SqliteStore : IStore
         ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
         ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
         ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()), ("$rkey", p.RegisterKey), ("$declaration", p.Declaration.ToString()), ("$cardtype", p.TypeFromCard ? 1 : 0), ("$factsdate", D(p.FactsControlDate)),
+        ("$workability", p.ReducedWorkAbility ? 1 : 0), ("$workapplication", p.StatePaysSocialTax ? 1 : 0),
     ];
 
     private static Person ReadPerson(SqliteDataReader r) => new(
@@ -225,7 +227,7 @@ public sealed partial class SqliteStore : IStore
         r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
         r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22),
         Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)), Str(r, 25),
-        Enum.Parse<DeclarationChoice>(r.GetString(26)), r.GetInt64(27) != 0, Date(r, 28));
+        Enum.Parse<DeclarationChoice>(r.GetString(26)), r.GetInt64(27) != 0, Date(r, 28), r.GetInt64(29) != 0, r.GetInt64(30) != 0);
 
     // ---------------------------------------------------------------- periods
 
@@ -1291,6 +1293,13 @@ public sealed partial class SqliteStore : IStore
             made_at      TEXT NOT NULL,
             summary_json TEXT NOT NULL
         );
+        """,
+
+        // v15 — the person's partial or no work ability and the employer's application for Töötukassa to pay the social tax
+        // (plan item 71: SMS § 2 lg 4 p 6, § 6 lg 1 p 5, lg 3). Every earlier person has neither.
+        """
+        ALTER TABLE person ADD COLUMN work_ability INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE person ADD COLUMN work_ability_application INTEGER NOT NULL DEFAULT 0;
         """,
     ];
 

@@ -347,6 +347,27 @@ public class ReportTests
     }
 
     [Fact]
+    public void The_declared_lines_sheet_shows_the_states_part_beside_the_minimums_increase()
+    {
+        // TSD_OPTV_SM_VAHENDUS where the minimum's increase is shown: the SM beside it is computed on the rest
+        using var box = Ready();
+        var mari = box.View.Persons[0].Person!;
+        box.Workspace.SavePerson(mari with { ReducedWorkAbility = true, StatePaysSocialTax = true });
+        box.Declarer.Build(box.Period.Id);
+        var sheet = box.Build().Sheet(ReportText.DeclarationSheet)!;
+        var headers = ReportBuilder.DeclarationHeaders.ToList();
+        var column = headers.IndexOf(ReportText.WorkAbilityReduction) + 1;
+        Assert.Equal(headers.IndexOf(ReportText.MinimumIncrease) + 2, column);
+        Assert.Equal(TaxRates.Year2026.SocialTaxMinimumBase, sheet.At(2, column).Number);
+        var gross = sheet.At(2, headers.IndexOf(ReportText.Gross) + 1).Number;
+        Assert.Equal(Math.Round((gross - TaxRates.Year2026.SocialTaxMinimumBase) * TaxRates.Year2026.SocialTax, 2, MidpointRounding.AwayFromZero), sheet.At(2, headers.IndexOf(ReportText.SocialTax) + 1).Number);
+        // the totals rows keep the columns: the social tax under its header, the II pillar under its own
+        Assert.All(sheet.Rows, r => Assert.Equal(headers.Count, r.Cells.Count));
+        Assert.Equal(sheet.At(2, headers.IndexOf(ReportText.SocialTax) + 1).Number, sheet.At(4, headers.IndexOf(ReportText.SocialTax) + 1).Number);
+        Assert.Equal(ReportCellKind.Number, sheet.At(4, headers.IndexOf(ReportText.FundedPension) + 1).Kind);
+    }
+
+    [Fact]
     public void A_period_without_a_run_still_exports_its_hand_lines_and_the_register()
     {
         using var box = Ready(run: false);

@@ -20,6 +20,11 @@ namespace SatellesTSD.Core.Tax;
 /// <param name="TreatyRateAllowed">Matrix column T: a tax-treaty rate may replace the income-tax rate (with a residency certificate).</param>
 /// <param name="A1Kinds">Which A1 variant rows the type has (columns J/K). A person's A1 facts are ignored on a kind the type lacks.</param>
 /// <param name="SocialTaxMinimumWithEstonianA1">Column M of the Estonian-A1 row (10, 120 and 138 keep the minimum; 33 loses it).</param>
+/// <param name="WorkAbilityReductionAllowed">Matrix column O: TSD_OPTV_SM_VAHENDUS may be declared — the part of the
+/// social-tax base the state (Töötukassa) pays the tax on for a person with partial or no work ability (SMS § 6 lg 1 p 5,
+/// lg 3: the pay of § 2 lg 1 p 1, an employee's wages). JAH on 10, 33, 37, 120, 138, 167; KR_SM_05 refuses it on the others.</param>
+/// <param name="WorkAbilityReductionWithEstonianA1">Column O of the Estonian-A1 row: JAH where the payment-type mapping
+/// shows it (10 and 120, matrix rows 4 and 29); EI where it is not known (33, 138), so no deduction is made on those.</param>
 public sealed record PaymentType(
     string Code,
     string NameEt,
@@ -35,9 +40,20 @@ public sealed record PaymentType(
     bool ThirdPillarExemptionAllowed,
     bool TreatyRateAllowed,
     A1Kinds A1Kinds,
-    bool SocialTaxMinimumWithEstonianA1)
+    bool SocialTaxMinimumWithEstonianA1,
+    bool WorkAbilityReductionAllowed,
+    bool WorkAbilityReductionWithEstonianA1)
 {
     public bool IncomeTaxApplies => IncomeTaxRate is not null;
+
+    /// <summary>Whether TSD_OPTV_SM_VAHENDUS is allowed on the type under the A1 case it reacts to (<see cref="EffectiveA1"/>):
+    /// the Estonian-A1 row's column O under an Estonian A1, none under a foreign A1 (no Estonian social tax), else column O.</summary>
+    public bool WorkAbilityReductionOn(A1Case effective) => effective switch
+    {
+        A1Case.EstonianA1WorkAbroad => WorkAbilityReductionWithEstonianA1,
+        A1Case.ForeignA1WorkInEstonia => false,
+        _ => WorkAbilityReductionAllowed,
+    };
 
     /// <summary>The A1 case the type reacts to for this person: the person's own when the type has that variant, else none.</summary>
     public A1Case EffectiveA1(A1Case personal) => personal switch

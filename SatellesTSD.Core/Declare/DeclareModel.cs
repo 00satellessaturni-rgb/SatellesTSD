@@ -179,6 +179,13 @@ public sealed class PersonBuild
     public decimal MinimumShortfall { get; init; }
 
     public string? TopUpKey { get; init; }
+
+    /// <summary>The kuumäär the state pays the social tax on this month (one, for a person with partial or no work ability
+    /// whose employer has applied; else 0).</summary>
+    public decimal WorkAbilityReductionOffered { get; init; }
+
+    /// <summary>TSD_OPTV_SM_VAHENDUS over the person's lines of the month.</summary>
+    public decimal WorkAbilityReduction { get; init; }
 }
 
 public sealed class BuildReport

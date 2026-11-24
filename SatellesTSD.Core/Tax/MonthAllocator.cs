@@ -21,7 +21,8 @@ public sealed record MonthPayment(string Key, PaymentType Type, decimal Amount, 
 }
 
 /// <param name="ExemptionCap">The exemption that was available to this payment when it was computed.</param>
-public sealed record AllocatedPayment(MonthPayment Payment, TaxResult Result, decimal ExemptionCap);
+/// <param name="WorkAbilityReductionCap">The part of the month's kuumäär that was available to it as TSD_OPTV_SM_VAHENDUS.</param>
+public sealed record AllocatedPayment(MonthPayment Payment, TaxResult Result, decimal ExemptionCap, decimal WorkAbilityReductionCap = 0m);
 
 /// <summary>A person's month: every payment computed, plus the month-level figures a review needs to explain them.</summary>
 /// <param name="ExemptionOffered">The exemption the month started with (the application's amount or the legal amount, or 0).</param>
@@ -30,6 +31,9 @@ public sealed record AllocatedPayment(MonthPayment Payment, TaxResult Result, de
 /// <param name="MinimumDue">The minimum base owed this month: kuumäär × the month share; 0 when the minimum does not apply to any payment.</param>
 /// <param name="MinimumShortfall">How far the total fell short of what is due; 0 when the minimum does not apply or is met.</param>
 /// <param name="TopUpKey">The payment that carries TSD_KUUMSUURENDUS, or null.</param>
+/// <param name="WorkAbilityReductionOffered">The part of the base the state pays the social tax on this month: one kuumäär for
+/// a person with partial or no work ability whose employer has applied (SMS § 6 lg 3), else 0.</param>
+/// <param name="WorkAbilityReductionLeft">What no payment took of it (the month's pay of column-O types was less, or none).</param>
 public sealed record MonthAllocation(
     IReadOnlyList<AllocatedPayment> Payments,
     decimal ExemptionOffered,
@@ -37,7 +41,13 @@ public sealed record MonthAllocation(
     decimal MinimumBaseTotal,
     decimal MinimumDue,
     decimal MinimumShortfall,
-    string? TopUpKey);
+    string? TopUpKey,
+    decimal WorkAbilityReductionOffered = 0m,
+    decimal WorkAbilityReductionLeft = 0m)
+{
+    /// <summary>TSD_OPTV_SM_VAHENDUS over the month's payments: never above <see cref="WorkAbilityReductionOffered"/>.</summary>
+    public decimal WorkAbilityReductionTotal => Payments.Sum(p => p.Result.WorkAbilityReduction);
+}
 
 /// <summary>Spreads the month-level facts over a person's individual payments: the basic exemption (the application's
 /// monthly amount or the legal 700/776, consumed in date order, each payment capped by its own amount − KP − TK) and the
@@ -46,7 +56,10 @@ public sealed record MonthAllocation(
 /// person-month on the summed net; the new regime declares every payment on its own, so the spreading is explicit here.
 /// The minimum compares pay received as an employee or official (SMS § 2 lg 2 with lg 1 p 1; types with matrix M = JAH:
 /// 10, 33, 37, 120, 138, 167); a board fee (21/156) or a VÕS fee (17/123) never fills it, and MTA forbids the top-up on
-/// those types (KR_SM_11). A month without such pay needs a <see cref="MonthPayment.Zero"/> line to carry the top-up.</summary>
+/// those types (KR_SM_11). A month without such pay needs a <see cref="MonthPayment.Zero"/> line to carry the top-up.
+/// For a person with partial or no work ability whose employer has applied, one kuumäär of the month is the state's to pay
+/// the social tax on (SMS § 6 lg 1 p 5, lg 3): TSD_OPTV_SM_VAHENDUS, spread in date order over the payments of matrix column
+/// O like the exemption, each capped at its own base. Such a person owes no minimum (SMS § 2 lg 4 p 6), so the two never meet.</summary>
 public sealed class MonthAllocator
 {
     private readonly TaxEngine _engine;
@@ -98,9 +111,19 @@ public sealed class MonthAllocator
             throw TaxRefusal.Of(PaymentChecks.MinimumShareInvalid, $"The month share of the minimum obligation ({payee.SocialTaxMinimumShare}) must be above 0 and at most 1; switch the minimum off for a whole month away.", figure: payee.SocialTaxMinimumShare);
         }
 
+        if (payee.StatePaysSocialTax && !payee.ReducedWorkAbility)
+        {
+            throw TaxRefusal.Of(PaymentChecks.WorkAbilityApplicationWithoutStatus,
+                "The application for Töötukassa to pay the social tax is ticked, but the person's partial or no work ability is not; the state pays only for such a person (SMS § 6 lg 1 p 5).");
+        }
+
+        // one kuumäär a month, whole: SMS § 6 lg 3 names the monthly rate, not a share of it (the minimum's month share is the
+        // minimum's own, and the minimum does not apply to the person anyway)
+        decimal reductionOffered = payee.ReducedWorkAbility && payee.StatePaysSocialTax ? rates.SocialTaxMinimumBase : 0m;
+
         if (payments.Count == 0)
         {
-            return new MonthAllocation([], offered, offered, 0m, 0m, 0m, null);
+            return new MonthAllocation([], offered, offered, 0m, 0m, 0m, null, reductionOffered, reductionOffered);
         }
 
         var first = payments[0].Date;
@@ -117,13 +140,17 @@ public sealed class MonthAllocator
             .ToList();
 
         decimal remaining = offered;
+        // the state's part goes like the exemption: the earliest payment first, each taking what its own base holds of what
+        // is left; a payment of a type outside column O takes none and leaves it to the next (the owner's answer 3)
+        decimal reductionLeft = reductionOffered;
         var results = new List<AllocatedPayment>(ordered.Count);
         foreach (var payment in ordered)
         {
             var facts = payment.Facts ?? payee;
-            var result = _engine.Calculate(new TaxInput(payment.Type, payment.Amount, payment.AmountIsNet, remaining), facts);
-            results.Add(new AllocatedPayment(payment, result, remaining));
+            var result = _engine.Calculate(new TaxInput(payment.Type, payment.Amount, payment.AmountIsNet, remaining, WorkAbilityReductionCap: reductionLeft), facts);
+            results.Add(new AllocatedPayment(payment, result, remaining, reductionLeft));
             remaining -= result.ExemptionUsed;
+            reductionLeft -= result.WorkAbilityReduction;
         }
 
         decimal minimumBase = results.Where(a => a.Result.SocialTaxMinimumApplies).Sum(a => a.Result.SocialTaxBase);
@@ -140,19 +167,20 @@ public sealed class MonthAllocator
                 var target = results[last];
                 var withIncrease = _engine.Calculate(
                     new TaxInput(target.Payment.Type, target.Payment.Amount, target.Payment.AmountIsNet, target.ExemptionCap,
-                        SocialTaxMinimumIncrease: shortfall),
+                        SocialTaxMinimumIncrease: shortfall, WorkAbilityReductionCap: target.WorkAbilityReductionCap),
                     target.Payment.Facts ?? payee);
                 results[last] = target with { Result = withIncrease };
                 topUpKey = target.Payment.Key;
             }
         }
 
-        return new MonthAllocation(results, offered, remaining, minimumBase, due, shortfall, topUpKey);
+        return new MonthAllocation(results, offered, remaining, minimumBase, due, shortfall, topUpKey, reductionOffered, reductionLeft);
     }
 
     /// <summary>A payment's own facts may differ from the month's only in what MTA evaluates per payment: residency and
     /// its country, the A1 case and its countries, the treaty rate. Pension status (month), pension age (year), the
-    /// exemption application and the minimum (per payer-month) define the month's pools and must agree.</summary>
+    /// exemption application, the minimum (per payer-month) and the work-ability status with its application define the
+    /// month's pools and must agree.</summary>
     private static void RequireMonthFactsAgree(string key, PayeeTaxFacts month, PayeeTaxFacts own)
     {
         var differences = new List<string>();
@@ -165,6 +193,8 @@ public sealed class MonthAllocator
         if (own.BasicExemptionMonthly != month.BasicExemptionMonthly) differences.Add(nameof(PayeeTaxFacts.BasicExemptionMonthly));
         if (own.SocialTaxMinimumApplies != month.SocialTaxMinimumApplies) differences.Add(nameof(PayeeTaxFacts.SocialTaxMinimumApplies));
         if (own.SocialTaxMinimumShare != month.SocialTaxMinimumShare) differences.Add(nameof(PayeeTaxFacts.SocialTaxMinimumShare));
+        if (own.ReducedWorkAbility != month.ReducedWorkAbility) differences.Add(nameof(PayeeTaxFacts.ReducedWorkAbility));
+        if (own.StatePaysSocialTax != month.StatePaysSocialTax) differences.Add(nameof(PayeeTaxFacts.StatePaysSocialTax));
         if (differences.Count > 0)
         {
             throw new InvalidOperationException(

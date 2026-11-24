@@ -533,7 +533,7 @@ public class ImportStoreTests
         // a shipped migration script is never edited: an existing firm file already ran it; a change goes in the next script
         var hashes = SqliteStore.MigrationScripts.Select(s => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s.Replace("\r\n", "\n"))))).ToList();
 
-        Assert.Equal(14, hashes.Count);
+        Assert.Equal(15, hashes.Count);
         Assert.Equal("c765c3c39d8e978730321685f8b5d5d0f69b47668a23679b819baec2b24ed59c", hashes[0]); // v1 as committed in 3c86599
         Assert.Equal("001c1f2471e82c2701c5dc910d6d6d158ac6b73fcef7e7eab78d9bde8097fcf7", hashes[1]); // v2 as committed in 5a89cc8
         Assert.Equal("9b309118542e3ea9e46d0ed0e928a41f255b66a5837c9b3be0a69559c2b5dda3", hashes[2]); // v3 as committed in d33c564
@@ -548,6 +548,7 @@ public class ImportStoreTests
         Assert.Equal("09f7e5d2710df121fcd8f3e42cb02b14e63422f6b18d9e66211b6a45b41850a2", hashes[11]); // v12: a sent line's place in its file
         Assert.Equal("fef366e999b74fe36e304bfed49824f8e5de5a40de44b095c4dad52b035c3518", hashes[12]); // v13: a refused version settled by a later build
         Assert.Equal("c6db78d0968e721f5ee68d313e7386bf448e3cdcd7340a55a5a0ff829472cb9e", hashes[13]); // v14: the latest run summary of each company
+        Assert.Equal("8d42954576a9b41850924bdf5a427a8af37d2f11e1e8351cf61e04b8070925ef", hashes[14]); // v15: the person's work ability and the application under it
     }
 
     [Fact]

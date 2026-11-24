@@ -29,8 +29,8 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
     public static readonly IReadOnlyList<string> DeclarationHeaders =
     [
         ReportText.Section, ReportText.Key, ReportText.Action, ReportText.Status, ReportText.Person, ReportText.PayeeId, ReportText.Type, ReportText.DocumentDate,
-        ReportText.Net, ReportText.Gross, ReportText.SocialTax, ReportText.MinimumIncrease, ReportText.FundedPension, ReportText.UnemploymentEmployee,
-        ReportText.UnemploymentEmployer, ReportText.IncomeTax, ReportText.ExemptionUsed, ReportText.Source, ReportText.Feedback, ReportText.Version,
+        ReportText.Net, ReportText.Gross, ReportText.SocialTax, ReportText.MinimumIncrease, ReportText.WorkAbilityReduction, ReportText.FundedPension,
+        ReportText.UnemploymentEmployee, ReportText.UnemploymentEmployer, ReportText.IncomeTax, ReportText.ExemptionUsed, ReportText.Source, ReportText.Feedback, ReportText.Version,
     ];
 
     /// <summary>The whole workbook of the period. Reads the store (and, as every load of the review does, creates the
@@ -412,6 +412,8 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.Gross),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.SocialTax),
                 r is null || r.SocialTaxMinimumIncrease == 0 ? ReportCell.Empty : ReportCell.Amount(r.SocialTaxMinimumIncrease),
+                // TSD_OPTV_SM_VAHENDUS beside the minimum's increase: the part the SM above was not computed on
+                r is null || r.WorkAbilityReduction == 0 ? ReportCell.Empty : ReportCell.Amount(r.WorkAbilityReduction),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.FundedPension),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.UnemploymentEmployee),
                 r is null ? ReportCell.Empty : ReportCell.Amount(r.UnemploymentEmployer),
@@ -428,10 +430,10 @@ public sealed class ReportBuilder(IStore store, ReviewWorkspace workspace, Perio
             // the month's totals as the tab shows them (decision 104): the standing lines, never a refused attempt nor a T
             var totals = DeclarationTotals.Of(lines.Select(l => l.Payment));
             var e = ReportCell.Empty;
-            rows.Add(new ReportRow([ReportCell.Of(ReportText.NetTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Net), e, e, e, e, e, e, e, e, e, e, e], header: true));
+            rows.Add(new ReportRow([ReportCell.Of(ReportText.NetTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Net), e, e, e, e, e, e, e, e, e, e, e, e], header: true));
             rows.Add(new ReportRow(
             [
-                ReportCell.Of(ReportText.TaxTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Taxes), e, ReportCell.Amount(totals.SocialTax), e,
+                ReportCell.Of(ReportText.TaxTotal), e, e, e, e, e, e, e, ReportCell.Amount(totals.Taxes), e, ReportCell.Amount(totals.SocialTax), e, e,
                 ReportCell.Amount(totals.FundedPension), ReportCell.Amount(totals.UnemploymentEmployee), ReportCell.Amount(totals.UnemploymentEmployer), ReportCell.Amount(totals.IncomeTax), e, e, e, e,
             ], header: true));
         }

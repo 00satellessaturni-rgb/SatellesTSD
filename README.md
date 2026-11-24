@@ -108,7 +108,16 @@ person picked, every payment of the month, one per category, the payments withou
    **Salvesta xlsx…** saves the list as it is shown. It changes nothing.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
-   checks say what would be refused. A row that holds two things (a salary and a compensation in one
+   checks say what would be refused. **Vanaduspensionil** and **Osaline või puuduv töövõime** each take the
+   minimum off when ticked (unticked, it comes back); a person with partial or no work ability is never given the
+   minimum, whatever its tick says. Under the status, **Töötukassa maksab sotsiaalmaksu (taotlus esitatud)** —
+   open only while the status is ticked — has the state pay the social tax on one kuumäär of the month's wages:
+   the earliest wage payments first, each at most its own base, only on the wage types (10, 33, 37, 120, 138, 167);
+   the lines carry it as TSD_OPTV_SM_VAHENDUS ("SM vähendus (Töötukassa)" beside "SM suurendus" in the lines tab,
+   the report and the tools) and the SM is reckoned on the rest. MTA accepts it only where Töötukassa itself has
+   declared the person in the same or the previous month, which the program cannot see. Both are ticks without
+   dates: untick them when the term ends. **Tööriistad › Reeglite tabel…**, **Simulatsioon…** and **Kalkulaator…**
+   have the same two ticks. A row that holds two things (a salary and a compensation in one
    transfer) is split by typing a smaller amount in **Summa**: the difference becomes a part of its own
    ("osa 2"; the row's own share is "osa 1") with its own person, category and type — it starts with no category, so it is not declared
    until given one — and a part's amount set to 0 takes the part out again.

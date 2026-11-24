@@ -117,11 +117,15 @@ public sealed record MeasurableEvent(string Id, DateOnly Start, DateOnly? End = 
     public const string RefundOriginalDate = "TSD02";
 }
 
-/// <summary>A MEASURABLEDESCRIPTION_enum amount block (TSD_SMVM, MVT_610, MVT_650, MVT_640, TSD_KUUMSUURENDUS, …).</summary>
+/// <summary>A MEASURABLEDESCRIPTION_enum amount block (TSD_SMVM, MVT_610, MVT_650, MVT_640, TSD_OPTV_SM_VAHENDUS, TSD_KUUMSUURENDUS, …).</summary>
 public sealed record MeasurableAmount(string Description, decimal Quantity, bool Money = true)
 {
     public const string SocialTaxBase = "TSD_SMVM";
     public const string SocialTaxMinimumIncrease = "TSD_KUUMSUURENDUS";
+
+    /// <summary>The part of the social-tax base the state (Töötukassa) pays the tax on for a person with partial or no work
+    /// ability (SMS § 6 lg 1 p 5, lg 3), taken off before the rate (KR_SM_04).</summary>
+    public const string WorkAbilityReduction = "TSD_OPTV_SM_VAHENDUS";
     public const string Mvt610 = "MVT_610";
     public const string Mvt640 = "MVT_640";
     public const string Mvt650 = "MVT_650";

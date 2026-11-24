@@ -101,7 +101,7 @@ public sealed class DeclarationPanel : UserControl
         foreach (var (name, header, right) in new[]
         {
             ("key", UiText.Key, false), ("action", UiText.Action, false), ("status", UiText.Status, false), ("person", UiText.Person, false), ("type", UiText.Type, false),
-            ("date", UiText.Date, false), ("net", UiText.Net, true), ("gross", UiText.Gross, true), ("sm", UiText.SocialTax, true), ("smplus", UiText.MinimumIncrease, true),
+            ("date", UiText.Date, false), ("net", UiText.Net, true), ("gross", UiText.Gross, true), ("sm", UiText.SocialTax, true), ("smplus", UiText.MinimumIncrease, true), ("smminus", UiText.WorkAbilityReduction, true),
             ("kp", UiText.FundedPension, true), ("tk", UiText.UnemploymentEmployee, true), ("ttk", UiText.UnemploymentEmployer, true), ("tm", UiText.IncomeTax, true),
             ("mvt", UiText.ExemptionUsed, true), ("source", UiText.SourceColumn, false), ("feedback", UiText.Feedback, false), ("version", UiText.Version, true),
         })
@@ -184,6 +184,7 @@ public sealed class DeclarationPanel : UserControl
                 r is null ? null : r.Gross,
                 r is null ? null : r.SocialTax,
                 r is null || r.SocialTaxMinimumIncrease == 0 ? null : r.SocialTaxMinimumIncrease,
+                (r is null || r.WorkAbilityReduction == 0 ? null : r.WorkAbilityReduction)!, // TSD_OPTV_SM_VAHENDUS: the SM is not on it (an empty cell is null, as its neighbours')
                 r is null ? null : r.FundedPension,
                 r is null ? null : r.UnemploymentEmployee,
                 r is null ? null : r.UnemploymentEmployer,

@@ -31,7 +31,8 @@ public sealed record SimRow(
     string? TypeCode = null,
     bool? Declare = null);
 
-/// <summary>The example person's card: the facts the accountant keeps on it.</summary>
+/// <summary>The example person's card: the facts the accountant keeps on it. The work-ability status and its application
+/// come last, so a file saved before them opens with neither.</summary>
 public sealed record SimPerson(
     string FirstName,
     string LastName,
@@ -52,7 +53,9 @@ public sealed record SimPerson(
     decimal? TreatyIncomeTaxRate = null,
     string? TorTypeId = null,
     bool TypeFromCard = false,
-    DeclarationChoice Declaration = DeclarationChoice.Auto);
+    DeclarationChoice Declaration = DeclarationChoice.Auto,
+    bool ReducedWorkAbility = false,
+    bool StatePaysSocialTax = false);
 
 /// <summary>A simulation (decision 204): one example person, the register as it stands for them, the month's bank rows,
 /// the declaration's cut. Saved and opened as a JSON file; nothing of it touches the store in use.</summary>

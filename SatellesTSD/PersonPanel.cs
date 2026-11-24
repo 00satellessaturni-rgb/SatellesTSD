@@ -8,7 +8,7 @@ namespace SatellesTSD;
 
 /// <summary>The person's facts, as the accountant establishes them by hand: the names and codes, the residency and the
 /// II pillar (each with where it came from and when it was checked; a change or a confirmation makes it the
-/// accountant's word), the exemption, the minimum, A1, the treaty rate, the employment type, the notes. What is typed
+/// accountant's word), the exemption, the minimum, the work ability and its application, A1, the treaty rate, the employment type, the notes. What is typed
 /// and not yet saved is remembered (<see cref="IsDirty"/>) and never dropped in silence.</summary>
 public sealed class PersonPanel : UserControl
 {
@@ -40,6 +40,8 @@ public sealed class PersonPanel : UserControl
     private readonly CheckBox _exemptionApplied = new() { Text = UiText.ExemptionApplied, AutoSize = true };
     private readonly TextBox _exemptionMonthly = new();
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true };
+    private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
+    private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true, Margin = new Padding(20, 3, 3, 3) };
     private readonly ComboBox _declaration = Combo(DeclarationChoices);
     private readonly ComboBox _a1 = Combo(A1Choices);
     private readonly TextBox _a1Country = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
@@ -60,6 +62,7 @@ public sealed class PersonPanel : UserControl
     private bool _filling;
     private readonly ToolTip _tips = new();
     private readonly PensionMinimumLink _pensionMinimum;
+    private readonly WorkAbilityLink _workAbilityLink;
 
     public event Action<Person, bool, bool>? SaveRequested;
 
@@ -89,6 +92,10 @@ public sealed class PersonPanel : UserControl
         Row(UiText.ExemptionMonthly, _exemptionMonthly);
         Row(new Label { Text = UiText.ExemptionFull, AutoSize = true, ForeColor = Color.DimGray }, span: true);
         Row(_minimum, span: true);
+        Row(_workAbility, span: true);
+        Row(_statePays, span: true);
+        // what the app cannot check, said where the application is ticked (KR_SM_03): not a tip alone
+        Row(new Label { Text = UiText.StatePaysSocialTaxNote, AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(380, 0), Margin = new Padding(20, 0, 3, 3) }, span: true);
         Row(UiText.DeclarationLabel, _declaration);
         Row(UiText.A1, _a1);
         Row(UiText.A1Country, _a1Country);
@@ -112,7 +119,7 @@ public sealed class PersonPanel : UserControl
             combo.SelectedIndexChanged += (_, _) => Touched();
         }
 
-        foreach (var check in new[] { _confirmResidency, _confirmPension, _onPension, _exemptionApplied, _minimum, _typeFromCard })
+        foreach (var check in new[] { _confirmResidency, _confirmPension, _onPension, _exemptionApplied, _minimum, _workAbility, _statePays, _typeFromCard })
         {
             check.CheckedChanged += (_, _) => Touched();
         }
@@ -143,7 +150,10 @@ public sealed class PersonPanel : UserControl
             }
         };
         // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237)
-        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
+        // and so does the work-ability status (SMS § 2 lg 4 p 6), by the same link
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips, _workAbility);
+        // the application only with the status: shut without it, and taken off with its untick
+        _workAbilityLink = new WorkAbilityLink(_workAbility, _statePays, () => _person is not null && _editable);
         Disposed += (_, _) => _tips.Dispose();
         _save.Click += (_, _) => Save();
         _revert.Click += (_, _) => Present(_person, _editable);
@@ -190,6 +200,10 @@ public sealed class PersonPanel : UserControl
     internal CheckBox OnPensionBox => _onPension;
 
     internal CheckBox MinimumBox => _minimum;
+
+    internal CheckBox WorkAbilityBox => _workAbility;
+
+    internal CheckBox StatePaysBox => _statePays;
 
     internal ToolTip Tips => _tips;
 
@@ -279,6 +293,8 @@ public sealed class PersonPanel : UserControl
         _shownExemption = person?.ExemptionMonthInForce(_year, _rates);
         _exemptionMonthly.Text = _shownExemption is { } shown ? shown.ToString("0.00", CultureInfo.CurrentCulture) : "";
         _minimum.Checked = person?.SocialTaxMinimumApplies ?? true;
+        _workAbility.Checked = person?.ReducedWorkAbility == true; // before the application: its untick takes the application off
+        _statePays.Checked = person is { ReducedWorkAbility: true, StatePaysSocialTax: true };
         _declaration.SelectedIndex = (int)(person?.Declaration ?? DeclarationChoice.Auto);
         _a1.SelectedIndex = (int)(person?.A1 ?? A1Case.None);
         _a1Country.Text = person?.A1Country ?? "";
@@ -298,6 +314,7 @@ public sealed class PersonPanel : UserControl
         _save.Enabled = on && editable;
         _revert.Enabled = on && editable;
         _lookUp.Enabled = on && editable && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
+        _workAbilityLink.Refresh(); // after the loop above, which opened every box of an editable card
         _filling = false;
         _exemptionTakenOff = false; // a card shown afresh: nothing on it was taken off by a pick
         _pensionMinimum.Reset();
@@ -344,6 +361,8 @@ public sealed class PersonPanel : UserControl
             // gives it back (the fifth audit, item 20)
             BasicExemptionMonthly = _exemptionApplied.Checked ? ExemptionToStore(exemption, pensionAgeYear) : null,
             SocialTaxMinimumApplies = _minimum.Checked,
+            ReducedWorkAbility = _workAbility.Checked,
+            StatePaysSocialTax = _workAbility.Checked && _statePays.Checked,
             Declaration = (DeclarationChoice)Math.Max(0, _declaration.SelectedIndex),
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),
             A1Country = Null(_a1Country.Text),

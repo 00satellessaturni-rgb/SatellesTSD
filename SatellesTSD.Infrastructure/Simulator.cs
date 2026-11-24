@@ -169,6 +169,8 @@ public static class Simulator
             BasicExemptionApplied = card.BasicExemptionApplied,
             BasicExemptionMonthly = card.BasicExemptionApplied ? card.BasicExemptionMonthly : null,
             SocialTaxMinimumApplies = card.SocialTaxMinimumApplies,
+            ReducedWorkAbility = card.ReducedWorkAbility,
+            StatePaysSocialTax = card.ReducedWorkAbility && card.StatePaysSocialTax,
             A1 = card.A1,
             A1Country = Blank(card.A1Country),
             WorkCountry = Blank(card.WorkCountry),
