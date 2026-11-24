@@ -848,6 +848,7 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
         var dropPension = codeChanged && !pensionChanged && fresh.PensionSource is LookupSource.Pensionikeskus or LookupSource.Derived;
         var exemptionApplied = Pick(edited.BasicExemptionApplied, basis?.BasicExemptionApplied ?? edited.BasicExemptionApplied, fresh.BasicExemptionApplied);
         var workAbility = Pick(edited.ReducedWorkAbility, basis?.ReducedWorkAbility ?? edited.ReducedWorkAbility, fresh.ReducedWorkAbility);
+        var statePays = workAbility && Pick(edited.StatePaysSocialTax, basis?.StatePaysSocialTax ?? edited.StatePaysSocialTax, fresh.StatePaysSocialTax);
         var next = fresh with
         {
             FirstName = edited.FirstName.Trim(),
@@ -872,7 +873,9 @@ public sealed class ReviewWorkspace(IStore store, TaxRates? rates = null, TimePr
             ReducedWorkAbility = workAbility,
             // the application goes with the status, as the card's tick does: without it the state pays nothing, and the
             // facts would refuse every payment (WORK_ABILITY_APPLICATION_WITHOUT_STATUS)
-            StatePaysSocialTax = workAbility && Pick(edited.StatePaysSocialTax, basis?.StatePaysSocialTax ?? edited.StatePaysSocialTax, fresh.StatePaysSocialTax),
+            StatePaysSocialTax = statePays,
+            // the application's day goes with the application (decision 267): without it there is nothing to start
+            WorkAbilityApplicationDate = statePays ? Pick(edited.WorkAbilityApplicationDate, basis?.WorkAbilityApplicationDate, fresh.WorkAbilityApplicationDate) : null,
             Declaration = Pick(edited.Declaration, basis?.Declaration ?? edited.Declaration, fresh.Declaration),
             TypeFromCard = Pick(edited.TypeFromCard, basis?.TypeFromCard ?? edited.TypeFromCard, fresh.TypeFromCard),
             A1 = Pick(edited.A1, basis?.A1 ?? edited.A1, fresh.A1),

@@ -55,6 +55,44 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
     /// types are its <see cref="BuildNote.Items"/>.</summary>
     public const string WorkAbilityNotDeducted = "WORK_ABILITY_NOT_DEDUCTED";
 
+    /// <summary>A note on the month's part of the kuumäär Töötukassa pays the social tax on (decision 267): "none" — the month
+    /// the pay is for is covered on no day (<see cref="BuildNote.Day"/> its first day), nothing deducted; "lastMonth" — the
+    /// employment ends in the declared month (<see cref="BuildNote.Day"/>), and a final pay paid in it would bring that
+    /// month's share (<see cref="BuildNote.Figure"/>) to a total of <see cref="BuildNote.Other"/>, typed by hand;
+    /// "notListed" — the month's register does not list the person, so an end of the employment is not seen; "endUnknown" —
+    /// the register's rows of the person are ended without an end date, so their days are not known.</summary>
+    public const string WorkAbilityMonthNote = "WORK_ABILITY_MONTH";
+
+    /// <summary>What the person's build needs of the month for Töötukassa's part: the company's pay month, the amounts the
+    /// accountant typed for the declared month, the month's rates.</summary>
+    private sealed record WorkAbilityContext(bool WagesPaidFollowingMonth, IReadOnlyDictionary<Guid, decimal> ByHand, TaxRates Rates);
+
+    /// <summary>The spans of employment Töötukassa's part is measured by: the register rows whose type is an employee's (the
+    /// rows carrying the minimum — the same types the deduction is allowed on), else every row; a row ended without an
+    /// end date says nothing of its days and is left out. Empty = the register says nothing.</summary>
+    public static IReadOnlyList<(DateOnly? Start, DateOnly? End)> EmploymentSpans(IReadOnlyList<TorEntry> entries)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        var carriers = entries.Where(e => Carries(e.TypeId)).ToList();
+        return (carriers.Count > 0 ? carriers : entries)
+            .Where(e => !(e.StateId == TorStates.Ended && e.EndDate is null))
+            .Select(e => (e.StartDate, e.EndDate)).Distinct().ToList();
+    }
+
+    /// <summary>The part of the kuumäär Töötukassa pays the social tax on for the pay declared in a period, as reckoned
+    /// (decision 267): the month the pay is for by the company's setting, its kuumäär, the days from the application's day
+    /// (never before the employment began) to the employment's end.</summary>
+    public static WorkAbilityMonth WorkAbilityMonthOf(Period period, Person person, IReadOnlyList<TorEntry> entries, bool wagesPaidFollowingMonth, TaxRates rates)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(person);
+        ArgumentNullException.ThrowIfNull(rates);
+        var payMonth = WorkAbilityMonth.PayMonthOf(period.Year, period.Month, wagesPaidFollowingMonth);
+        // another year's kuumäär for pay of December declared in January; a year the app knows no figure for takes the month's
+        var rate = payMonth.Year == period.Year ? rates.SocialTaxMinimumBase : WorkAbilityMonth.RateOf(payMonth.Year) ?? rates.SocialTaxMinimumBase;
+        return WorkAbilityMonth.Reckon(payMonth, rate, person.WorkAbilityApplicationDate, EmploymentSpans(entries));
+    }
+
     /// <summary>The source of a line that adds up a person's payments of one type: "totals:&lt;type&gt;:&lt;the payments' references&gt;".</summary>
     public const string TotalsSource = "totals";
 
@@ -300,6 +338,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             ?? throw new DeclareException(RatesMissing, $"This version knows no tax rates for {period.Year}; the month's lines cannot be built until a version that does.")
             { Subject = period.Year.ToString(System.Globalization.CultureInfo.InvariantCulture) };
         var allocator = new MonthAllocator(new TaxEngine(rates));
+        var work = new WorkAbilityContext(_store.Companies().First(c => c.Id == period.CompanyId).WagesPaidFollowingMonth, _store.WorkAbilityAmounts(period.Id), rates);
         // whether the month was searched against a register: only then does a person it does not list have no employment in it
         var monthHasRegister = view.StoredRun?.TorSheetId is not null || view.Persons.Any(p => p.Register is not null);
         _store.InTransaction(() =>
@@ -315,7 +354,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
                     continue;
                 }
 
-                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode, monthHasRegister));
+                builds.Add(BuildPerson(period, reviewPerson, persons[reviewPerson.PersonId!.Value], bySource, claimed, allocator, mode, monthHasRegister, work));
             }
 
             // what nobody claimed is declared no more: a draft goes, a line on the server gets its T
@@ -351,7 +390,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
         return new BuildReport { Period = period, Persons = builds, Notes = problems };
     }
 
-    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode, bool monthHasRegister)
+    private PersonBuild BuildPerson(Period period, ReviewPerson reviewPerson, Person person, Dictionary<string, StoredPayment> bySource, HashSet<string> claimed, MonthAllocator allocator, DeclarationMode mode, bool monthHasRegister, WorkAbilityContext work)
     {
         var name = $"{person.LastName} {person.FirstName}";
         var lines = new List<BuiltLine>();
@@ -752,10 +791,56 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             return new PersonBuild { PersonId = person.Id, Name = name, Lines = lines, Notes = problems, MinimumShare = share };
         }
 
+        // Töötukassa's part of the month (decision 267): the kuumäär of the month the pay is for, by the days the application
+        // and the employment cover — or the accountant's own amount for the declared month (two months' pay paid in one)
+        WorkAbilityMonth? stateMonth = null;
+        if (person is { ReducedWorkAbility: true, StatePaysSocialTax: true })
+        {
+            var rows = (reviewPerson.Register?.Entries ?? []).Concat(entry is null ? [] : [entry]).Distinct().ToList();
+            var reckoned = WorkAbilityMonthOf(period, person, rows, work.WagesPaidFollowingMonth, work.Rates);
+            stateMonth = work.ByHand.TryGetValue(person.Id, out var typed)
+                ? reckoned.WithAmountByHand(Math.Min(typed, WorkAbilityMonth.MostRates * work.Rates.SocialTaxMinimumBase))
+                : reckoned;
+            // said only where the month has pay the deduction can be made on — by the type under the person's A1 case, as
+            // the engine allows it: a foreign A1 carries no Estonian social tax, an Estonian A1 none on 33 and 138
+            if (!stateMonth.ByHand && monthPayments.Any(m => m.Amount > 0m && EffectiveFlags.Of(m.Type, m.Facts ?? facts).WorkAbilityReduction))
+            {
+                // notes, not refusals: each says what the accountant may have to type by hand for the month
+                var spans = EmploymentSpans(rows);
+                var monthFirst = new DateOnly(period.Year, period.Month, 1);
+                if (stateMonth.Amount == 0m)
+                {
+                    problems.Add(new BuildNote(WorkAbilityMonthNote, $"{WorkAbilityMonthNote}: the pay is taken to be for {stateMonth.PayMonth:MM.yyyy}, and no day of that month is covered by both the application and the employment; nothing is deducted. If this pay is for another month, type the month's amount by hand.")
+                    { Variant = "none", Day = stateMonth.PayMonth });
+                }
+                else if (monthHasRegister && reviewPerson.Register is null)
+                {
+                    problems.Add(new BuildNote(WorkAbilityMonthNote, $"{WorkAbilityMonthNote}: the month's register does not list the person, so an end of the employment is not seen; {stateMonth.Amount} is taken for {stateMonth.PayMonth:MM.yyyy}. If the employment ended in that month, type the month's amount by hand.")
+                    { Variant = "notListed", Day = stateMonth.PayMonth, Figure = stateMonth.Amount });
+                }
+                else if (rows.Count > 0 && spans.Count == 0)
+                {
+                    // rows there are, none with days that can be counted (ended, no end date): the whole month was taken
+                    problems.Add(new BuildNote(WorkAbilityMonthNote, $"{WorkAbilityMonthNote}: the register's rows of the person are ended without an end date, so the employment's days are not known; {stateMonth.Amount} is taken for {stateMonth.PayMonth:MM.yyyy}. If the employment ended in or before that month, type the month's amount by hand.")
+                    { Variant = "endUnknown", Day = stateMonth.PayMonth, Figure = stateMonth.Amount });
+                }
+                else if (work.WagesPaidFollowingMonth
+                    && spans.Where(s => s.End is { } e && e >= monthFirst && e <= lastDay).Select(s => s.End!.Value).DefaultIfEmpty().Max() is var ended && ended != default
+                    && !spans.Any(s => (s.Start is not { } from || from <= lastDay) && (s.End is not { } to || to > lastDay))
+                    && WorkAbilityMonth.Reckon(monthFirst, work.Rates.SocialTaxMinimumBase, person.WorkAbilityApplicationDate, spans) is { Amount: > 0m } ending)
+                {
+                    // the employment ends in the declared month: a final pay paid now is pay for this month too, a second
+                    // month's share the app cannot tell from the rows (MTA's example of a final pay)
+                    problems.Add(new BuildNote(WorkAbilityMonthNote, $"{WorkAbilityMonthNote}: the employment ends on {ended:dd.MM.yyyy}, in the declared month; {stateMonth.Amount} is taken for {stateMonth.PayMonth:MM.yyyy}. If the final pay for the ending month is paid in this month too, its share is {ending.Amount}: type {Math.Min(stateMonth.Amount + ending.Amount, WorkAbilityMonth.MostRates * work.Rates.SocialTaxMinimumBase)} by hand.")
+                    { Variant = "lastMonth", Day = ended, Figure = ending.Amount, Other = Math.Min(stateMonth.Amount + ending.Amount, WorkAbilityMonth.MostRates * work.Rates.SocialTaxMinimumBase) });
+                }
+            }
+        }
+
         MonthAllocation allocation;
         try
         {
-            allocation = allocator.Allocate(monthPayments, facts);
+            allocation = allocator.Allocate(monthPayments, facts, stateMonth?.Amount);
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)
         {
@@ -783,7 +868,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             }
             if (notUnderA1.Count > 0)
             {
-                problems.Add(new BuildNote(WorkAbilityNotDeducted, $"{WorkAbilityNotDeducted}: the card says Töötukassa pays the social tax, but under the person's Estonian A1 the month's pay of type {string.Join(", ", notUnderA1)} gets no deduction (the matrix row of the Estonian A1 does not allow it): its social tax is the employer's in full.")
+                problems.Add(new BuildNote(WorkAbilityNotDeducted, $"{WorkAbilityNotDeducted}: the card says Töötukassa pays the social tax, but under the person's Estonian A1 the month's pay of type {string.Join(", ", notUnderA1)} gets no deduction (MTA's matrix does not show the Estonian A1's row for the type, so the app makes none): its social tax is the employer's in full.")
                 { Variant = "a1", Items = notUnderA1 });
             }
         }
@@ -831,6 +916,7 @@ public sealed class PeriodDeclarer(IStore store, TaxRates? rates = null, TimePro
             TopUpKey = allocation.TopUpKey is { } top && references.TryGetValue(top, out var topRef) ? topRef.Reference : allocation.TopUpKey,
             WorkAbilityReductionOffered = allocation.WorkAbilityReductionOffered,
             WorkAbilityReduction = allocation.WorkAbilityReductionTotal,
+            WorkAbilityMonth = stateMonth,
         };
     }
 
@@ -1149,5 +1235,9 @@ file static class PersonBuildExtensions
         MinimumDue = build.MinimumDue,
         MinimumShortfall = build.MinimumShortfall,
         TopUpKey = build.TopUpKey,
+        // every figure of the month goes along: a line retired beside the person's new ones must not silence the log
+        WorkAbilityReductionOffered = build.WorkAbilityReductionOffered,
+        WorkAbilityReduction = build.WorkAbilityReduction,
+        WorkAbilityMonth = build.WorkAbilityMonth,
     };
 }

@@ -128,9 +128,11 @@ public class WorkAbilityTests
     }
 
     [Fact]
-    public void The_engine_refuses_a_cap_above_one_kuumaar_or_below_nothing()
+    public void The_engine_refuses_a_cap_above_two_kuumaar_or_below_nothing()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => Engine.Calculate(new TaxInput(Salary, 2000m, false, 0m, WorkAbilityReductionCap: 886.01m), Applied));
+        // two months' pay paid in one carries two rates at most (MTA's own bound, KR_SM_07; decision 267)
+        Assert.Equal(1772m, Engine.Calculate(new TaxInput(Salary, 2000m, false, 0m, WorkAbilityReductionCap: 1772m), Applied).WorkAbilityReduction);
+        Assert.Throws<ArgumentOutOfRangeException>(() => Engine.Calculate(new TaxInput(Salary, 2000m, false, 0m, WorkAbilityReductionCap: 1772.01m), Applied));
         Assert.Throws<ArgumentOutOfRangeException>(() => Engine.Calculate(new TaxInput(Salary, 2000m, false, 0m, WorkAbilityReductionCap: -1m), Applied));
     }
 
@@ -280,7 +282,7 @@ public class WorkAbilityTests
             }
 
             using var v15 = SqliteStore.Open(path);
-            Assert.Equal(15L, v15.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
+            Assert.Equal((long)SqliteStore.SchemaVersion, v15.ScalarRaw<long>("SELECT MAX(version) FROM schema_version"));
             var person = Assert.Single(v15.Persons(companyId));
             Assert.Equal((false, false, true), (person.ReducedWorkAbility, person.StatePaysSocialTax, person.MinimumOwed));
             v15.UpdatePerson(person with { ReducedWorkAbility = true, StatePaysSocialTax = true });
@@ -365,6 +367,7 @@ public class WorkAbilityTests
         Assert.Equal("a1", note.Variant);
         Assert.Equal(["33"], note.Items);
         Assert.Contains("under the person's Estonian A1", note.Text, StringComparison.Ordinal);
+        Assert.Contains("the app makes none", note.Text, StringComparison.Ordinal); // the app's caution, not MTA's rule (decision 263)
         Assert.Equal(0m, Assert.Single(noted.Lines).Result!.WorkAbilityReduction);
 
         // a board fee beside it under the same A1: each type in its own note

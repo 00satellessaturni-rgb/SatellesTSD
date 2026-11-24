@@ -1,32 +1,27 @@
 namespace SatellesTSD;
 
 /// <summary>"Vanaduspensionil" ticked by the accountant's hand takes the social tax minimum off: a state pension's
-/// recipient owes none (decision 237, the mirror of decision 173). So does „Osaline või puuduv töövõime“ (SMS § 2 lg 4
-/// p 6, by the status alone), where the window has it. Unticked again — every such tick off — the minimum comes back when
-/// a tick took it off; a hand touch of the minimum ends that, the accountant's own word from there. Nothing happens while
-/// the owner fills the boxes (a stored card with both ticks is shown as stored; the build notes it).</summary>
+/// recipient owes none (decision 237, the mirror of decision 173). Unticked again, the minimum comes back when the tick
+/// took it off; a hand touch of the minimum ends that, the accountant's own word from there. Nothing happens while the
+/// owner fills the boxes (a stored card with both ticks is shown as stored; the build notes it).
+/// „Osaline või puuduv töövõime“ does not touch the minimum's tick (decision 266): the engine owes no minimum while the
+/// status stands, whatever the tick says, and a status ends with its term — a tick taken off for it and saved would stay
+/// off after the status, since what took it off is known only while the card is open.</summary>
 internal sealed class PensionMinimumLink
 {
-    private readonly CheckBox[] _reasons;
+    private readonly CheckBox _pension;
     private readonly CheckBox _minimum;
     private readonly Func<bool> _filling;
     private bool _takenOff;
     private bool _setting;
 
-    /// <param name="workAbility">The work-ability status's tick, a second reason the minimum is not owed; null where the
-    /// window has none.</param>
-    public PensionMinimumLink(CheckBox pension, CheckBox minimum, Func<bool> filling, ToolTip tips, CheckBox? workAbility = null)
+    public PensionMinimumLink(CheckBox pension, CheckBox minimum, Func<bool> filling, ToolTip tips)
     {
-        // one link for both reasons: two links on the one box would give the minimum back with the pension's untick while
-        // the status still stands
-        _reasons = workAbility is null ? [pension] : [pension, workAbility];
+        _pension = pension;
         _minimum = minimum;
         _filling = filling;
         tips.SetToolTip(minimum, UiText.MinimumPensionTip);
-        foreach (var reason in _reasons)
-        {
-            reason.CheckedChanged += (_, _) => ReasonChanged();
-        }
+        pension.CheckedChanged += (_, _) => ReasonChanged();
 
         minimum.CheckedChanged += (_, _) =>
         {
@@ -50,13 +45,12 @@ internal sealed class PensionMinimumLink
             return;
         }
 
-        var anyReason = _reasons.Any(r => r.Checked);
-        if (anyReason && _minimum.Checked)
+        if (_pension.Checked && _minimum.Checked)
         {
             Set(false);
             _takenOff = true;
         }
-        else if (!anyReason && _takenOff && !_minimum.Checked)
+        else if (!_pension.Checked && _takenOff && !_minimum.Checked)
         {
             Set(true);
             _takenOff = false;

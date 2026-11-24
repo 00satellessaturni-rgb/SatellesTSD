@@ -135,7 +135,7 @@ public sealed class CalculatorDialog : FieldDialog
         _pensionAge.CheckedChanged += (_, _) => { if (!_pensionAge.Checked) { _pensionAgeReached.Checked = false; } };
         // "Vanaduspensionil" ticked takes the minimum off, unticked gives it back (decision 237); the dialog fills nothing
         // and so does the work-ability status; its application opens only with it, as on the card
-        _ = new PensionMinimumLink(_onPension, _minimum, () => false, _tips, _workAbility);
+        _ = new PensionMinimumLink(_onPension, _minimum, () => false, _tips);
         _ = new WorkAbilityLink(_workAbility, _statePays, () => true);
         _tips.SetToolTip(_statePays, UiText.StatePaysSocialTaxNote);
         Disposed += (_, _) => _tips.Dispose();

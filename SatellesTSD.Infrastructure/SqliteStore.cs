@@ -114,8 +114,20 @@ public sealed partial class SqliteStore : IStore
             throw new KeyNotFoundException($"Company {company.Id} is not in the store.");
         }
 
+        if (HasPayMonthColumn)
+        {
+            Exec("UPDATE company SET wages_following_month = $following WHERE id = $id", ("$id", G(company.Id)), ("$following", company.WagesPaidFollowingMonth ? 1 : 0));
+        }
+
         tx.Commit();
     }
+
+    private bool _hasPayMonthColumn;
+
+    /// <summary>Whether the company table carries the v16 column: a store opened at an older version (the upgrade tests) has
+    /// none, and a company of such a store reads as paying wages the following month. Asked again until it is there, so an
+    /// upgrade of the open store is seen.</summary>
+    private bool HasPayMonthColumn => _hasPayMonthColumn || (_hasPayMonthColumn = Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('company') WHERE name = 'wages_following_month'") > 0);
 
     private bool? _hasPayerColumn;
     private bool? _hasCounterColumn;
@@ -126,11 +138,10 @@ public sealed partial class SqliteStore : IStore
     /// <summary>Whether the company table carries the v10 column: a store opened at an older version (the upgrade tests) has none.</summary>
     private bool HasPayerColumn => _hasPayerColumn ??= Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('company') WHERE name = 'payer_code_type'") > 0;
 
-    private string CompanySelect => HasPayerColumn
-        ? "SELECT id, registry_code, name, notes, payer_code_type FROM company"
-        : "SELECT id, registry_code, name, notes, NULL AS payer_code_type FROM company";
+    private string CompanySelect =>
+        $"SELECT id, registry_code, name, notes, {(HasPayerColumn ? "payer_code_type" : "NULL AS payer_code_type")}, {(HasPayMonthColumn ? "wages_following_month" : "1 AS wages_following_month")} FROM company";
 
-    private static Company ReadCompany(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), r.GetString(1), r.GetString(2), Str(r, 3), Str(r, 4));
+    private static Company ReadCompany(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), r.GetString(1), r.GetString(2), Str(r, 3), Str(r, 4), r.GetInt64(5) != 0);
 
     // ---------------------------------------------------------------- persons
 
@@ -144,11 +155,11 @@ public sealed partial class SqliteStore : IStore
             INSERT INTO person (id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                                 funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                                 exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-                                residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application)
+                                residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application, work_ability_application_date)
             VALUES ($id, $company, $first, $last, $code, $mrr, $residency, $country, $rchecked,
                     $member, $rate, $pchecked, $onpension, $pensionyear,
                     $applied, $monthly, $minimum, $a1, $a1country, $work, $treaty, $tor, $notes,
-                    $rsource, $psource, $rkey, $declaration, $cardtype, $factsdate, $workability, $workapplication)
+                    $rsource, $psource, $rkey, $declaration, $cardtype, $factsdate, $workability, $workapplication, $workdate)
             """,
             PersonParameters(stored));
         tx.Commit();
@@ -167,7 +178,7 @@ public sealed partial class SqliteStore : IStore
                 exemption_applied = $applied, exemption_monthly = $monthly, minimum_applies = $minimum,
                 a1_case = $a1, a1_country = $a1country, work_country = $work, treaty_rate = $treaty, tor_type_id = $tor, notes = $notes,
                 residency_source = $rsource, pension_source = $psource, register_key = $rkey, declaration = $declaration, card_type = $cardtype, facts_control_date = $factsdate,
-                work_ability = $workability, work_ability_application = $workapplication
+                work_ability = $workability, work_ability_application = $workapplication, work_ability_application_date = $workdate
             WHERE id = $id
             """,
             PersonParameters(Normalize(person)));
@@ -205,7 +216,7 @@ public sealed partial class SqliteStore : IStore
         SELECT id, company_id, first_name, last_name, personal_code, mrr_code, residency, residence_country, residency_checked_on,
                funded_pension_member, pension_rate, pension_checked_on, on_pension, pension_age_year,
                exemption_applied, exemption_monthly, minimum_applies, a1_case, a1_country, work_country, treaty_rate, tor_type_id, notes,
-               residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application
+               residency_source, pension_source, register_key, declaration, card_type, facts_control_date, work_ability, work_ability_application, work_ability_application_date
         FROM person
         """;
 
@@ -218,7 +229,7 @@ public sealed partial class SqliteStore : IStore
         ("$applied", p.BasicExemptionApplied ? 1 : 0), ("$monthly", N(p.BasicExemptionMonthly)), ("$minimum", p.SocialTaxMinimumApplies ? 1 : 0),
         ("$a1", p.A1.ToString()), ("$a1country", p.A1Country), ("$work", p.WorkCountry), ("$treaty", N(p.TreatyIncomeTaxRate)), ("$tor", p.TorEmploymentTypeId), ("$notes", p.Notes),
         ("$rsource", p.ResidencySource.ToString()), ("$psource", p.PensionSource.ToString()), ("$rkey", p.RegisterKey), ("$declaration", p.Declaration.ToString()), ("$cardtype", p.TypeFromCard ? 1 : 0), ("$factsdate", D(p.FactsControlDate)),
-        ("$workability", p.ReducedWorkAbility ? 1 : 0), ("$workapplication", p.StatePaysSocialTax ? 1 : 0),
+        ("$workability", p.ReducedWorkAbility ? 1 : 0), ("$workapplication", p.StatePaysSocialTax ? 1 : 0), ("$workdate", D(p.WorkAbilityApplicationDate)),
     ];
 
     private static Person ReadPerson(SqliteDataReader r) => new(
@@ -227,7 +238,37 @@ public sealed partial class SqliteStore : IStore
         r.IsDBNull(9) ? null : r.GetInt64(9) != 0, Dec(r, 10), Date(r, 11), r.GetInt64(12) != 0, r.IsDBNull(13) ? null : (int)r.GetInt64(13),
         r.GetInt64(14) != 0, Dec(r, 15), r.GetInt64(16) != 0, Enum.Parse<A1Case>(r.GetString(17)), Str(r, 18), Str(r, 19), Dec(r, 20), Str(r, 21), Str(r, 22),
         Enum.Parse<LookupSource>(r.GetString(23)), Enum.Parse<LookupSource>(r.GetString(24)), Str(r, 25),
-        Enum.Parse<DeclarationChoice>(r.GetString(26)), r.GetInt64(27) != 0, Date(r, 28), r.GetInt64(29) != 0, r.GetInt64(30) != 0);
+        Enum.Parse<DeclarationChoice>(r.GetString(26)), r.GetInt64(27) != 0, Date(r, 28), r.GetInt64(29) != 0, r.GetInt64(30) != 0, Date(r, 31));
+
+    public IReadOnlyDictionary<Guid, decimal> WorkAbilityAmounts(Guid periodId) =>
+        Query("SELECT person_id, amount FROM work_ability_month WHERE period_id = $period",
+                r => (Person: Guid.Parse(r.GetString(0)), Amount: decimal.Parse(r.GetString(1), CultureInfo.InvariantCulture)), ("$period", G(periodId)))
+            .ToDictionary(x => x.Person, x => x.Amount);
+
+    public void SetWorkAbilityAmount(Guid periodId, Guid personId, decimal? amount)
+    {
+        if (amount is < 0m)
+        {
+            throw new ArgumentOutOfRangeException(nameof(amount), "The month's amount cannot be negative.");
+        }
+
+        using var tx = Tx();
+        if (amount is { } typed)
+        {
+            Exec(
+                """
+                INSERT INTO work_ability_month (period_id, person_id, amount) VALUES ($period, $person, $amount)
+                ON CONFLICT (period_id, person_id) DO UPDATE SET amount = excluded.amount
+                """,
+                ("$period", G(periodId)), ("$person", G(personId)), ("$amount", N(typed)));
+        }
+        else
+        {
+            Exec("DELETE FROM work_ability_month WHERE period_id = $period AND person_id = $person", ("$period", G(periodId)), ("$person", G(personId)));
+        }
+
+        tx.Commit();
+    }
 
     // ---------------------------------------------------------------- periods
 
@@ -1300,6 +1341,20 @@ public sealed partial class SqliteStore : IStore
         """
         ALTER TABLE person ADD COLUMN work_ability INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE person ADD COLUMN work_ability_application INTEGER NOT NULL DEFAULT 0;
+        """,
+
+        // v16 — Töötukassa's part by the month the pay is for (decision 267): the day the application reached Töötukassa (none
+        // = it stood before), whether the company pays wages the following month (every earlier company: yes), and the
+        // amount the accountant typed for one person in one declared month in place of the reckoned part.
+        """
+        ALTER TABLE person ADD COLUMN work_ability_application_date TEXT;
+        ALTER TABLE company ADD COLUMN wages_following_month INTEGER NOT NULL DEFAULT 1;
+        CREATE TABLE work_ability_month (
+            period_id TEXT NOT NULL REFERENCES period(id),
+            person_id TEXT NOT NULL REFERENCES person(id),
+            amount    TEXT NOT NULL,
+            PRIMARY KEY (period_id, person_id)
+        );
         """,
     ];
 

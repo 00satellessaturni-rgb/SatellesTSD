@@ -23,7 +23,10 @@ public enum DeclarationChoice
 
 /// <summary>A client company the firm declares for.</summary>
 /// <param name="PayerCodeType">How the file labels the company's code (ARIREGISTRIKOOD or MRR_KOOD), when the card says; null for the code's shape to decide (decision 139).</param>
-public sealed record Company(Guid Id, string RegistryCode, string Name, string? Notes = null, string? PayerCodeType = null);
+/// <param name="WagesPaidFollowingMonth">The company pays a month's wages in the month after (the usual way, and MTA's
+/// examples'): the pay declared in a month is for the month before. It places the month Töötukassa's part of the kuumäär
+/// is reckoned for (decision 267); unticked, the pay is for the declared month itself.</param>
+public sealed record Company(Guid Id, string RegistryCode, string Name, string? Notes = null, string? PayerCodeType = null, bool WagesPaidFollowingMonth = true);
 
 /// <summary>A payee of one company with the facts the engine needs, as the accountant last established them. The
 /// "checked on" dates say how fresh the two lookups are. <see cref="FactsFor"/> turns the row into the month's
@@ -38,6 +41,7 @@ public sealed record Company(Guid Id, string RegistryCode, string Name, string? 
 /// <param name="TypeFromCard">The card's <paramref name="TorEmploymentTypeId"/> stands for every payment of the person (the card's "Töötamise liik kõigile maksetele"), over the register's contract covering each payment's date.</param>
 /// <param name="FactsControlDate">The control date the registers were last asked for when a lookup set the residency or the pension (a lookup of another month's period moves it); the build says so when it is outside the month built.</param>
 /// <param name="ReducedWorkAbility">The card's „Osaline või puuduv töövõime“: no social-tax minimum (SMS § 2 lg 4 p 6). A tick with no dates, like the pension's: the accountant unticks it when the term ends.</param>
+/// <param name="WorkAbilityApplicationDate">The day the employer's application reached Töötukassa: the state's part of the kuumäär starts with it, by the days of its month (decision 267); null = the application stood before the months declared here.</param>
 /// <param name="StatePaysSocialTax">The card's application tick under it: Töötukassa pays the social tax on up to one kuumäär of the month's wages (SMS § 6 lg 1 p 5, lg 3; TSD_OPTV_SM_VAHENDUS). Only with <paramref name="ReducedWorkAbility"/>.</param>
 public sealed record Person(
     Guid Id,
@@ -70,7 +74,8 @@ public sealed record Person(
     bool TypeFromCard = false,
     DateOnly? FactsControlDate = null,
     bool ReducedWorkAbility = false,
-    bool StatePaysSocialTax = false)
+    bool StatePaysSocialTax = false,
+    DateOnly? WorkAbilityApplicationDate = null)
 {
     /// <summary>Whether the social-tax minimum is owed as the card stands: its tick, and not a person with partial or no work
     /// ability (SMS § 2 lg 4 p 6, by the status alone) — so a tick left on beside the status builds no zero line.</summary>

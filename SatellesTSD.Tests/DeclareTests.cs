@@ -1878,6 +1878,139 @@ public class DeclareTests
     }
 
     [Fact]
+    public void Tootukassas_part_is_reckoned_for_the_month_the_pay_is_for_from_the_applications_day()
+    {
+        // decision 267, as MTA applies SMS § 6 lg 3: October's declaration carries September's pay where wages are paid the
+        // following month (the usual way), and the kuumäär goes by the days from the application's day
+        using var box = Ready();
+        StatePays(box);
+        var whole = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((886m, new DateOnly(2026, 9, 1), 30, false), (whole.WorkAbilityReductionOffered, whole.WorkAbilityMonth!.PayMonth, whole.WorkAbilityMonth.Days, whole.WorkAbilityMonth.ByHand));
+        Assert.DoesNotContain(whole.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+
+        // the application reached Töötukassa on 10 September: 21 days of 30
+        box.Workspace.SavePerson(box.Mari with { WorkAbilityApplicationDate = new DateOnly(2026, 9, 10) });
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id)); // the drafts standing are no longer the month's
+        var part = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((620.20m, 21, 30), (part.WorkAbilityReductionOffered, part.WorkAbilityMonth!.Days, part.WorkAbilityMonth.DaysInMonth));
+        var line = Assert.Single(box.Lines).Result!;
+        Assert.Equal(620.20m, line.WorkAbilityReduction);
+        Assert.Equal(Math.Round((line.SocialTaxBase - 620.20m) * 0.33m, 2, MidpointRounding.AwayFromZero), line.SocialTax);
+
+        // the company pays wages within the month: October's own days count, 22 of 31 from the 10th
+        box.Store.UpdateCompany(box.Company with { WagesPaidFollowingMonth = false });
+        box.Workspace.SavePerson(box.Mari with { WorkAbilityApplicationDate = new DateOnly(2026, 10, 10) });
+        var same = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((628.77m, new DateOnly(2026, 10, 1), 22, 31), (same.WorkAbilityReductionOffered, same.WorkAbilityMonth!.PayMonth, same.WorkAbilityMonth.Days, same.WorkAbilityMonth.DaysInMonth));
+
+        // back to the following month: September lies before the application — nothing deducted, and it is said
+        box.Store.UpdateCompany(box.Company with { WagesPaidFollowingMonth = true });
+        var none = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        var note = Assert.Single(none.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+        Assert.Equal(("none", new DateOnly(2026, 9, 1)), (note.Variant, note.Day));
+        Assert.Equal(0m, none.WorkAbilityReductionOffered);
+        var full = Assert.Single(box.Lines).Result!;
+        Assert.Equal((0m, Math.Round(full.SocialTaxBase * 0.33m, 2, MidpointRounding.AwayFromZero)), (full.WorkAbilityReduction, full.SocialTax));
+    }
+
+    [Fact]
+    public void An_amount_typed_for_the_month_stands_in_place_of_the_reckoned_part_for_that_month_alone()
+    {
+        using var box = Ready();
+        StatePays(box);
+        box.Declarer.Build(box.Period.Id);
+        Assert.Equal(886m, Assert.Single(box.Lines).Result!.WorkAbilityReduction);
+
+        // holiday pay beside the wage, say: two months' rates, of which the one salary takes what its base holds
+        box.Store.SetWorkAbilityAmount(box.Period.Id, box.Mari.Id, 1371.87m);
+        Assert.False(box.Declarer.DraftsCurrent(box.Period.Id));
+        var typed = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((1371.87m, true), (typed.WorkAbilityReductionOffered, typed.WorkAbilityMonth!.ByHand));
+        Assert.DoesNotContain(typed.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote); // the accountant's own amount: nothing to advise
+        var line = Assert.Single(box.Lines).Result!;
+        Assert.True(line.SocialTaxBase < 1371.87m);
+        Assert.Equal((line.SocialTaxBase, 0m), (line.WorkAbilityReduction, line.SocialTax)); // never above the payment's own base
+
+        // an amount of nothing is an amount: the month deducts none, whatever the reckoning says
+        box.Store.SetWorkAbilityAmount(box.Period.Id, box.Mari.Id, 0m);
+        Assert.Equal(0m, Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id).WorkAbilityReductionOffered);
+
+        // taken away: reckoned again
+        box.Store.SetWorkAbilityAmount(box.Period.Id, box.Mari.Id, null);
+        var back = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((886m, false), (back.WorkAbilityReductionOffered, back.WorkAbilityMonth!.ByHand));
+    }
+
+    [Fact]
+    public void An_employment_ending_in_the_declared_month_is_said_with_the_final_pays_share_and_prorated_where_the_pay_is_the_months_own()
+    {
+        // MTA's example of a final pay: the last working day on the 17th — 17 days of October's 31 are 485,87
+        using var box = Ready(mariEndOn: new DateTime(2026, 10, 17));
+        StatePays(box);
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((886m, new DateOnly(2026, 9, 1)), (mari.WorkAbilityReductionOffered, mari.WorkAbilityMonth!.PayMonth)); // September's pay, a whole month
+        var note = Assert.Single(mari.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+        Assert.Equal(("lastMonth", new DateOnly(2026, 10, 17), 485.87m, 1371.87m), (note.Variant, note.Day, note.Figure, note.Other));
+
+        // wages paid within the month: the pay is October's own, and its days end with the employment
+        box.Store.UpdateCompany(box.Company with { WagesPaidFollowingMonth = false });
+        var own = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal((485.87m, 17, 31), (own.WorkAbilityReductionOffered, own.WorkAbilityMonth!.Days, own.WorkAbilityMonth.DaysInMonth));
+        Assert.DoesNotContain(own.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+    }
+
+    [Fact]
+    public void A_register_row_ended_without_a_day_leaves_the_whole_month_and_says_the_days_are_not_known()
+    {
+        using var box = Ready(mariEndBlank: true);
+        StatePays(box);
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal(886m, mari.WorkAbilityReductionOffered);
+        var note = Assert.Single(mari.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+        Assert.Equal(("endUnknown", 886m), (note.Variant, note.Figure));
+    }
+
+    [Fact]
+    public void The_months_notes_are_not_said_of_pay_the_persons_A1_leaves_without_Estonian_social_tax()
+    {
+        // September lies before the application, but under a foreign A1 nothing would be deducted anyway: no advice to type
+        using var box = Ready();
+        box.Workspace.SavePerson(box.Mari with
+        {
+            BasicExemptionApplied = false, ReducedWorkAbility = true, StatePaysSocialTax = true, WorkAbilityApplicationDate = new DateOnly(2026, 10, 15),
+            A1 = A1Case.ForeignA1WorkInEstonia, A1Country = "FI", WorkCountry = "EE",
+        });
+        var mari = Assert.Single(box.Declarer.Build(box.Period.Id).Persons, p => p.PersonId == box.Mari.Id);
+        Assert.DoesNotContain(mari.Notes, n => n.Code == PeriodDeclarer.WorkAbilityMonthNote);
+    }
+
+    [Fact]
+    public void A_line_retired_beside_the_persons_new_lines_keeps_the_months_Tootukassa_figures_in_the_report()
+    {
+        // the review of 0.38.0: the copy that folds a retired line into the person's build dropped the two figures the
+        // log and the simulation say the month's kuumäär by (decision 265)
+        using var box = Ready();
+        StatePays(box);
+        box.Workspace.AddHandLine(box.Period.Id, box.Mari.Id, new DateOnly(2026, 10, 20), 100m, "Mari Maasikas", "lisatasu", "Palgad");
+        box.Declarer.Build(box.Period.Id);
+        box.Submitter.Export(box.Period.Id, box.Folder);
+        box.Submitter.MarkUploaded(box.Period.Id);
+        foreach (var line in box.Lines)
+        {
+            box.Submitter.Resolve(line.Id, onServer: true);
+        }
+        box.Submitter.MarkConfirmed(box.Period.Id);
+        box.Submitter.Reopen(box.Period.Id);
+
+        // the hand line taken out of the declaration: its line on the server is retired beside the salary's
+        box.Workspace.SetDeclare(box.Workspace.Load(box.Period.Id).Persons[0].Payments.Single(p => p.IsByHand), false);
+        var report = box.Declarer.Build(box.Period.Id);
+        var mari = Assert.Single(report.Persons, p => p.PersonId == box.Mari.Id);
+        Assert.Equal(1, report.Count(LineChange.Cancelled));
+        Assert.Equal((886m, 886m), (mari.WorkAbilityReductionOffered, mari.WorkAbilityReduction));
+    }
+
+    [Fact]
     public void Under_the_totals_cut_a_refused_types_line_that_used_the_Tootukassa_deduction_holds_the_other_types_back()
     {
         using var box = Ready();

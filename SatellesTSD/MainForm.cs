@@ -69,6 +69,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _addLineButton = new(UiText.AddLine);
     private readonly ToolStripMenuItem _exemptionOffButton = new(UiText.ExemptionOffNonResidents);
     private readonly ToolStripMenuItem _exemptionOnButton = new(UiText.ExemptionOnNonResidents);
+    private readonly ToolStripMenuItem _workAbilityAmountButton = new(UiText.WorkAbilityAmountMenu);
     private readonly ToolStripMenuItem _removeLineButton = new(UiText.RemoveLine) { Enabled = false };
     private readonly ToolStripMenuItem _newPersonButton = new(UiText.NewPerson);
     private readonly ToolStripMenuItem _calculatorButton = new(UiText.Calculator);
@@ -166,7 +167,8 @@ public sealed class MainForm : Form
         var periodMenu = new ToolStripMenuItem(UiText.MenuPeriod);
         periodMenu.DropDownItems.AddRange([_importButton, _matchButton, _lookupButton, _summaryButton, new ToolStripSeparator(), _cancelButton]);
         var personMenu = new ToolStripMenuItem(UiText.MenuPerson);
-        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton, _exemptionOnButton]);
+        personMenu.DropDownItems.AddRange([_newPersonButton, _addLineButton, _removeLineButton, new ToolStripSeparator(), _exemptionOffButton, _exemptionOnButton, new ToolStripSeparator(), _workAbilityAmountButton]);
+        _workAbilityAmountButton.Click += (_, _) => TypeWorkAbilityAmount();
         _exemptionOffButton.Click += (_, _) => ExemptionOffNonResidents();
         _exemptionOnButton.Click += (_, _) => ExemptionOnNonResidents();
         var toolsMenu = new ToolStripMenuItem(UiText.MenuTools);
@@ -531,6 +533,12 @@ public sealed class MainForm : Form
     internal ToolStripMenuItem ExemptionOffButton => _exemptionOffButton;
 
     internal ToolStripMenuItem ExemptionOnButton => _exemptionOnButton;
+
+    internal ToolStripMenuItem WorkAbilityAmountButton => _workAbilityAmountButton;
+
+    /// <summary>Answers the month's-amount dialog for a test: given the reckoned part and the amount typed earlier, the
+    /// amount to keep (null = the reckoned part), or false to call it off.</summary>
+    internal Func<Core.Tax.WorkAbilityMonth, decimal?, (bool Ok, decimal? Amount)>? TypingWorkAbilityAmount;
 
     internal ToolStripMenuItem NonResidentsButton => _nonResidentsButton;
 
@@ -2023,9 +2031,9 @@ public sealed class MainForm : Form
             }
 
             var company = _services.Store.AddCompany(dialog.RegistryCode, dialog.CompanyTitle);
-            if (dialog.PayerCodeType is { } type)
+            if (dialog.PayerCodeType is not null || !dialog.WagesPaidFollowingMonth)
             {
-                company = company with { PayerCodeType = type };
+                company = company with { PayerCodeType = dialog.PayerCodeType, WagesPaidFollowingMonth = dialog.WagesPaidFollowingMonth };
                 _services.Store.UpdateCompany(company);
             }
 
@@ -2055,9 +2063,14 @@ public sealed class MainForm : Form
 
         try
         {
-            var changed = company with { Name = dialog.CompanyTitle, PayerCodeType = dialog.PayerCodeType };
+            var changed = company with { Name = dialog.CompanyTitle, PayerCodeType = dialog.PayerCodeType, WagesPaidFollowingMonth = dialog.WagesPaidFollowingMonth };
             _services.Store.UpdateCompany(changed);
             Log(UiText.CompanySaved(changed.Name, changed.RegistryCode, Core.Xbrl.PayerCodes.DescriptionOf(changed.RegistryCode, changed.PayerCodeType)));
+            if (changed.WagesPaidFollowingMonth != company.WagesPaidFollowingMonth)
+            {
+                // the month Töötukassa's part is reckoned for moved: the lines built are no longer the month's (decision 267)
+                Log($"{UiText.WagesPaidFollowingMonth}: {(changed.WagesPaidFollowingMonth ? UiText.Yes : UiText.No)} ({UiText.BuildLines})");
+            }
             FillCompanies();
         }
         catch (Exception e)
@@ -2793,6 +2806,7 @@ public sealed class MainForm : Form
         _addLineButton.Enabled = !_busy && hasCompany && editable;
         _exemptionOffButton.Enabled = !_busy && Editable; // a month in hand, and a Draft
         _exemptionOnButton.Enabled = _exemptionOffButton.Enabled;
+        _workAbilityAmountButton.Enabled = !_busy && Editable; // which person, and whether both ticks stand, is asked at the click
         _newPersonButton.Enabled = !_busy && hasCompany;
         _newCompanyButton.Enabled = _services is not null && !_busy;
         _closeCompanyButton.Enabled = !_busy && hasCompany;
@@ -3601,6 +3615,77 @@ public sealed class MainForm : Form
         }
 
         ReloadView(dialog.PersonId);
+    }
+
+    /// <summary>Isik › the month's amount of Töötukassa's part typed by hand for the person shown (decision 267): the
+    /// reckoned part is shown, an amount up to two kuumäär stands in its place for this declared month alone, an empty box
+    /// takes it away. The lines are built again by the accountant.</summary>
+    private void TypeWorkAbilityAmount()
+    {
+        if (_services is null || _view is not { Editable: true } || _busy)
+        {
+            return;
+        }
+
+        if (!SettleCard()) // the card's own edits first: the part is reckoned from the card as saved
+        {
+            return;
+        }
+
+        if (_view is not { Editable: true } view)
+        {
+            return;
+        }
+
+        if (SelectedPerson is not { PersonId: { } personId } shown
+            || view.StorePersons.FirstOrDefault(p => p.Id == personId) is not { ReducedWorkAbility: true, StatePaysSocialTax: true } person)
+        {
+            Inform(UiText.WorkAbilityAmountNoPerson, UiText.WorkAbilityAmountTitle);
+            return;
+        }
+
+        try
+        {
+            var rates = Core.Tax.TaxRates.For(view.Period.Year) ?? Core.Tax.TaxRates.Year2026;
+            var company = _services.Store.Companies().First(c => c.Id == view.Period.CompanyId);
+            var rows = (shown.Register?.Entries ?? []).Concat(shown.Register?.ActiveEntry is { } active ? [active] : []).Distinct().ToList();
+            var reckoned = Core.Declare.PeriodDeclarer.WorkAbilityMonthOf(view.Period, person, rows, company.WagesPaidFollowingMonth, rates);
+            var typed = _services.Store.WorkAbilityAmounts(view.Period.Id).TryGetValue(personId, out var earlier) ? earlier : (decimal?)null;
+            var most = Core.Tax.WorkAbilityMonth.MostRates * rates.SocialTaxMinimumBase;
+            decimal? amount;
+            if (TypingWorkAbilityAmount is { } answer)
+            {
+                var (ok, given) = answer(reckoned, typed);
+                if (!ok)
+                {
+                    return;
+                }
+
+                amount = given;
+            }
+            else
+            {
+                using var dialog = new WorkAbilityAmountDialog($"{person.LastName} {person.FirstName}", reckoned, typed, most);
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                amount = dialog.Amount;
+            }
+
+            if (amount == typed)
+            {
+                return;
+            }
+
+            _services.Store.SetWorkAbilityAmount(view.Period.Id, personId, amount);
+            Log(UiText.WorkAbilityAmountSaved($"{person.LastName} {person.FirstName}", amount));
+        }
+        catch (Exception e)
+        {
+            Fail(e);
+        }
     }
 
     private void RemoveLine()

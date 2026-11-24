@@ -193,7 +193,7 @@ public sealed class SimulationDialog : Form
         _member.SelectedIndexChanged += (_, _) => _rate.Enabled = ((Choice)_member.SelectedItem!).Value == "1";
         // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237); a scenario filled in is left as it is
         // and so does the work-ability status, as on the card; its application opens only with it
-        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips, _workAbility);
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
         _workAbilityLink = new WorkAbilityLink(_workAbility, _statePays, () => true);
         _tips.SetToolTip(_statePays, UiText.StatePaysSocialTaxNote);
         // the A1 case picked by hand fills its fixed country with EE when that box is empty, as the card does

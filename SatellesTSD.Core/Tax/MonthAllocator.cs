@@ -31,8 +31,9 @@ public sealed record AllocatedPayment(MonthPayment Payment, TaxResult Result, de
 /// <param name="MinimumDue">The minimum base owed this month: kuumäär × the month share; 0 when the minimum does not apply to any payment.</param>
 /// <param name="MinimumShortfall">How far the total fell short of what is due; 0 when the minimum does not apply or is met.</param>
 /// <param name="TopUpKey">The payment that carries TSD_KUUMSUURENDUS, or null.</param>
-/// <param name="WorkAbilityReductionOffered">The part of the base the state pays the social tax on this month: one kuumäär for
-/// a person with partial or no work ability whose employer has applied (SMS § 6 lg 3), else 0.</param>
+/// <param name="WorkAbilityReductionOffered">The part of the base the state pays the social tax on this month for a person
+/// with partial or no work ability whose employer has applied (SMS § 6 lg 3): the month's amount the caller reckoned
+/// (<see cref="WorkAbilityMonth"/>), one kuumäär where it gave none; else 0.</param>
 /// <param name="WorkAbilityReductionLeft">What no payment took of it (the month's pay of column-O types was less, or none).</param>
 public sealed record MonthAllocation(
     IReadOnlyList<AllocatedPayment> Payments,
@@ -57,9 +58,11 @@ public sealed record MonthAllocation(
 /// The minimum compares pay received as an employee or official (SMS § 2 lg 2 with lg 1 p 1; types with matrix M = JAH:
 /// 10, 33, 37, 120, 138, 167); a board fee (21/156) or a VÕS fee (17/123) never fills it, and MTA forbids the top-up on
 /// those types (KR_SM_11). A month without such pay needs a <see cref="MonthPayment.Zero"/> line to carry the top-up.
-/// For a person with partial or no work ability whose employer has applied, one kuumäär of the month is the state's to pay
-/// the social tax on (SMS § 6 lg 1 p 5, lg 3): TSD_OPTV_SM_VAHENDUS, spread in date order over the payments of matrix column
-/// O like the exemption, each capped at its own base. Such a person owes no minimum (SMS § 2 lg 4 p 6), so the two never meet.</summary>
+/// For a person with partial or no work ability whose employer has applied, the month's part of the kuumäär is the state's
+/// to pay the social tax on (SMS § 6 lg 1 p 5, lg 3): TSD_OPTV_SM_VAHENDUS, spread in date order over the payments of matrix
+/// column O like the exemption, each capped at its own base. The part is the caller's to reckon (the month the pay is for,
+/// its days under the application, decision 267); without one it is a whole kuumäär. Such a person owes no minimum
+/// (SMS § 2 lg 4 p 6), so the two never meet.</summary>
 public sealed class MonthAllocator
 {
     private readonly TaxEngine _engine;
@@ -70,11 +73,18 @@ public sealed class MonthAllocator
     }
 
     /// <summary>Computes every payment of one person in one month. Payments come back in date order (stable for equal dates).</summary>
-    public MonthAllocation Allocate(IReadOnlyList<MonthPayment> payments, PayeeTaxFacts payee)
+    /// <param name="workAbilityBase">The part of the month's wages the state pays the social tax on, as the caller reckoned
+    /// it for a person with both work-ability ticks (0 to two kuumäär, <see cref="WorkAbilityMonth.MostRates"/>); null = one
+    /// whole kuumäär. Ignored for anyone else.</param>
+    public MonthAllocation Allocate(IReadOnlyList<MonthPayment> payments, PayeeTaxFacts payee, decimal? workAbilityBase = null)
     {
         ArgumentNullException.ThrowIfNull(payments);
         ArgumentNullException.ThrowIfNull(payee);
         var rates = _engine.Rates;
+        if (workAbilityBase is { } given && (given < 0m || given > WorkAbilityMonth.MostRates * rates.SocialTaxMinimumBase))
+        {
+            throw new ArgumentOutOfRangeException(nameof(workAbilityBase), $"The month's part of the kuumäär ({given}) must be between 0 and {WorkAbilityMonth.MostRates} × {rates.SocialTaxMinimumBase}.");
+        }
 
         decimal legal = payee.PensionAgeThisYear ? rates.PensionAgeExemptionMonth : rates.BasicExemptionMonth;
         decimal offered = 0m;
@@ -117,9 +127,9 @@ public sealed class MonthAllocator
                 "The application for Töötukassa to pay the social tax is ticked, but the person's partial or no work ability is not; the state pays only for such a person (SMS § 6 lg 1 p 5).");
         }
 
-        // one kuumäär a month, whole: SMS § 6 lg 3 names the monthly rate, not a share of it (the minimum's month share is the
-        // minimum's own, and the minimum does not apply to the person anyway)
-        decimal reductionOffered = payee.ReducedWorkAbility && payee.StatePaysSocialTax ? rates.SocialTaxMinimumBase : 0m;
+        // the month's part as the caller reckoned it (decision 267), else one whole kuumäär; the minimum's month share is the
+        // minimum's own, and the minimum does not apply to the person anyway
+        decimal reductionOffered = payee.ReducedWorkAbility && payee.StatePaysSocialTax ? workAbilityBase ?? rates.SocialTaxMinimumBase : 0m;
 
         if (payments.Count == 0)
         {

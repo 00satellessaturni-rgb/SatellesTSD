@@ -87,6 +87,8 @@ public sealed class CompanyDialog : FieldDialog
     private readonly TextBox _code = new();
     private readonly TextBox _name = new();
     private readonly ComboBox _payerType = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox _wagesFollowing = new() { Text = UiText.WagesPaidFollowingMonth, AutoSize = true, Checked = true };
+    private readonly ToolTip _tips = new();
 
     public CompanyDialog() : this(null)
     {
@@ -102,9 +104,12 @@ public sealed class CompanyDialog : FieldDialog
         _payerType.SelectedIndex = existing?.PayerCodeType switch { PayeeId.Ariregistrikood => 1, PayeeId.Isikukood => 2, PayeeId.MrrKood => 3, _ => 0 };
         _payerType.DropDownWidth = _payerType.Items.Cast<string>().Max(item => TextRenderer.MeasureText(item, _payerType.Font).Width) + 24; // the open list shows the whole text
         Field(UiText.PayerCodeType, _payerType);
+        Field("", _wagesFollowing); // which month the pay declared in a month is for (decision 267)
+        _tips.SetToolTip(_wagesFollowing, UiText.WagesPaidFollowingMonthTip);
         Buttons();
         if (existing is not null)
         {
+            _wagesFollowing.Checked = existing.WagesPaidFollowingMonth;
             _name.Text = existing.Name;
             _code.Text = existing.RegistryCode;
             _code.ReadOnly = true;
@@ -117,6 +122,11 @@ public sealed class CompanyDialog : FieldDialog
 
     /// <summary>The card's word on the code's label in the file: null for the code's shape to decide.</summary>
     public string? PayerCodeType => _payerType.SelectedIndex switch { 1 => PayeeId.Ariregistrikood, 2 => PayeeId.Isikukood, 3 => PayeeId.MrrKood, _ => null };
+
+    /// <summary>The company pays a month's wages in the month after: the pay declared in a month is for the month before.</summary>
+    public bool WagesPaidFollowingMonth => _wagesFollowing.Checked;
+
+    internal CheckBox WagesFollowingBox => _wagesFollowing;
 
     internal ComboBox PayerTypeBox => _payerType;
 
@@ -185,6 +195,59 @@ public sealed class CompanyDialog : FieldDialog
 
     private bool Ask(string question) =>
         MessageBox.Show(this, question, Text, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+}
+
+/// <summary>Töötukassa's part of one person's wages in the declared month, typed by hand in place of the reckoned part
+/// (decision 267): two months' pay paid in one (holiday pay, a final pay) carries up to two kuumäär. An empty box takes the
+/// typed amount away.</summary>
+public sealed class WorkAbilityAmountDialog : FieldDialog
+{
+    private readonly TextBox _amount = new();
+    private readonly decimal _most;
+
+    /// <param name="reckoned">The part as the program reckons it for the month.</param>
+    /// <param name="typed">The amount typed earlier, or null.</param>
+    /// <param name="most">The most the month may carry (two kuumäär).</param>
+    public WorkAbilityAmountDialog(string person, Core.Tax.WorkAbilityMonth reckoned, decimal? typed, decimal most) : base(UiText.WorkAbilityAmountTitle)
+    {
+        ArgumentNullException.ThrowIfNull(reckoned);
+        _most = most;
+        Field(UiText.Person, new Label { Text = person, AutoSize = true });
+        Field("", new Label { Text = UiText.WorkAbilityReckoned(reckoned), AutoSize = true, MaximumSize = new Size(320, 0) });
+        _amount.Text = typed is { } amount ? amount.ToString("0.00", CultureInfo.CurrentCulture) : "";
+        Field(UiText.WorkAbilityAmountLabel, _amount);
+        Field("", new Label { Text = UiText.WorkAbilityAmountHint, AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(320, 0) });
+        Buttons();
+    }
+
+    /// <summary>The amount typed, or null for the reckoned part.</summary>
+    public decimal? Amount { get; private set; }
+
+    internal TextBox AmountBox => _amount;
+
+    /// <summary>Reads the box as OK would; false after a complaint.</summary>
+    internal bool AcceptNow() => Accept();
+
+    protected override bool Accept()
+    {
+        var text = _amount.Text.Trim();
+        if (text.Length == 0)
+        {
+            Amount = null;
+            return true;
+        }
+
+        const NumberStyles plain = NumberStyles.AllowDecimalPoint;
+        if ((!decimal.TryParse(text, plain, CultureInfo.CurrentCulture, out var typed) && !decimal.TryParse(text, plain, CultureInfo.InvariantCulture, out typed))
+            || typed < 0m || typed > _most || typed != Math.Round(typed, 2))
+        {
+            Complain(UiText.WorkAbilityAmountInvalid(_most));
+            return false;
+        }
+
+        Amount = typed;
+        return true;
+    }
 }
 
 /// <summary>A person added by hand: names, the Estonian personal code, the residency and the employment type.</summary>

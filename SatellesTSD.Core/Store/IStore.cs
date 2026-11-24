@@ -26,6 +26,13 @@ public interface IStore : IImportStore, IMatchStore, ILookupStore, IReviewStore
 
     Person? FindPerson(Guid companyId, string personalCode);
 
+    /// <summary>The amounts the accountant typed for a period as Töötukassa's part of the month's wages (decision 267), by
+    /// person: each stands in place of the reckoned part for that declared month alone.</summary>
+    IReadOnlyDictionary<Guid, decimal> WorkAbilityAmounts(Guid periodId);
+
+    /// <summary>Sets a person's typed amount for a period, or takes it away (null): the part is reckoned again.</summary>
+    void SetWorkAbilityAmount(Guid periodId, Guid personId, decimal? amount);
+
     Period GetOrCreatePeriod(Guid companyId, int year, int month);
 
     void SetPeriodState(Guid periodId, PeriodState state, DateTime at);

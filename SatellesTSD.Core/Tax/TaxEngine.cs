@@ -170,10 +170,11 @@ public sealed class TaxEngine
             throw new ArgumentOutOfRangeException(nameof(input), "The work-ability deduction's cap cannot be negative.");
         }
 
-        if (input.WorkAbilityReductionCap > _rates.SocialTaxMinimumBase)
+        if (input.WorkAbilityReductionCap > WorkAbilityMonth.MostRates * _rates.SocialTaxMinimumBase)
         {
-            // the law gives one kuumäär a month (SMS § 6 lg 3); MTA's own limit is twice that (KR_SM_07), the law's is kept
-            throw new ArgumentOutOfRangeException(nameof(input), $"The work-ability deduction's cap ({input.WorkAbilityReductionCap}) is above one kuumäär ({_rates.SocialTaxMinimumBase}).");
+            // one kuumäär for each month the pay is for (SMS § 6 lg 3 as MTA applies it); a declared month carries two at
+            // most — holiday pay or a final pay beside the month's wages — which is MTA's own bound (KR_SM_07; decision 267)
+            throw new ArgumentOutOfRangeException(nameof(input), $"The work-ability deduction's cap ({input.WorkAbilityReductionCap}) is above {WorkAbilityMonth.MostRates} × the kuumäär ({_rates.SocialTaxMinimumBase}).");
         }
 
         if (payee.StatePaysSocialTax && !payee.ReducedWorkAbility)

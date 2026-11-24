@@ -142,13 +142,41 @@ internal static class UiText
     public const string StatePaysSocialTax = "Töötukassa maksab sotsiaalmaksu (taotlus esitatud)";
 
     // said under the application's tick, not in a tip alone: what the deduction is, and what MTA checks that the app cannot (KR_SM_03)
-    public const string StatePaysSocialTaxNote = "Töötukassa maksab sotsiaalmaksu kuni ühe kuumäära ulatuses kuus töötasult (SMS § 6 lg 3); tööandja maksab ülejäänult. "
+    public const string StatePaysSocialTaxNote = "Töötukassa maksab sotsiaalmaksu kuni ühe kuumäära ulatuses selle kuu töötasult, mille eest tasu on (SMS § 6 lg 3); tööandja maksab ülejäänult. "
+        + "Töösuhte alguse, taotluse esitamise ja töösuhte lõppemise kuul arvestatakse kuumäär kalendripäevade järgi. "
+        + "Mitme tööandja korral saab vähendust kasutada ainult see tööandja, kes arvestab maksuvaba tulu (või kelle töötaja on kirjalikult valinud). "
         + "MTA võtab vähenduse vastu ainult siis, kui Töötukassa on isiku sama või eelmise kuu deklaratsioonis deklareerinud (KR_SM_03) – programm seda kontrollida ei saa.";
+
+    // the day the application reached Töötukassa (decision 267): the state's part starts with it
+    public const string WorkAbilityApplicationDate = "Taotlus esitatud (pp.kk.aaaa)";
+    public const string WorkAbilityApplicationDateTip = "Päev, mil tööandja taotlus jõudis Töötukassasse. Töötukassa osa algab sellest päevast: selle kuu kuumäär arvestatakse kalendripäevade järgi (nt 886 : 31 × 22 = 628,77). "
+        + "Tühi väli tähendab, et taotlus kehtis juba enne deklareeritavaid kuid – arvestatakse kõik töösuhte päevad kuus.";
+    public const string WorkAbilityDateInvalid = "Taotluse esitamise kuupäev ei ole kuupäev kujul pp.kk.aaaa.";
+
+    // the company's card: which month the pay declared in a month is for (decision 267)
+    public const string WagesPaidFollowingMonth = "Töötasu makstakse järgmisel kuul";
+    public const string WagesPaidFollowingMonthTip = "Märgitud: kuus välja makstud töötasu on eelmise kuu eest (tavaline kord). Märkimata: töötasu makstakse sama kuu eest. "
+        + "Selle järgi leiab programm kuu, mille kuumäära ja päevade järgi arvestatakse Töötukassa makstav sotsiaalmaksu osa (TSD_OPTV_SM_VAHENDUS) osalise või puuduva töövõimega töötajal.";
+
+    // Isik › the month's amount typed by hand (decision 267)
+    public const string WorkAbilityAmountMenu = "Töötukassa osa sel kuul…";
+    public const string WorkAbilityAmountTitle = "Töötukassa osa sel kuul";
+    public const string WorkAbilityAmountLabel = "Summa käsitsi (tühi = arvutatud)";
+    public const string WorkAbilityAmountHint = "Sisesta summa siis, kui sel kuul makstakse kahe kuu tasu (puhkusetasu või lõpparve koos eelmise kuu palgaga) või kui tasu on muu kuu eest, kui programm arvestab. "
+        + "Sisesta väiksem summa, kui osa kuumäärast on juba varem kasutatud (ette makstud puhkusetasu) või kui töövõime otsuse tähtaeg lõppes kuu keskel. "
+        + "Summa on kuni kaks kuumäära ja kehtib ainult selle kuu deklaratsioonis; tühi väli taastab arvutatud summa.";
+    public static string WorkAbilityAmountNoPerson => $"Vali isik, kelle kaardil on märgitud „{ReducedWorkAbility}“ ja „{StatePaysSocialTax}“ (ja kaart on salvestatud).";
+    public static string WorkAbilityAmountInvalid(decimal most) => $"Summa peab olema arv vahemikus 0 kuni {Money(most)} (kaks kuumäära), kõige rohkem kahe komakohaga.";
+    public static string WorkAbilityReckoned(Core.Tax.WorkAbilityMonth month) =>
+        $"Arvutatud: {Money(month.Amount)} – töötasu {month.PayMonth:MM.yyyy} eest, {month.Days}/{month.DaysInMonth} päeva, kuumäär {Money(month.Rate)}.";
+    public static string WorkAbilityAmountSaved(string person, decimal? amount) => amount is { } typed
+        ? $"{WorkAbilityAmountTitle}: {person} – käsitsi {Money(typed)} ({BuildLines})"
+        : $"{WorkAbilityAmountTitle}: {person} – käsitsi summa eemaldatud, kehtib arvutatud summa ({BuildLines})";
 
     // the minimum box's tip: a state pension's recipient and a person with partial or no work ability owe no minimum; the
     // "Vanaduspensionil" tick and the work-ability tick take it off (decision 237 and the work-ability item)
     public const string MinimumPensionTip = "Riikliku pensioni saaja (vanadus-, töövõimetus-, toitjakaotuspension jm) ning osalise või puuduva töövõimega isiku eest ei ole tööandjal sotsiaalmaksu miinimumkohustust (SMS § 2 lg 4 p 6). "
-        + $"Märke „{OnPension}“ või „{ReducedWorkAbility}“ lisamine võtab miinimumi maha (töövõime märke korral ei arvutata miinimumi ka siis, kui see märge jääb); teiste pensionisaajate puhul eemalda märge käsitsi.";
+        + $"Märke „{OnPension}“ lisamine võtab miinimumi märke maha; teiste pensionisaajate puhul eemalda märge käsitsi. Märke „{ReducedWorkAbility}“ ajal miinimumi ei arvutata, kuid miinimumi märget see ei muuda: kui töövõime märge eemaldatakse, kehtib miinimum jälle nii, nagu siin märgitud.";
     public const string DeclarationLabel = "Deklareerimine";
     public const string DeclarationAuto = "reeglite järgi";
     public const string DeclarationInclude = "kaasa (nagu kehtiv töötamine)";
@@ -1516,10 +1544,22 @@ internal static class UiText
                 $"kaardil on märgitud „{OnPension}“ ja „{SocialTaxMinimum}“; riikliku pensioni saaja eest miinimumi ei maksta (SMS § 2 lg 4 p 6) – kui pensioni makstakse, eemalda kaardilt märge „{SocialTaxMinimum}“.",
             Core.Declare.PeriodDeclarer.WorkAbilityNotDeducted when n.Items.Count > 0 && n.Variant == "a1" =>
                 $"kaardil on märgitud „{StatePaysSocialTax}“, kuid isiku Eesti A1 korral ei saa kuu {(n.Items.Count == 1 ? "makse liigiga" : "maksed liikidega")} {string.Join(", ", n.Items)} vähendust "
-                + $"(Eesti A1 rida maatriksis seda ei luba), {(n.Items.Count == 1 ? "sellelt" : "neilt")} maksab tööandja sotsiaalmaksu täies ulatuses.",
+                + $"(MTA maatriks Eesti A1 rida selle liigi kohta ei näita, seepärast programm vähendust ei tee), {(n.Items.Count == 1 ? "sellelt" : "neilt")} arvutab programm tööandja sotsiaalmaksu täies ulatuses. Kui vähendus on lubatud, deklareeri see e-MTA-s käsitsi.",
             Core.Declare.PeriodDeclarer.WorkAbilityNotDeducted when n.Items.Count > 0 =>
                 $"kaardil on märgitud „{StatePaysSocialTax}“, kuid kuu {(n.Items.Count == 1 ? "makse liigiga" : "maksed liikidega")} {string.Join(", ", n.Items)} ei luba vähendust: "
                 + $"Töötukassa maksab sotsiaalmaksu ainult töötasult (liigid {string.Join(", ", PaymentTypes.All.Where(t => t.WorkAbilityReductionAllowed).Select(t => t.Code))}; KR_SM_05), {(n.Items.Count == 1 ? "sellelt" : "neilt")} maksab tööandja sotsiaalmaksu täies ulatuses.",
+            Core.Declare.PeriodDeclarer.WorkAbilityMonthNote when n.Variant == "none" =>
+                $"töötasu loetakse {n.Day:MM.yyyy} eest makstuks, kuid selles kuus ei kata taotlus ja töösuhe ühtegi päeva – Töötukassa osa ei arvestata ja tööandja sotsiaalmaks arvutatakse täies ulatuses. "
+                + $"Kui tasu on muu kuu eest, sisesta kuu summa käsitsi (Isik › {WorkAbilityAmountMenu}) või kontrolli taotluse kuupäeva isiku kaardil ja ettevõtte kaardi märget „{WagesPaidFollowingMonth}“.",
+            Core.Declare.PeriodDeclarer.WorkAbilityMonthNote when n.Variant == "notListed" =>
+                $"kuu töötamise register isikut ei sisalda, seepärast töösuhte lõppu ei nähta: {n.Day:MM.yyyy} eest on arvestatud {Money(n.Figure ?? 0m)}. "
+                + $"Kui töösuhe lõppes selles kuus, sisesta kuu summa käsitsi (Isik › {WorkAbilityAmountMenu}).",
+            Core.Declare.PeriodDeclarer.WorkAbilityMonthNote when n.Variant == "lastMonth" =>
+                $"töösuhe lõpeb {n.Day:dd.MM.yyyy}, deklareeritavas kuus. Kui lõpparve selle kuu eest makstakse samuti sel kuul, lisandub selle kuu osa {Money(n.Figure ?? 0m)}: "
+                + $"sisesta käsitsi {Money(n.Other ?? 0m)} (Isik › {WorkAbilityAmountMenu}). Kui pärast seda tehakse isikule veel väljamakseid, sisesta järgmise kuu deklaratsioonis 0, sest lõppenud kuu osa on siis juba kasutatud.",
+            Core.Declare.PeriodDeclarer.WorkAbilityMonthNote when n.Variant == "endUnknown" =>
+                $"registris on isiku töösuhe lõpetatud lõppkuupäevata, seepärast töösuhte päevi ei teata: {n.Day:MM.yyyy} eest on arvestatud {Money(n.Figure ?? 0m)}. "
+                + $"Kui töösuhe lõppes selles kuus või enne seda, sisesta kuu summa käsitsi (Isik › {WorkAbilityAmountMenu}).",
             Core.Declare.PeriodDeclarer.NotAllocated => n.Variant switch
             {
                 "keptPools" => (one ? $"makse, millest ülevaatus keeldus, rida {string.Join(", ", n.Items)} on serveris ja kasutab"
@@ -1791,9 +1831,10 @@ internal static class UiText
     public static IReadOnlyList<string> RulesNotes() =>
     [
         $"SM miinimum kehtib TÖR liikidel {string.Join(", ", EmploymentTypes.All.Where(e => e.SocialTaxMinimum).Select(e => $"{e.TorTypeId} {e.Name}"))}; kuu osa on päevad / 30. Kui isik on kuu registris puudu, miinimumi ei ole (NO_EMPLOYMENT_IN_MONTH).",
-        $"SM miinimum ei kehti SMS § 2 lg 4 juhtudel (riikliku pensioni saaja, osalise või puuduva töövõimega isik, alla 3-aastase lapse või kolme alla 19-aastase lapse vanem, õpilane või üliõpilane jt) ega teisel tööandjal, kui miinimumi kannab maksuvaba tulu arvestav tööandja; märge on isiku kaardil. Märge „{ReducedWorkAbility}“ võtab miinimumi maha ise.",
+        $"SM miinimum ei kehti SMS § 2 lg 4 juhtudel (riikliku pensioni saaja, osalise või puuduva töövõimega isik, alla 3-aastase lapse või kolme alla 19-aastase lapse vanem, õpilane või üliõpilane jt) ega teisel tööandjal, kui miinimumi kannab maksuvaba tulu arvestav tööandja; märge on isiku kaardil. Märke „{ReducedWorkAbility}“ ajal miinimumi ei arvutata, miinimumi märkest olenemata.",
         $"Osalise või puuduva töövõimega isiku eest maksab Töötukassa sotsiaalmaksu kuni ühe kuumäära ulatuses kuus, kui tööandja on esitanud taotluse (SMS § 6 lg 1 p 5, lg 3; kaardil „{StatePaysSocialTax}“): see osa on TSD_OPTV_SM_VAHENDUS ja SM arvutatakse ülejäänult. "
             + $"Vähendus on lubatud ainult töötasu liikidel (maatriksi veerg O: {string.Join(", ", PaymentTypes.All.Where(t => t.WorkAbilityReductionAllowed).Select(t => t.Code))}; KR_SM_05); kuumäär jagatakse kuu maksete vahel kuupäevade järjekorras, iga makse kuni oma SM aluseni. "
+            + $"Deklaratsioonis arvestatakse selle kuu kuumäära, mille eest tasu on (ettevõtte kaardil „{WagesPaidFollowingMonth}“), töösuhte alguse, taotluse esitamise ja töösuhte lõppemise kuul kalendripäevade järgi (isiku kaardil „{WorkAbilityApplicationDate}“); kahe kuu tasu ühes kuus saab sisestada käsitsi (Isik › {WorkAbilityAmountMenu}), kuni kaks kuumäära (KR_SM_07). Siinne tabel ja kalkulaator näitavad tervet kuumäära. "
             + "Puue üksi vähendust ei anna. MTA võtab vähenduse vastu ainult siis, kui Töötukassa on isiku sama või eelmise kuu deklaratsioonis deklareerinud (KR_SM_03); programm seda kontrollida ei saa. Töötuskindlustusmakset, II sammast, tulumaksu ja maksuvaba tulu märge ei muuda.",
         "Mitteresident saab maksuvaba tulu ainult EMP riigi residendina residentsustõendiga (KR_MVT_06/07); kaardil EMP-väline riik keelab selle (EXEMPTION_NOT_EEA).",
         "Maksuvaba tulu ei ületa makset, millest on maha arvatud II sammas ja töötuskindlustusmakse (KR_MVT_08); kuu maksuvaba jagatakse isiku maksete vahel.",
@@ -1802,7 +1843,7 @@ internal static class UiText
         $"Lepingumäär asendab tulumaksu määra ainult mitteresidendile residentsustõendiga, liikidel {string.Join(", ", PaymentTypes.All.Where(t => t.TreatyRateAllowed).Select(t => t.Code))}; täisprotsent, mitte üle liigi oma määra (TREATY_RATE_INVALID).",
         $"MVT_640 (tööandja III samba sissemakse maksuvaba osa: kuni 15 % aasta maksustatud väljamaksetest, kõige rohkem 6000 € aastas) – programm seda ei arvuta; liiki {string.Join(", ", PaymentTypes.All.Where(t => t.ThirdPillarExemptionAllowed).Select(t => t.Code))} ei deklareerita (THIRD_PILLAR_NOT_COMPUTED): makselt võetakse märge „{Declare}“ maha ja see deklareeritakse e-MTA-s käsitsi.",
         $"TÖR liik 504 (sotsiaalmaks välisriigis) annab palgale liigi {EmploymentTypes.DefaultCode("504", Core.Model.Residency.Resident)}/{EmploymentTypes.DefaultCode("504", Core.Model.Residency.NonResident)} ainult siis, kui kaardil on välisriigi A1 tõend (töö Eestis); muidu makset vaikimisi ei deklareerita (FOREIGN_A1_NEEDED).",
-        "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäide kasutab 820 €, küsimus on lahtine.",
+        "Sotsiaalmaksu kuumäär 886 € on töövihiku ja MTA kalkulaatori oma; MTA ärinäite 820 € oli 2025. aasta kuumäär.",
     ];
 
     public const string Simulation = "Simulatsioon…";
@@ -1887,8 +1928,18 @@ internal static class UiText
 
     /// <summary>The month's TSD_OPTV_SM_VAHENDUS in words, as the simulation and the build's log say it: the kuumäär the
     /// state pays the social tax on, and how much of it the month's wages took.</summary>
-    public static string WorkAbilityMonthText(Core.Declare.PersonBuild build) =>
-        $"Töötukassa SM vähendus (TSD_OPTV_SM_VAHENDUS): kuumäär {Money(build.WorkAbilityReductionOffered)}, kasutatud {Money(build.WorkAbilityReduction)}, alles {Money(build.WorkAbilityReductionOffered - build.WorkAbilityReduction)}.";
+    public static string WorkAbilityMonthText(Core.Declare.PersonBuild build)
+    {
+        // how the month's amount came about (decision 267): typed by hand, a whole kuumäär, or its part by the days
+        var offered = build.WorkAbilityMonth switch
+        {
+            { ByHand: true } => $"käsitsi sisestatud {Money(build.WorkAbilityReductionOffered)}",
+            { } m when m.Days < m.DaysInMonth => $"kuumäära osa {Money(build.WorkAbilityReductionOffered)} (töötasu {m.PayMonth:MM.yyyy} eest, {m.Days}/{m.DaysInMonth} päeva)",
+            { } m => $"kuumäär {Money(build.WorkAbilityReductionOffered)} (töötasu {m.PayMonth:MM.yyyy} eest)",
+            _ => $"kuumäär {Money(build.WorkAbilityReductionOffered)}",
+        };
+        return $"Töötukassa SM vähendus (TSD_OPTV_SM_VAHENDUS): {offered}, kasutatud {Money(build.WorkAbilityReduction)}, alles {Money(build.WorkAbilityReductionOffered - build.WorkAbilityReduction)}.";
+    }
 
     /// <summary>A simulation's review in words (decision 204): the steps, the refusal, every payment with what blocks it,
     /// the payments left out and why, the build's problems and the minimum, the totals.</summary>

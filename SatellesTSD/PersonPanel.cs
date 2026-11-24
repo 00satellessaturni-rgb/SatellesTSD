@@ -42,6 +42,7 @@ public sealed class PersonPanel : UserControl
     private readonly CheckBox _minimum = new() { Text = UiText.SocialTaxMinimum, AutoSize = true };
     private readonly CheckBox _workAbility = new() { Text = UiText.ReducedWorkAbility, AutoSize = true };
     private readonly CheckBox _statePays = new() { Text = UiText.StatePaysSocialTax, AutoSize = true, Margin = new Padding(20, 3, 3, 3) };
+    private readonly TextBox _applicationDate = new() { MaxLength = 10 };
     private readonly ComboBox _declaration = Combo(DeclarationChoices);
     private readonly ComboBox _a1 = Combo(A1Choices);
     private readonly TextBox _a1Country = new() { CharacterCasing = CharacterCasing.Upper, MaxLength = 2 };
@@ -94,6 +95,8 @@ public sealed class PersonPanel : UserControl
         Row(_minimum, span: true);
         Row(_workAbility, span: true);
         Row(_statePays, span: true);
+        Row(UiText.WorkAbilityApplicationDate, _applicationDate);
+        _tips.SetToolTip(_applicationDate, UiText.WorkAbilityApplicationDateTip);
         // what the app cannot check, said where the application is ticked (KR_SM_03): not a tip alone
         Row(new Label { Text = UiText.StatePaysSocialTaxNote, AutoSize = true, ForeColor = Color.DimGray, MaximumSize = new Size(380, 0), Margin = new Padding(20, 0, 3, 3) }, span: true);
         Row(UiText.DeclarationLabel, _declaration);
@@ -109,7 +112,10 @@ public sealed class PersonPanel : UserControl
         Row(_buttons, span: true);
         Controls.Add(_table);
 
-        foreach (var box in new[] { _first, _last, _code, _mrr, _country, _pensionAgeYear, _exemptionMonthly, _a1Country, _workCountry, _treatyRate, _notes })
+        // the application's day goes with the application's tick: shut without it
+        _statePays.CheckedChanged += (_, _) => _applicationDate.Enabled = _statePays.Enabled && _statePays.Checked;
+        _statePays.EnabledChanged += (_, _) => _applicationDate.Enabled = _statePays.Enabled && _statePays.Checked;
+        foreach (var box in new[] { _first, _last, _code, _mrr, _country, _pensionAgeYear, _exemptionMonthly, _applicationDate, _a1Country, _workCountry, _treatyRate, _notes })
         {
             box.TextChanged += (_, _) => Touched();
         }
@@ -151,7 +157,7 @@ public sealed class PersonPanel : UserControl
         };
         // "Vanaduspensionil" ticked by hand takes the minimum off, unticked gives it back (decision 237)
         // and so does the work-ability status (SMS § 2 lg 4 p 6), by the same link
-        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips, _workAbility);
+        _pensionMinimum = new PensionMinimumLink(_onPension, _minimum, () => _filling, _tips);
         // the application only with the status: shut without it, and taken off with its untick
         _workAbilityLink = new WorkAbilityLink(_workAbility, _statePays, () => _person is not null && _editable);
         Disposed += (_, _) => _tips.Dispose();
@@ -259,6 +265,8 @@ public sealed class PersonPanel : UserControl
         }
     }
 
+    internal TextBox ApplicationDateBox => _applicationDate;
+
     internal ComboBox ResidencyBox => _residency;
 
     internal CheckBox ConfirmResidencyBox => _confirmResidency;
@@ -295,6 +303,7 @@ public sealed class PersonPanel : UserControl
         _minimum.Checked = person?.SocialTaxMinimumApplies ?? true;
         _workAbility.Checked = person?.ReducedWorkAbility == true; // before the application: its untick takes the application off
         _statePays.Checked = person is { ReducedWorkAbility: true, StatePaysSocialTax: true };
+        _applicationDate.Text = person is { ReducedWorkAbility: true, StatePaysSocialTax: true, WorkAbilityApplicationDate: { } applied } ? applied.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture) : "";
         _declaration.SelectedIndex = (int)(person?.Declaration ?? DeclarationChoice.Auto);
         _a1.SelectedIndex = (int)(person?.A1 ?? A1Case.None);
         _a1Country.Text = person?.A1Country ?? "";
@@ -315,6 +324,7 @@ public sealed class PersonPanel : UserControl
         _revert.Enabled = on && editable;
         _lookUp.Enabled = on && editable && LookupsAvailable && person?.PersonalCode is { } code && Core.Import.PersonalCode.LooksValid(code);
         _workAbilityLink.Refresh(); // after the loop above, which opened every box of an editable card
+        _applicationDate.Enabled = _statePays.Enabled && _statePays.Checked;
         _filling = false;
         _exemptionTakenOff = false; // a card shown afresh: nothing on it was taken off by a pick
         _pensionMinimum.Reset();
@@ -343,6 +353,27 @@ public sealed class PersonPanel : UserControl
             return null;
         }
 
+        // the application's day, only with the application: a day typed and the tick taken off since is not kept
+        DateOnly? applicationDate = null;
+        if (_workAbility.Checked && _statePays.Checked && !string.IsNullOrWhiteSpace(_applicationDate.Text))
+        {
+            if (!TryDate(_applicationDate.Text, out var applied))
+            {
+                if (Complaining is { } take)
+                {
+                    take(UiText.WorkAbilityDateInvalid);
+                }
+                else
+                {
+                    MessageBox.Show(this, UiText.WorkAbilityDateInvalid, UiText.Problem, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+
+                return null;
+            }
+
+            applicationDate = applied;
+        }
+
         return _person with
         {
             FirstName = _first.Text,
@@ -363,6 +394,7 @@ public sealed class PersonPanel : UserControl
             SocialTaxMinimumApplies = _minimum.Checked,
             ReducedWorkAbility = _workAbility.Checked,
             StatePaysSocialTax = _workAbility.Checked && _statePays.Checked,
+            WorkAbilityApplicationDate = applicationDate,
             Declaration = (DeclarationChoice)Math.Max(0, _declaration.SelectedIndex),
             A1 = (A1Case)Math.Max(0, _a1.SelectedIndex),
             A1Country = Null(_a1Country.Text),
@@ -470,6 +502,11 @@ public sealed class PersonPanel : UserControl
         var inForce = Person.PensionAgeYearOf(pensionAgeYear, Null(_code.Text)) is { } y && _year >= y ? _rates.PensionAgeExemptionMonth : _rates.BasicExemptionMonth;
         return typed == inForce ? null : typed;
     }
+
+    /// <summary>A day as the accountant types it: dd.MM.yyyy (a day or a month of one digit too), or yyyy-MM-dd.</summary>
+    internal static bool TryDate(string text, out DateOnly value) =>
+        DateOnly.TryParseExact(text.Trim(), ["d.M.yyyy", "dd.MM.yyyy", "yyyy-MM-dd"], CultureInfo.InvariantCulture, DateTimeStyles.None, out value)
+        && value.Year is >= 2000 and <= 2100; // a slip of the year (0026) is no day: it would stand before every month
 
     private static bool TryDecimal(string text, out decimal? value)
     {

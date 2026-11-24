@@ -128,6 +128,12 @@ public sealed record BuildNote(string Code, string Text)
     /// <summary>A name, a code or a state the note quotes.</summary>
     public string? Subject { get; init; }
 
+    /// <summary>An amount the note quotes.</summary>
+    public decimal? Figure { get; init; }
+
+    /// <summary>A second amount the note quotes.</summary>
+    public decimal? Other { get; init; }
+
     /// <summary>ZERO_LINE: the type is the card's, for every payment.</summary>
     public bool FromCard { get; init; }
 
@@ -147,7 +153,7 @@ public sealed record BuildNote(string Code, string Text)
         other is not null && Code == other.Code && Text == other.Text && Variant == other.Variant && Reference == other.Reference
         && Items.SequenceEqual(other.Items, StringComparer.Ordinal) && TypeId == other.TypeId && PaymentType == other.PaymentType
         && Day == other.Day && OtherDay == other.OtherDay && Count == other.Count && Section == other.Section && Key == other.Key
-        && Subject == other.Subject && FromCard == other.FromCard && AskCardType == other.AskCardType && Unmet == other.Unmet
+        && Subject == other.Subject && Figure == other.Figure && Other == other.Other && FromCard == other.FromCard && AskCardType == other.AskCardType && Unmet == other.Unmet
         && ReferenceEquals(Cause, other.Cause);
 
     public override int GetHashCode() => HashCode.Combine(Code, Text, Variant, Reference, Key, Day, Count);
@@ -180,9 +186,13 @@ public sealed class PersonBuild
 
     public string? TopUpKey { get; init; }
 
-    /// <summary>The kuumäär the state pays the social tax on this month (one, for a person with partial or no work ability
-    /// whose employer has applied; else 0).</summary>
+    /// <summary>The part of the kuumäär the state pays the social tax on this month, for a person with partial or no work
+    /// ability whose employer has applied (<see cref="WorkAbilityMonth"/>'s amount); else 0.</summary>
     public decimal WorkAbilityReductionOffered { get; init; }
+
+    /// <summary>How the month's part came about: the month the pay is for, its days covered, or the accountant's own
+    /// amount (decision 267); null for a person without both ticks, or where nothing was allocated.</summary>
+    public Tax.WorkAbilityMonth? WorkAbilityMonth { get; init; }
 
     /// <summary>TSD_OPTV_SM_VAHENDUS over the person's lines of the month.</summary>
     public decimal WorkAbilityReduction { get; init; }

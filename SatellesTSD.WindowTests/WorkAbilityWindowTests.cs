@@ -21,7 +21,7 @@ public class WorkAbilityWindowTests
         };
 
     [Fact]
-    public void The_cards_application_opens_only_with_the_status_and_the_status_takes_the_minimum_off()
+    public void The_cards_application_opens_only_with_the_status_and_the_status_leaves_the_minimums_tick_alone()
     {
         Ui.Run(() =>
         {
@@ -30,26 +30,38 @@ public class WorkAbilityWindowTests
             Assert.Equal((false, false, false), (card.WorkAbilityBox.Checked, card.StatePaysBox.Checked, card.StatePaysBox.Enabled));
             Assert.True(card.MinimumBox.Checked);
 
+            // the status leaves the minimum's tick as it is (decision 266): the card keeps what holds after the status
             card.WorkAbilityBox.Checked = true;
-            Assert.False(card.MinimumBox.Checked); // at once, where it is seen, as the pension tick does
+            Assert.True(card.MinimumBox.Checked);
             Assert.True(card.StatePaysBox.Enabled);
             card.StatePaysBox.Checked = true;
             Assert.True(card.IsDirty);
             var collected = card.Collect()!;
-            Assert.Equal((true, true, false), (collected.ReducedWorkAbility, collected.StatePaysSocialTax, collected.SocialTaxMinimumApplies));
+            Assert.Equal((true, true, true), (collected.ReducedWorkAbility, collected.StatePaysSocialTax, collected.SocialTaxMinimumApplies));
+            Assert.False(collected.MinimumOwed); // not owed while the status stands, whatever the tick says
 
-            // the status's untick takes the application off and shuts it, and gives the minimum back
+            // the status's untick takes the application off and shuts it; the minimum's tick was never touched
             card.WorkAbilityBox.Checked = false;
             Assert.Equal((false, false, true), (card.StatePaysBox.Checked, card.StatePaysBox.Enabled, card.MinimumBox.Checked));
             Assert.Equal((false, false), (card.Collect()!.ReducedWorkAbility, card.Collect()!.StatePaysSocialTax));
 
-            // two reasons on the one box: the pension's untick does not give the minimum back while the status stands
-            card.OnPensionBox.Checked = true;
+            // the pension's tick still takes the minimum off and gives it back, with the status ticked or not
             card.WorkAbilityBox.Checked = true;
-            card.OnPensionBox.Checked = false;
+            card.OnPensionBox.Checked = true;
             Assert.False(card.MinimumBox.Checked);
+            card.OnPensionBox.Checked = false;
+            Assert.True(card.MinimumBox.Checked);
             card.WorkAbilityBox.Checked = false;
             Assert.True(card.MinimumBox.Checked);
+
+            // the status ticked and saved on one visit to the card, unticked on a later one: the minimum is owed again
+            card.Present(Worker(), editable: true, 2026, TaxRates.Year2026);
+            card.WorkAbilityBox.Checked = true;
+            var saved = card.Collect()!;
+            card.Present(saved, editable: true, 2026, TaxRates.Year2026);
+            Assert.Equal((true, true), (card.WorkAbilityBox.Checked, card.MinimumBox.Checked));
+            card.WorkAbilityBox.Checked = false;
+            Assert.True(card.Collect()!.MinimumOwed);
 
             // a stored card is shown as stored; a card shown read-only keeps the application shut
             card.Present(Worker(minimum: false, status: true, application: true), editable: true);
@@ -74,8 +86,10 @@ public class WorkAbilityWindowTests
             static IEnumerable<Control> All(Control c) => c.Controls.Cast<Control>().SelectMany(child => All(child).Prepend(child));
             var note = Assert.Single(All(card).OfType<Label>(), l => l.Text == UiText.StatePaysSocialTaxNote);
             Assert.Contains("KR_SM_03", note.Text, StringComparison.Ordinal);
-            // the minimum's tip no longer tells the accountant to untick it by hand for a person with the status
+            // the minimum's tip no longer tells the accountant to untick it by hand for a person with the status, and says
+            // the status does not change the tick
             Assert.Contains(UiText.ReducedWorkAbility, UiText.MinimumPensionTip, StringComparison.Ordinal);
+            Assert.Contains("miinimumi märget see ei muuda", UiText.MinimumPensionTip, StringComparison.Ordinal);
             Assert.DoesNotContain("töövõimetute puhul eemalda", UiText.MinimumPensionTip, StringComparison.Ordinal);
         });
     }
@@ -127,9 +141,9 @@ public class WorkAbilityWindowTests
             dialog.ComputeNow();
             Assert.EndsWith(UiText.Money(0m), Line(dialog, UiText.WorkAbilityReduction), StringComparison.Ordinal);
 
-            // the status alone: no minimum (its tick taken off), no deduction
+            // the status alone: no minimum (its tick stays, and is not reckoned), no deduction
             dialog.WorkAbilityBox.Checked = true;
-            Assert.False(dialog.MinimumBox.Checked);
+            Assert.True(dialog.MinimumBox.Checked);
             Assert.True(dialog.StatePaysBox.Enabled);
             dialog.ComputeNow();
             Assert.EndsWith(UiText.Money(0m), Line(dialog, UiText.MinimumIncrease), StringComparison.Ordinal);
@@ -150,7 +164,7 @@ public class WorkAbilityWindowTests
             Assert.EndsWith(UiText.Money(TaxRates.Year2026.SocialTaxMinimumBase), Line(dialog, UiText.WorkAbilityReduction), StringComparison.Ordinal);
             Assert.EndsWith(UiText.Money(Math.Round((1000m - TaxRates.Year2026.SocialTaxMinimumBase) * TaxRates.Year2026.SocialTax, 2)), Line(dialog, $"{UiText.SocialTax,-28}"), StringComparison.Ordinal);
 
-            // the status's untick takes the application off and gives the minimum back
+            // the status's untick takes the application off; the minimum's tick stood all along
             dialog.WorkAbilityBox.Checked = false;
             Assert.Equal((false, false, true), (dialog.StatePaysBox.Checked, dialog.StatePaysBox.Enabled, dialog.MinimumBox.Checked));
         });
@@ -172,7 +186,7 @@ public class WorkAbilityWindowTests
                 dialog.Warning = warnings.Add;
                 Assert.False(dialog.StatePaysBox.Enabled);
                 dialog.WorkAbilityBox.Checked = true;
-                Assert.False(dialog.MinimumBox.Checked);
+                Assert.True(dialog.MinimumBox.Checked); // the status leaves the tick; the run owes no minimum by the status
                 dialog.StatePaysBox.Checked = true;
                 Assert.Equal((true, true), (dialog.Scenario()!.Person.ReducedWorkAbility, dialog.Scenario()!.Person.StatePaysSocialTax));
 
