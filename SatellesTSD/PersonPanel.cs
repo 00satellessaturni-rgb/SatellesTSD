@@ -52,6 +52,20 @@ public sealed class PersonPanel : UserControl
     private readonly ComboBox _torType = Combo(TorTypeChoices);
     private readonly CheckBox _typeFromCard = new() { Text = UiText.TypeFromCard, AutoSize = true };
     private readonly TextBox _notes = new() { Multiline = true, Height = 60, ScrollBars = ScrollBars.Vertical };
+    // the person's rows of the month's register, as the register wrote them: read-only, so that two contracts competing
+    // for a payment can be told apart by their dates and states where the decision is made (decision 270)
+    private readonly Label _registerCaption = new() { Text = UiText.RegisterRows, AutoSize = true, Margin = new Padding(3, 8, 3, 0) };
+    private readonly Label _registerNone = new() { Text = "", AutoSize = true, ForeColor = Color.DimGray };
+    private IReadOnlyList<Core.Import.TorEntry> _registerEntries = [];
+    private Core.Import.TorEntry? _registerStanding;
+    private bool _registerInMonth = true;
+    private Guid? _registerOf; // whose rows the list holds: a card shown again for the same person (Tühista) keeps them
+    private readonly DataGridView _registerGrid = new()
+    {
+        ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AllowUserToResizeRows = false, RowHeadersVisible = false,
+        SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+        BackgroundColor = SystemColors.Window, BorderStyle = BorderStyle.FixedSingle, ScrollBars = ScrollBars.Both, TabStop = false, ShowCellToolTips = true,
+    };
     private readonly FlowLayoutPanel _buttons = new() { AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
     private readonly Button _save = new() { Text = UiText.Save, AutoSize = true };
     private readonly Button _revert = new() { Text = UiText.Revert, AutoSize = true };
@@ -111,6 +125,21 @@ public sealed class PersonPanel : UserControl
         Row(UiText.TreatyRate + ", %", _treatyRate);
         Row(UiText.TorType, _torType);
         Row(_typeFromCard, span: true);
+        foreach (var (name, header) in new[]
+        {
+            ("standing", UiText.RegisterStanding), ("type", UiText.EmploymentType), ("state", UiText.EntryState), ("start", UiText.EmploymentStart), ("end", UiText.EmploymentEnd),
+            ("pauseStart", UiText.PauseStart), ("pauseEnd", UiText.PauseEnd), ("pauseReason", UiText.PauseReason),
+        })
+        {
+            _registerGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, SortMode = DataGridViewColumnSortMode.NotSortable });
+        }
+
+        _registerGrid.Columns["standing"]!.ToolTipText = UiText.RegisterStandingTip;
+        Row(_registerCaption, span: true);
+        Row(_registerNone, span: true);
+        Row(_registerGrid, span: true);
+        _registerGrid.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        FillRegister();
         Row(UiText.Notes, _notes);
         _buttons.Controls.AddRange([_save, _revert, _lookUp]);
         Row(_buttons, span: true);
@@ -189,6 +218,10 @@ public sealed class PersonPanel : UserControl
     internal CheckBox TypeFromCardBox => _typeFromCard;
 
     internal Button SaveButton => _save;
+
+    internal Button RevertButton => _revert;
+
+    internal TextBox NotesBox => _notes;
 
     internal Button LookUpButton => _lookUp;
 
@@ -271,6 +304,72 @@ public sealed class PersonPanel : UserControl
 
     internal TextBox ApplicationDateBox => _applicationDate;
 
+    internal DataGridView RegisterGrid => _registerGrid;
+
+    internal Label RegisterNoneLabel => _registerNone;
+
+    /// <summary>Gives the card the rows of the month's register for the person it shows (decision 270): every row with its
+    /// type, state, dates and pause, the earliest begun first, the row the persons grid reads the month from marked. The
+    /// list is the register's word, not the card's: never edited, never making the card dirty, and kept when the card is
+    /// shown again for the same person. No rows: a line says whether the month has no register or the register no rows of
+    /// the person; no person: nothing.</summary>
+    /// <param name="personId">The person the rows are of (the card's), or null for none.</param>
+    /// <param name="entries">The rows of the person (the register's order).</param>
+    /// <param name="standing">The row the persons grid shows the month's state and dates from: the one covering the month,
+    /// else the latest begun.</param>
+    /// <param name="monthHasRegister">Whether the month was searched against a register at all.</param>
+    public void ShowRegister(Guid? personId, IReadOnlyList<Core.Import.TorEntry> entries, Core.Import.TorEntry? standing, bool monthHasRegister = true)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        _registerOf = personId;
+        _registerEntries = entries;
+        _registerStanding = standing;
+        _registerInMonth = monthHasRegister;
+        FillRegister();
+    }
+
+    private void FillRegister()
+    {
+        static string Day(DateOnly? day) => day is { } d ? d.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture) : "";
+        static string Coded(string? id, string? name) => string.Join(" ", new[] { id, name }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var shown = _person is not null && _registerOf == _person.Id;
+        _registerGrid.Rows.Clear();
+        foreach (var entry in (shown ? _registerEntries : []).OrderBy(e => e.StartDate ?? DateOnly.MinValue).ThenBy(e => e.RowNo))
+        {
+            var isStanding = _registerStanding is { } standing && (ReferenceEquals(entry, standing) || entry.RowNo == standing.RowNo); // a row of the export is one row: its number tells it
+            var index = _registerGrid.Rows.Add(isStanding ? UiText.RegisterStandingMark : "", Coded(entry.TypeId, entry.Type), Coded(entry.StateId, entry.State),
+                Day(entry.StartDate), Day(entry.EndDate), Day(entry.PauseStart), Day(entry.PauseEnd), entry.PauseReason ?? "");
+            var row = _registerGrid.Rows[index];
+            row.Tag = entry;
+            if (isStanding)
+            {
+                row.Cells["standing"].ToolTipText = UiText.RegisterStandingTip;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Problem))
+            {
+                // a cell the import could not read (a date, an id): said on the row, so an empty date is not taken for none
+                foreach (DataGridViewCell cell in row.Cells)
+                {
+                    cell.ToolTipText = UiText.RegisterRowProblem(entry.Problem);
+                }
+
+                row.DefaultCellStyle.ForeColor = Color.Firebrick;
+            }
+        }
+
+        var any = _registerGrid.Rows.Count > 0;
+        _registerCaption.Visible = _person is not null;
+        // why the list is empty, when it is: the month has no register, or the register no rows of the person; said of a
+        // person only (an empty card says nothing)
+        _registerNone.Text = _person is null || any ? "" : _registerInMonth && shown ? UiText.RegisterRowsNone : shown ? UiText.RegisterNoRegister : "";
+        _registerNone.Visible = _registerNone.Text.Length > 0;
+        _registerGrid.Visible = any;
+        // as tall as its rows, six at most (a scroll bar beyond): the card stays a card
+        _registerGrid.Height = _registerGrid.ColumnHeadersHeight + (Math.Min(_registerGrid.Rows.Count, 6) * _registerGrid.RowTemplate.Height) + SystemInformation.HorizontalScrollBarHeight + 4;
+        _registerGrid.ClearSelection();
+    }
+
     internal ComboBox ResidencyBox => _residency;
 
     internal CheckBox ConfirmResidencyBox => _confirmResidency;
@@ -316,9 +415,10 @@ public sealed class PersonPanel : UserControl
         FillTorTypes(person?.TorEmploymentTypeId);
         _typeFromCard.Checked = person?.TypeFromCard ?? false;
         _notes.Text = person?.Notes ?? "";
+        FillRegister(); // the rows given for this person stay (Tühista shows the card again); another person's are not shown
         foreach (Control control in _table.Controls)
         {
-            if (control is not Label)
+            if (control is not Label && control != _registerGrid) // the register's rows are read and scrolled on a locked card too
             {
                 control.Enabled = on && (editable || control == _buttons);
             }

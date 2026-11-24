@@ -108,7 +108,10 @@ person picked, every payment of the month, one per category, the payments withou
    **Salvesta xlsx…** saves the list as it is shown. It changes nothing.
 5. Review: change a payment's person, category, type or declaration in the grid, add a payment by hand
    (**Lisa rida…**), fix a person's facts in the panel (the exemption, the social-tax minimum). The grid's
-   checks say what would be refused. **Vanaduspensionil** takes the minimum's tick off when ticked (unticked,
+   checks say what would be refused. Under the card's employment type, **Töötamise registri kanded** lists the
+   person's rows of the month's register (type, state, start, end, pause), the one the persons grid shows marked
+   "●" — where a payment's note names two contracts ("TÖR 1/601"), their dates and states are read there.
+   **Vanaduspensionil** takes the minimum's tick off when ticked (unticked,
    it comes back); **Osaline või puuduv töövõime** leaves the tick alone, and a person with that status is never
    given the minimum, whatever the tick says. Under the status, **Töötukassa maksab sotsiaalmaksu (taotlus
    esitatud)** — open only while the status is ticked — has the state pay the social tax on the kuumäär of the

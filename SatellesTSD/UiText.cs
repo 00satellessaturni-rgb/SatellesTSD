@@ -67,6 +67,17 @@ internal static class UiText
     public const string EmploymentEnd = "Töötamise lõpu aeg";
     public const string PauseStart = "Peatamise algus";
     public const string PauseEnd = "Peatamise lõpu aeg";
+    public const string PauseReason = "Peatamise alus";
+
+    // the person card's list of the register's rows (decision 270)
+    public const string RegisterRows = "Töötamise registri kanded (selle kuu väljavõte)";
+    public const string RegisterRowsNone = "Selle kuu töötamise registri väljavõttes isiku kandeid ei ole.";
+    public const string RegisterStanding = "Kuu";
+    public const string RegisterStandingMark = "●";
+    public const string RegisterNoRegister = "Selle kuu kohta ei ole töötamise registri väljavõtet imporditud.";
+    public const string RegisterStandingTip = "● – kanne, mille järgi isikute tabelis kuvatakse kuu kande olek ja kuupäevad: kuud kattev kanne, selle puudumisel viimati alanud. "
+        + "Makse töötamise liigi määrab makse kuupäeval kehtiv kanne; kahe samal päeval kehtiva lepingu korral Seadete reegel; kaardi liik, kui see kehtib kõigile maksetele.";
+    public static string RegisterRowProblem(string problem) => $"Selle kande lahtrit ei õnnestunud importimisel lugeda ({problem}); tühi lahter ei pruugi tähendada, et registris väärtust ei ole.";
     public const string Undeclared = "Deklareerimata";
     public const string Problems = "Probleemid";
     public const string UnmatchedRow = "— leidmata read —";

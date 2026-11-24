@@ -2410,6 +2410,12 @@ public sealed class MainForm : Form
             }
         }
 
+        // the person's rows of the month's register under the card's employment type, whether the card was shown afresh or
+        // kept as typed (the rows are the register's, not the card's; decision 270)
+        // marked is the row the persons grid reads the month's state and dates from: the one covering the month, else the latest
+        var monthHasRegister = _view is { } month && (month.StoredRun?.TorSheetId is not null || month.Persons.Any(p => p.Register is not null));
+        _personPanel.ShowRegister(target?.Id, target is null ? [] : person?.Register?.Entries ?? [], target is null ? null : person?.Register?.Entry, monthHasRegister);
+
         _removeLineButton.Enabled = Editable && !_busy && SelectedPayment is { IsByHand: true };
     }
 
